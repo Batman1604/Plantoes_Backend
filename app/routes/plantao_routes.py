@@ -20,7 +20,12 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db)):
         return UserRepository.create(db, payload)
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=400, detail="Email já cadastrado") from exc
+        error_message = str(exc.orig).lower() if exc.orig else str(exc).lower()
+
+        if "email" in error_message and ("unique" in error_message or "duplicate" in error_message):
+            raise HTTPException(status_code=400, detail="Email já cadastrado") from exc
+
+        raise HTTPException(status_code=400, detail="Dados do usuário inválidos") from exc
 
 
 @router.get("/usuarios", response_model=list[UserResponse])
