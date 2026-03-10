@@ -11,7 +11,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    telefone: Optional[str] = Field(default=None, max_length=30)
+    telefone: str = Field(min_length=8, max_length=30)
 
 
 class UserResponse(UserBase):
