@@ -19,7 +19,7 @@ API para armazenar usuários e seus plantões com:
    ```
 2. Configure a variável de ambiente `DATABASE_URL`:
    ```bash
-   export DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/plantoes"
+   export DATABASE_URL="postgresql+psycopg://postgres:Adaj1982@localhost:5432/plantoes"
    ```
 3. Instale dependências:
    ```bash
@@ -37,3 +37,8 @@ uvicorn app.main:app --reload
 - `POST /api/plantoes`
 - `GET /api/plantoes?usuario_id=<id>`
 - `GET /health`
+
+
+## Integração com Plantoes_app
+- CORS está habilitado no backend para permitir chamadas do app frontend durante desenvolvimento.
+- Garanta que este backend esteja rodando em `http://localhost:8000` (padrão do uvicorn) e que o app use os endpoints em `/api`.
