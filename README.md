@@ -42,7 +42,8 @@ uvicorn app.main:app --reload
 ```
 
 ## Endpoints principais
-- `POST /api/usuarios`
+- `POST /api/usuarios` (envie `senha`; backend salva apenas o hash)
+- `POST /api/auth/login`
 - `GET /api/usuarios`
 - `POST /api/plantoes`
 - `GET /api/plantoes?usuario_id=<id>`

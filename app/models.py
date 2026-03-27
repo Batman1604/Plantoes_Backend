@@ -21,6 +21,7 @@ class User(Base):
     nome: Mapped[str] = mapped_column(String(120), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     telefone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    senha_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     #criado_em: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     plantoes: Mapped[list["Plantao"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")

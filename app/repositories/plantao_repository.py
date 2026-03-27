@@ -1,17 +1,28 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.security import hash_password, verify_password
 from app.models import Plantao, User
-from app.schemas.plantao_schema import PlantaoCreate, UserCreate
+from app.schemas.plantao_schema import PlantaoCreate, UserCreate, UserLogin
 
 
 class UserRepository:
     @staticmethod
     def create(db: Session, payload: UserCreate) -> User:
-        user = User(**payload.model_dump())
+        user_data = payload.model_dump(exclude={"senha"})
+        user = User(**user_data, senha_hash=hash_password(payload.senha))
         db.add(user)
         db.commit()
         db.refresh(user)
+        return user
+
+    @staticmethod
+    def authenticate(db: Session, payload: UserLogin) -> User | None:
+        user = db.scalar(select(User).where(User.email == payload.email))
+        if user is None or not user.senha_hash:
+            return None
+        if not verify_password(payload.senha, user.senha_hash):
+            return None
         return user
 
     @staticmethod
