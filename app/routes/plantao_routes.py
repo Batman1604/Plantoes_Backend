@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.repositories.plantao_repository import PlantaoRepository, UserRepository
 from app.schemas.plantao_schema import (
+    AuthResponse,
     PlantaoCreate,
     PlantaoResponse,
     UserCreate,
+    UserLogin,
     UserResponse,
 )
 
@@ -21,6 +23,15 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db)):
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="Email já cadastrado") from exc
+
+
+@router.post("/auth/login", response_model=AuthResponse)
+def autenticar_usuario(payload: UserLogin, db: Session = Depends(get_db)):
+    user = UserRepository.authenticate(db, payload)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Credenciais inválidas")
+
+    return AuthResponse(autenticado=True, usuario=UserResponse.model_validate(user))
 
 
 @router.get("/usuarios", response_model=list[UserResponse])

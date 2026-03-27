@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, time
 from decimal import Decimal
 from typing import Optional
 
@@ -12,15 +12,25 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     telefone: Optional[str] = Field(default=None, max_length=30)
+    senha: str = Field(min_length=8, max_length=128)
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    senha: str = Field(min_length=8, max_length=128)
 
 
 class UserResponse(UserBase):
     id: int
     telefone: Optional[str] = None
-    #criado_em: datetime
 
     class Config:
         from_attributes = True
+
+
+class AuthResponse(BaseModel):
+    autenticado: bool
+    usuario: Optional[UserResponse] = None
 
 
 class PlantaoBase(BaseModel):
@@ -46,7 +56,6 @@ class PlantaoResponse(PlantaoBase):
     usuario_id: int
     notificacao_ativa: bool
     notificacao_antecedencia_minutos: int
-    #criado_em: datetime
 
     class Config:
         from_attributes = True
