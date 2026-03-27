@@ -17,11 +17,21 @@ API para armazenar usuários e seus plantões com:
    ```sql
    CREATE DATABASE plantoes;
    ```
-2. Configure a variável de ambiente `DATABASE_URL`:
+2. Garanta a relação entre `plantoes.usuario_id` e `usuarios.id`:
+   - A aplicação cria automaticamente a foreign key `fk_plantoes_usuario_id` na inicialização.
+   - Se já existir base antiga sem vínculo, rode manualmente:
+   ```sql
+   ALTER TABLE plantoes
+   ADD CONSTRAINT fk_plantoes_usuario_id
+   FOREIGN KEY (usuario_id)
+   REFERENCES usuarios(id)
+   ON DELETE CASCADE;
+   ```
+3. Configure a variável de ambiente `DATABASE_URL`:
    ```bash
    export DATABASE_URL="postgresql+psycopg://postgres:Adaj1982@localhost:5432/plantoes"
    ```
-3. Instale dependências:
+4. Instale dependências:
    ```bash
    pip install -r requirement.txt
    ```
