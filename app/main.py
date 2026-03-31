@@ -9,7 +9,7 @@ from app.routes.plantao_routes import router
 Base.metadata.create_all(bind=engine)
 
 
-def ensure_plantoes_usuario_fk() -> None:
+def ensure_foreign_keys() -> None:
     if engine.dialect.name != "postgresql":
         return
 
@@ -20,12 +20,24 @@ def ensure_plantoes_usuario_fk() -> None:
             IF NOT EXISTS (
                 SELECT 1
                 FROM pg_constraint
-                WHERE conname = 'fk_plantoes_usuario_id'
+                WHERE conname = 'fk_locais_usuario_id'
             ) THEN
-                ALTER TABLE plantoes
-                ADD CONSTRAINT fk_plantoes_usuario_id
+                ALTER TABLE locais
+                ADD CONSTRAINT fk_locais_usuario_id
                 FOREIGN KEY (usuario_id)
                 REFERENCES usuarios(id)
+                ON DELETE CASCADE;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_plantoes_local_id'
+            ) THEN
+                ALTER TABLE plantoes
+                ADD CONSTRAINT fk_plantoes_local_id
+                FOREIGN KEY (local_id)
+                REFERENCES locais(id)
                 ON DELETE CASCADE;
             END IF;
         END $$;
@@ -36,7 +48,7 @@ def ensure_plantoes_usuario_fk() -> None:
         connection.execute(statement)
 
 
-ensure_plantoes_usuario_fk()
+ensure_foreign_keys()
 
 
 app = FastAPI(title=settings.app_name)
