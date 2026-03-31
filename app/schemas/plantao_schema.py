@@ -61,6 +61,7 @@ class PlantaoBase(BaseModel):
 
 
 class PlantaoCreate(PlantaoBase):
+    usuario_id: int
     local_id: int
     notificacao_ativa: bool = True
     notificacao_antecedencia_minutos: int = Field(default=60, ge=0, le=43200)
@@ -68,6 +69,7 @@ class PlantaoCreate(PlantaoBase):
 
 class PlantaoResponse(PlantaoBase):
     id: int
+    usuario_id: int
     local_id: int
     notificacao_ativa: bool
     notificacao_antecedencia_minutos: int

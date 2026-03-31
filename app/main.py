@@ -40,6 +40,18 @@ def ensure_foreign_keys() -> None:
                 REFERENCES locais(id)
                 ON DELETE CASCADE;
             END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_plantoes_usuario_id'
+            ) THEN
+                ALTER TABLE plantoes
+                ADD CONSTRAINT fk_plantoes_usuario_id
+                FOREIGN KEY (usuario_id)
+                REFERENCES usuarios(id)
+                ON DELETE CASCADE;
+            END IF;
         END $$;
         """
     )
