@@ -59,9 +59,15 @@ def listar_locais(usuario_id: int | None = None, db: Session = Depends(get_db)):
 
 @router.post("/plantoes", response_model=PlantaoResponse, status_code=status.HTTP_201_CREATED)
 def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db)):
+    usuarios = {u.id for u in UserRepository.list_all(db)}
+    if payload.usuario_id not in usuarios:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
     local = LocalRepository.get_by_id(db, payload.local_id)
     if local is None:
         raise HTTPException(status_code=404, detail="Local não encontrado")
+    if local.usuario_id != payload.usuario_id:
+        raise HTTPException(status_code=400, detail="Local não pertence ao usuário informado")
 
     return PlantaoRepository.create(db, payload)
 

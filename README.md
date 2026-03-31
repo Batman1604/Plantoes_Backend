@@ -6,6 +6,7 @@ API para armazenar usuários e seus plantões com:
 - recorrência
 - dados de notificação
 - locais vinculados por `local_id`
+- usuário dono do plantão em `usuario_id`
 
 ## Requisitos
 - Python 3.11+
@@ -19,6 +20,7 @@ API para armazenar usuários e seus plantões com:
 2. Garanta as relações entre tabelas:
    - `locais.usuario_id` -> `usuarios.id`
    - `plantoes.local_id` -> `locais.id`
+   - `plantoes.usuario_id` -> `usuarios.id`
    - A aplicação cria automaticamente essas foreign keys na inicialização.
 3. Configure a variável de ambiente `DATABASE_URL`:
    ```bash

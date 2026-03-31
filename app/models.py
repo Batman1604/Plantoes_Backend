@@ -30,10 +30,12 @@ class Local(Base):
     plantoes: Mapped[list["Plantao"]] = relationship(back_populates="local", cascade="all, delete-orphan")
 
 
+
 class Plantao(Base):
     __tablename__ = "plantoes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
     local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False)
     titulo: Mapped[str] = mapped_column(String(120), nullable=False)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)

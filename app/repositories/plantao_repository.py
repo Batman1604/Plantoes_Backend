@@ -64,12 +64,7 @@ class PlantaoRepository:
 
     @staticmethod
     def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:
-        stmt = (
-            select(Plantao)
-            .join(Local, Plantao.local_id == Local.id)
-            .where(Local.usuario_id == usuario_id)
-            .order_by(Local.data_inicio.desc())
-        )
+        stmt = select(Plantao).where(Plantao.usuario_id == usuario_id).order_by(Plantao.id.desc())
         return db.scalars(stmt).all()
 
     @staticmethod
