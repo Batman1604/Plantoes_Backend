@@ -33,27 +33,42 @@ class AuthResponse(BaseModel):
     usuario: Optional[UserResponse] = None
 
 
-class PlantaoBase(BaseModel):
-    titulo: str = Field(min_length=2, max_length=120)
-    local: str = Field(min_length=2, max_length=120)
-    valor: Decimal = Field(gt=0)
+class LocalBase(BaseModel):
+    nome_local: str = Field(min_length=2, max_length=120)
     data_inicio: date
-    data_fim: date
-    horario_inicio: time
-    horario_fim: time
-    recorrencia: Optional[str] = Field(default=None, max_length=50)
+    data_final: date
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
 
 
-class PlantaoCreate(PlantaoBase):
+class LocalCreate(LocalBase):
     usuario_id: int
+
+
+class LocalResponse(LocalBase):
+    id: int
+    usuario_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class PlantaoBase(BaseModel):
+    titulo: str = Field(min_length=2, max_length=120)
+    valor: Decimal = Field(gt=0)
+    horario_inicio: time
+    horario_fim: time
+    recorrencia: Optional[str] = Field(default=None, max_length=50)
+
+
+class PlantaoCreate(PlantaoBase):
+    local_id: int
     notificacao_ativa: bool = True
     notificacao_antecedencia_minutos: int = Field(default=60, ge=0, le=43200)
 
 
 class PlantaoResponse(PlantaoBase):
     id: int
-    usuario_id: int
+    local_id: int
     notificacao_ativa: bool
     notificacao_antecedencia_minutos: int
 

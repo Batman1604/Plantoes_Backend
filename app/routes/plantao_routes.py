@@ -3,9 +3,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.repositories.plantao_repository import PlantaoRepository, UserRepository
+from app.repositories.plantao_repository import LocalRepository, PlantaoRepository, UserRepository
 from app.schemas.plantao_schema import (
     AuthResponse,
+    LocalCreate,
+    LocalResponse,
     PlantaoCreate,
     PlantaoResponse,
     UserCreate,
@@ -39,11 +41,27 @@ def listar_usuarios(db: Session = Depends(get_db)):
     return UserRepository.list_all(db)
 
 
-@router.post("/plantoes", response_model=PlantaoResponse, status_code=status.HTTP_201_CREATED)
-def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db)):
+@router.post("/locais", response_model=LocalResponse, status_code=status.HTTP_201_CREATED)
+def criar_local(payload: LocalCreate, db: Session = Depends(get_db)):
     usuarios = {u.id for u in UserRepository.list_all(db)}
     if payload.usuario_id not in usuarios:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    return LocalRepository.create(db, payload)
+
+
+@router.get("/locais", response_model=list[LocalResponse])
+def listar_locais(usuario_id: int | None = None, db: Session = Depends(get_db)):
+    if usuario_id is not None:
+        return LocalRepository.list_by_user(db, usuario_id)
+    return LocalRepository.list_all(db)
+
+
+@router.post("/plantoes", response_model=PlantaoResponse, status_code=status.HTTP_201_CREATED)
+def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db)):
+    local = LocalRepository.get_by_id(db, payload.local_id)
+    if local is None:
+        raise HTTPException(status_code=404, detail="Local não encontrado")
 
     return PlantaoRepository.create(db, payload)
 
