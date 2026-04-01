@@ -1,11 +1,18 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import create_access_token, decode_access_token
-from app.repositories.plantao_repository import LocalRepository, PlantaoRepository, UserRepository
+from app.repositories.plantao_repository import (
+    LocalRepository,
+    PlantaoRepository,
+    TokenRevogadoRepository,
+    UserRepository,
+)
 from app.schemas.plantao_schema import (
     AuthResponse,
     AuthStatusResponse,
@@ -29,9 +36,14 @@ def get_current_user(
     if credentials is None:
         raise HTTPException(status_code=401, detail="Token de acesso ausente")
 
-    user_id = decode_access_token(credentials.credentials)
-    if user_id is None:
+    token_payload = decode_access_token(credentials.credentials)
+    if token_payload is None:
         raise HTTPException(status_code=401, detail="Token inválido ou expirado")
+
+    user_id = int(token_payload["user_id"])
+    token_id = str(token_payload["jti"])
+    if TokenRevogadoRepository.is_revoked(db, token_id):
+        raise HTTPException(status_code=401, detail="Token revogado")
 
     user = UserRepository.get_by_id(db, user_id)
     if user is None:
@@ -62,6 +74,34 @@ def autenticar_usuario(payload: UserLogin, db: Session = Depends(get_db)):
 @router.get("/auth/status", response_model=AuthStatusResponse)
 def status_autenticacao(current_user=Depends(get_current_user)):
     return AuthStatusResponse(autenticado=True, usuario=UserResponse.model_validate(current_user))
+
+
+@router.post("/auth/logout", response_model=AuthStatusResponse)
+def logout_usuario(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: Session = Depends(get_db),
+):
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Token de acesso ausente")
+
+    token_payload = decode_access_token(credentials.credentials)
+    if token_payload is None:
+        raise HTTPException(status_code=401, detail="Token inválido ou expirado")
+
+    try:
+        TokenRevogadoRepository.revoke(
+            db,
+            jti=str(token_payload["jti"]),
+            usuario_id=int(token_payload["user_id"]),
+            expira_em=token_payload["exp"] if isinstance(token_payload["exp"], datetime) else datetime.now(UTC),
+        )
+    except IntegrityError:
+        db.rollback()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Falha ao processar logout") from exc
+
+    return AuthStatusResponse(autenticado=False, usuario=None)
 
 
 @router.get("/usuarios", response_model=list[UserResponse])

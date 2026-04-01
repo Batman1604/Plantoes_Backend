@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import secrets
+from uuid import uuid4
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -32,17 +33,33 @@ def create_access_token(user_id: int) -> str:
     expires_at = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
     payload = {
         "sub": str(user_id),
+        "jti": str(uuid4()),
         "exp": expires_at,
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> int | None:
+def decode_access_token(token: str) -> dict[str, str | int | datetime] | None:
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
         subject = payload.get("sub")
+        token_id = payload.get("jti")
+        expires_at = payload.get("exp")
         if subject is None:
             return None
-        return int(subject)
+        if token_id is None:
+            return None
+        if expires_at is None:
+            return None
+
+        if isinstance(expires_at, (int, float)):
+            expires_at = datetime.fromtimestamp(expires_at, tz=UTC)
+        elif isinstance(expires_at, datetime):
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+        else:
+            return None
+
+        return {"user_id": int(subject), "jti": str(token_id), "exp": expires_at}
     except (InvalidTokenError, ValueError, TypeError):
         return None
