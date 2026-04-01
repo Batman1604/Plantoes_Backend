@@ -29,6 +29,10 @@ class UserRepository:
     def list_all(db: Session) -> list[User]:
         return db.scalars(select(User).order_by(User.id.desc())).all()
 
+    @staticmethod
+    def get_by_id(db: Session, user_id: int) -> User | None:
+        return db.scalar(select(User).where(User.id == user_id))
+
 
 class LocalRepository:
     @staticmethod
