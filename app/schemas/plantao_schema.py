@@ -30,6 +30,13 @@ class UserResponse(UserBase):
 
 class AuthResponse(BaseModel):
     autenticado: bool
+    access_token: str
+    token_type: str = "bearer"
+    usuario: UserResponse
+
+
+class AuthStatusResponse(BaseModel):
+    autenticado: bool
     usuario: Optional[UserResponse] = None
 
 
