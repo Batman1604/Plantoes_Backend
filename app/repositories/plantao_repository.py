@@ -1,8 +1,10 @@
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
-from app.models import Local, Plantao, User
+from app.models import Local, Plantao, TokenRevogado, User
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
 
 
@@ -28,6 +30,10 @@ class UserRepository:
     @staticmethod
     def list_all(db: Session) -> list[User]:
         return db.scalars(select(User).order_by(User.id.desc())).all()
+
+    @staticmethod
+    def get_by_id(db: Session, user_id: int) -> User | None:
+        return db.scalar(select(User).where(User.id == user_id))
 
 
 class LocalRepository:
@@ -70,3 +76,17 @@ class PlantaoRepository:
     @staticmethod
     def list_all(db: Session) -> list[Plantao]:
         return db.scalars(select(Plantao).order_by(Plantao.id.desc())).all()
+
+
+class TokenRevogadoRepository:
+    @staticmethod
+    def revoke(db: Session, *, jti: str, usuario_id: int, expira_em: datetime) -> TokenRevogado:
+        token = TokenRevogado(jti=jti, usuario_id=usuario_id, revogado_em=datetime.now(UTC), expira_em=expira_em)
+        db.add(token)
+        db.commit()
+        db.refresh(token)
+        return token
+
+    @staticmethod
+    def is_revoked(db: Session, jti: str) -> bool:
+        return db.scalar(select(TokenRevogado.id).where(TokenRevogado.jti == jti)) is not None
