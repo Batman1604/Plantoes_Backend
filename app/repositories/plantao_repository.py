@@ -69,6 +69,14 @@ class PlantaoRepository:
         return plantao
 
     @staticmethod
+    def existe_conflito(db: Session, usuario_id: int, inicio, fim) -> bool:
+        return db.query(Plantao).filter(
+            Plantao.usuario_id == usuario_id,
+            Plantao.horario_inicio <= fim,
+            Plantao.horario_fim >= inicio
+        ).first() is not None
+
+    @staticmethod
     def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:
         stmt = select(Plantao).where(Plantao.usuario_id == usuario_id).order_by(Plantao.id.desc())
         return db.scalars(stmt).all()
