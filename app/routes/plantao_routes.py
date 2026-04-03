@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api", tags=["plantoes"])
 security = HTTPBearer(auto_error=False)
 
 
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
@@ -104,9 +105,10 @@ def logout_usuario(
     return AuthStatusResponse(autenticado=False, usuario=None)
 
 
-@router.get("/usuarios", response_model=list[UserResponse])
-def listar_usuarios(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return UserRepository.list_all(db)
+@router.get("/usuarios", response_model=UserResponse)
+def listar_usuarios(current_user=Depends(get_current_user)):
+    # RETORNA APENAS O PRÓPRIO USUÁRIO (SEGURANÇA)
+    return UserResponse.model_validate(current_user)
 
 
 @router.post("/locais", response_model=LocalResponse, status_code=status.HTTP_201_CREATED)
@@ -131,8 +133,8 @@ def listar_locais(
 
 @router.post("/plantoes", response_model=PlantaoResponse, status_code=status.HTTP_201_CREATED)
 def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    if payload.usuario_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Não é permitido criar plantão para outro usuário")
+    # FORÇA O USUARIO_ID A SER SEMPRE O DO USUÁRIO AUTENTICADO
+    payload.usuario_id = current_user.id
 
     local = LocalRepository.get_by_id(db, payload.local_id)
     if local is None:
@@ -140,7 +142,36 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     if local.usuario_id != current_user.id:
         raise HTTPException(status_code=400, detail="Local não pertence ao usuário autenticado")
 
-    return PlantaoRepository.create(db, payload)
+    # VALIDAÇÃO DE HORÁRIOS
+    if payload.horario_fim <= payload.horario_inicio:
+        raise HTTPException(
+            status_code=400,
+            detail="Horário de fim deve ser maior que o início"
+        )
+
+    # VALIDAÇÃO DE CONFLITO
+    conflito = PlantaoRepository.existe_conflito(
+        db,
+        usuario_id=current_user.id,
+        inicio=payload.horario_inicio,
+        fim=payload.horario_fim
+    )
+
+    if conflito:
+        raise HTTPException(
+            status_code=400,
+            detail="Já existe um plantão nesse horário"
+        )
+
+    # Melhor prática: não confiar na mutabilidade do payload
+    data = payload.model_dump()
+    data["usuario_id"] = current_user.id
+
+    try:
+        return PlantaoRepository.create(db, PlantaoCreate.model_validate(data))
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Erro ao criar plantão")
 
 
 @router.get("/plantoes", response_model=list[PlantaoResponse])
