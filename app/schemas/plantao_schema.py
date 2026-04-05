@@ -1,23 +1,33 @@
-from datetime import date, time
+from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Optional
+from typing import Generic, Optional, TypeVar
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic.generics import GenericModel
+
+
+DataT = TypeVar("DataT")
+
+
+class APIResponse(GenericModel, Generic[DataT]):
+    success: bool
+    message: str
+    data: DataT | None = None
 
 
 class UserBase(BaseModel):
-    nome: str = Field(min_length=2, max_length=120)
-    email: EmailStr
+    nome: str = Field(min_length=2, max_length=120, example="João Silva")
+    email: EmailStr = Field(example="joao@example.com")
 
 
 class UserCreate(UserBase):
-    telefone: Optional[str] = Field(default=None, max_length=30)
-    senha: str = Field(min_length=8, max_length=128)
+    telefone: Optional[str] = Field(default=None, max_length=30, example="11999999999")
+    senha: str = Field(min_length=8, max_length=128, example="SenhaForte123")
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
-    senha: str = Field(min_length=8, max_length=128)
+    email: EmailStr = Field(example="joao@example.com")
+    senha: str = Field(min_length=8, max_length=128, example="SenhaForte123")
 
 
 class UserResponse(UserBase):
@@ -48,6 +58,10 @@ class LocalBase(BaseModel):
 
 
 class LocalCreate(LocalBase):
+    pass
+
+
+class LocalCreateWithUsuario(LocalCreate):
     usuario_id: int
 
 
@@ -60,17 +74,52 @@ class LocalResponse(LocalBase):
 
 
 class PlantaoBase(BaseModel):
-    valor: Decimal = Field(gt=0)
-    horario_inicio: time
-    horario_fim: time
-    recorrencia: Optional[str] = Field(default=None, max_length=50)
+    valor: Decimal = Field(
+        gt=0,
+        example="180.00",
+        description="Valor do plantão em reais. Deve ser maior que zero."
+    )
+    horario_inicio: datetime = Field(
+        example="2026-04-10T08:00:00",
+        description="Data e hora de início do plantão."
+    )
+    horario_fim: datetime = Field(
+        example="2026-04-10T16:00:00",
+        description="Data e hora de fim do plantão."
+    )
+    recorrencia: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        example="Semanal",
+        description="Recorrência opcional do plantão."
+    )
 
 
 class PlantaoCreate(PlantaoBase):
+    local_id: int = Field(example=1, description="ID do local ao qual o plantão pertence.")
+    notificacao_ativa: bool = Field(default=True, example=True)
+    notificacao_antecedencia_minutos: int = Field(
+        default=60,
+        ge=0,
+        le=2880,
+        example=60,
+        description="Minutos antes do início para enviar a notificação."
+    )
+
+    @model_validator(mode="after")
+    def validar_duracao(cls, values):
+        if values.horario_fim <= values.horario_inicio:
+            raise ValueError("Horário de fim deve ser maior que o horário de início.")
+
+        max_duration = timedelta(hours=48)
+        if values.horario_fim - values.horario_inicio > max_duration:
+            raise ValueError("A duração do plantão não pode ser maior que 48 horas.")
+
+        return values
+
+
+class PlantaoCreateWithUsuario(PlantaoCreate):
     usuario_id: int
-    local_id: int
-    notificacao_ativa: bool = True
-    notificacao_antecedencia_minutos: int = Field(default=60, ge=0, le=43200)
 
 
 class PlantaoResponse(PlantaoBase):
@@ -79,6 +128,16 @@ class PlantaoResponse(PlantaoBase):
     local_id: int
     notificacao_ativa: bool
     notificacao_antecedencia_minutos: int
+    notificado: bool
 
     class Config:
         from_attributes = True
+
+
+class FinanceiroData(BaseModel):
+    total: Decimal
+    quantidade_plantoes: int
+
+
+class FinanceiroResponse(APIResponse[FinanceiroData]):
+    pass

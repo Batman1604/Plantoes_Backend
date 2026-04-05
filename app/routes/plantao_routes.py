@@ -1,6 +1,7 @@
+import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -14,16 +15,23 @@ from app.repositories.plantao_repository import (
     UserRepository,
 )
 from app.schemas.plantao_schema import (
+    APIResponse,
     AuthResponse,
     AuthStatusResponse,
+    FinanceiroData,
     LocalCreate,
+    LocalCreateWithUsuario,
     LocalResponse,
     PlantaoCreate,
+    PlantaoCreateWithUsuario,
     PlantaoResponse,
     UserCreate,
     UserLogin,
     UserResponse,
 )
+from app.services.financeiro_service import FinanceiroService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["plantoes"])
 security = HTTPBearer(auto_error=False)
@@ -53,23 +61,41 @@ def get_current_user(
     return user
 
 
-@router.post("/usuarios", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/usuarios",
+    response_model=APIResponse[UserResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Criar usuário",
+    description="Cria um novo usuário para acessar o sistema.",
+)
 def criar_usuario(payload: UserCreate, db: Session = Depends(get_db)):
     try:
-        return UserRepository.create(db, payload)
+        user = UserRepository.create(db, payload)
+        logger.info("Usuário criado: %s", user.email)
+        return APIResponse(success=True, message="Usuário criado com sucesso.", data=UserResponse.model_validate(user))
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="Email já cadastrado") from exc
 
 
-@router.post("/auth/login", response_model=AuthResponse)
+@router.post(
+    "/auth/login",
+    response_model=APIResponse[AuthResponse],
+    summary="Autenticar usuário",
+    description="Autentica o usuário e retorna um token de acesso JWT.",
+)
 def autenticar_usuario(payload: UserLogin, db: Session = Depends(get_db)):
     user = UserRepository.authenticate(db, payload)
     if user is None:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
 
     access_token = create_access_token(user.id)
-    return AuthResponse(autenticado=True, access_token=access_token, usuario=UserResponse.model_validate(user))
+    logger.info("Login realizado: %s", user.email)
+    return APIResponse(
+        success=True,
+        message="Login realizado com sucesso.",
+        data=AuthResponse(autenticado=True, access_token=access_token, usuario=UserResponse.model_validate(user)),
+    )
 
 
 @router.get("/auth/status", response_model=AuthStatusResponse)
@@ -111,76 +137,124 @@ def listar_usuarios(current_user=Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
 
 
-@router.post("/locais", response_model=LocalResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/locais",
+    response_model=LocalResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Criar local",
+    description="Cria um local para o usuário autenticado. O usuário não pode ser informado no corpo da requisição.",
+)
 def criar_local(payload: LocalCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    if payload.usuario_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Não é permitido criar local para outro usuário")
+    local_data = payload.model_dump()
+    local_data["usuario_id"] = current_user.id
+    local = LocalRepository.create(db, LocalCreateWithUsuario.model_validate(local_data))
+    logger.info("Local criado para usuário %s: %s", current_user.email, local.nome_local)
+    return local
 
-    return LocalRepository.create(db, payload)
 
-
-@router.get("/locais", response_model=list[LocalResponse])
+@router.get(
+    "/locais",
+    response_model=list[LocalResponse],
+    summary="Listar locais",
+    description="Retorna os locais cadastrados pelo usuário autenticado.",
+)
 def listar_locais(
-    usuario_id: int | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    target_user_id = usuario_id if usuario_id is not None else current_user.id
-    if target_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Não é permitido consultar locais de outro usuário")
-    return LocalRepository.list_by_user(db, target_user_id)
+    return LocalRepository.list_by_user(db, current_user.id)
 
 
-@router.post("/plantoes", response_model=PlantaoResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/plantoes",
+    response_model=APIResponse[PlantaoResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Criar plantão",
+    description="Cria um plantão para o usuário autenticado, validando duração e horários.",
+)
 def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    # FORÇA O USUARIO_ID A SER SEMPRE O DO USUÁRIO AUTENTICADO
-    payload.usuario_id = current_user.id
-
     local = LocalRepository.get_by_id(db, payload.local_id)
     if local is None:
         raise HTTPException(status_code=404, detail="Local não encontrado")
     if local.usuario_id != current_user.id:
-        raise HTTPException(status_code=400, detail="Local não pertence ao usuário autenticado")
+        raise HTTPException(status_code=403, detail="Local não pertence ao usuário autenticado")
 
-    # VALIDAÇÃO DE HORÁRIOS
     if payload.horario_fim <= payload.horario_inicio:
+        raise HTTPException(status_code=400, detail="Horário de fim deve ser maior que o horário de início")
+
+    max_duration_hours = 48
+    duration = payload.horario_fim - payload.horario_inicio
+    if duration.total_seconds() > max_duration_hours * 3600:
         raise HTTPException(
             status_code=400,
-            detail="Horário de fim deve ser maior que o início"
+            detail=f"A duração do plantão não pode ser maior que {max_duration_hours} horas.",
         )
 
-    # VALIDAÇÃO DE CONFLITO
     conflito = PlantaoRepository.existe_conflito(
         db,
         usuario_id=current_user.id,
         inicio=payload.horario_inicio,
-        fim=payload.horario_fim
+        fim=payload.horario_fim,
     )
 
     if conflito:
-        raise HTTPException(
-            status_code=400,
-            detail="Já existe um plantão nesse horário"
-        )
+        raise HTTPException(status_code=400, detail="Já existe um plantão nesse horário")
 
-    # Melhor prática: não confiar na mutabilidade do payload
     data = payload.model_dump()
     data["usuario_id"] = current_user.id
 
     try:
-        return PlantaoRepository.create(db, PlantaoCreate.model_validate(data))
+        plantao = PlantaoRepository.create(db, PlantaoCreateWithUsuario.model_validate(data))
+        logger.info("Plantão criado para usuário %s no local %s", current_user.email, payload.local_id)
+        return APIResponse(
+            success=True,
+            message="Plantão criado com sucesso.",
+            data=PlantaoResponse.model_validate(plantao),
+        )
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Erro ao criar plantão")
 
 
-@router.get("/plantoes", response_model=list[PlantaoResponse])
+@router.get(
+    "/plantoes",
+    response_model=list[PlantaoResponse],
+    summary="Listar plantões",
+    description="Retorna os plantões do usuário autenticado.",
+)
 def listar_plantoes(
-    usuario_id: int | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    target_user_id = usuario_id if usuario_id is not None else current_user.id
-    if target_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Não é permitido consultar plantões de outro usuário")
-    return PlantaoRepository.list_by_user(db, target_user_id)
+    return PlantaoRepository.list_by_user(db, current_user.id)
+
+
+@router.get(
+    "/financeiro/mensal",
+    response_model=APIResponse[FinanceiroData],
+    summary="Resumo financeiro mensal",
+    description="Retorna o total e a quantidade de plantões do mês solicitado para o usuário autenticado.",
+)
+def obter_total_financeiro_mensal(
+    mes: int = Query(..., ge=1, le=12, description="Mês do relatório (1-12)."),
+    ano: int = Query(..., ge=1, description="Ano do relatório."),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    resultado = FinanceiroService.calcular_total_mensal(db, current_user.id, mes, ano)
+    return APIResponse(success=True, message="Resumo financeiro mensal gerado com sucesso.", data=FinanceiroData.model_validate(resultado))
+
+
+@router.get(
+    "/financeiro/anual",
+    response_model=APIResponse[FinanceiroData],
+    summary="Resumo financeiro anual",
+    description="Retorna o total e a quantidade de plantões do ano solicitado para o usuário autenticado.",
+)
+def obter_total_financeiro_anual(
+    ano: int = Query(..., ge=1, description="Ano do relatório."),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    resultado = FinanceiroService.calcular_total_anual(db, current_user.id, ano)
+    return APIResponse(success=True, message="Resumo financeiro anual gerado com sucesso.", data=FinanceiroData.model_validate(resultado))

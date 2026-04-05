@@ -1,0 +1,39 @@
+from decimal import Decimal
+
+from sqlalchemy import extract, func, select
+from sqlalchemy.orm import Session
+
+from app.models import Plantao
+
+
+class FinanceiroService:
+    @staticmethod
+    def calcular_total_mensal(db: Session, usuario_id: int, mes: int, ano: int) -> dict:
+        stmt = select(
+            func.coalesce(func.sum(Plantao.valor), 0).label("total"),
+            func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),
+        ).where(
+            Plantao.usuario_id == usuario_id,
+            extract("month", Plantao.horario_inicio) == mes,
+            extract("year", Plantao.horario_inicio) == ano,
+        )
+        resultado = db.execute(stmt).one()
+        return {
+            "total": resultado.total if resultado.total is not None else Decimal("0"),
+            "quantidade_plantoes": int(resultado.quantidade_plantoes),
+        }
+
+    @staticmethod
+    def calcular_total_anual(db: Session, usuario_id: int, ano: int) -> dict:
+        stmt = select(
+            func.coalesce(func.sum(Plantao.valor), 0).label("total"),
+            func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),
+        ).where(
+            Plantao.usuario_id == usuario_id,
+            extract("year", Plantao.horario_inicio) == ano,
+        )
+        resultado = db.execute(stmt).one()
+        return {
+            "total": resultado.total if resultado.total is not None else Decimal("0"),
+            "quantidade_plantoes": int(resultado.quantidade_plantoes),
+        }

@@ -1,10 +1,24 @@
-from fastapi import FastAPI
+import logging
+import threading
+import time
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
-from app.core.database import Base, engine
+from app.core.database import Base, SessionLocal, engine
 from app.routes.plantao_routes import router
+from app.services.notificacao_service import NotificacaoService
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
@@ -60,8 +74,29 @@ def ensure_foreign_keys() -> None:
         connection.execute(statement)
 
 
-ensure_foreign_keys()
+def ensure_notificado_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            columns = connection.execute(text("PRAGMA table_info(plantoes)")).all()
+            if not any(column[1] == "notificado" for column in columns):
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN notificado BOOLEAN NOT NULL DEFAULT 0"))
+        return
 
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'plantoes' AND column_name = 'notificado'"
+                )
+            ).scalar() is not None
+            if not exists:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN notificado BOOLEAN NOT NULL DEFAULT FALSE"))
+        return
+
+
+ensure_foreign_keys()
+ensure_notificado_column()
 
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
@@ -72,6 +107,49 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    logger.warning("HTTP exception: %s", exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "message": str(exc.detail), "data": None},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning("Validação falhou: %s", exc.errors())
+    return JSONResponse(
+        status_code=422,
+        content={"success": False, "message": "Dados de entrada inválidos.", "data": exc.errors()},
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Erro interno não tratado")
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "message": "Erro interno do servidor.", "data": None},
+    )
+
+
+def notificacao_worker() -> None:
+    while True:
+        try:
+            with SessionLocal() as db:
+                NotificacaoService.processar_notificacoes(db)
+        except Exception:
+            logger.exception("Erro ao executar worker de notificações")
+        time.sleep(60)
+
+
+@app.on_event("startup")
+def iniciar_worker_notificacoes() -> None:
+    thread = threading.Thread(target=notificacao_worker, daemon=True, name="notificacao-worker")
+    thread.start()
 
 
 @app.get("/health", tags=["health"])
