@@ -70,12 +70,12 @@ class PlantaoRepository:
 
     @staticmethod
     def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:
-        stmt = select(Plantao).where(Plantao.usuario_id == usuario_id).order_by(Plantao.id.desc())
+        stmt = select(Plantao).where(Plantao.usuario_id == usuario_id).order_by(Plantao.data.desc(), Plantao.id.desc())
         return db.scalars(stmt).all()
 
     @staticmethod
     def list_all(db: Session) -> list[Plantao]:
-        return db.scalars(select(Plantao).order_by(Plantao.id.desc())).all()
+        return db.scalars(select(Plantao).order_by(Plantao.data.desc(), Plantao.id.desc())).all()
 
 
 class TokenRevogadoRepository:

@@ -61,6 +61,7 @@ class LocalResponse(LocalBase):
 
 class PlantaoBase(BaseModel):
     valor: Decimal = Field(gt=0)
+    data: date
     horario_inicio: time
     horario_fim: time
     recorrencia: Optional[str] = Field(default=None, max_length=50)
