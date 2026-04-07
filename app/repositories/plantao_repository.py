@@ -62,7 +62,7 @@ class LocalRepository:
 class PlantaoRepository:
     @staticmethod
     def create(db: Session, payload: PlantaoCreate) -> Plantao:
-        plantao = Plantao(**payload.model_dump())
+        plantao = Plantao(**payload.model_dump(exclude={"acao_conflito"}))
         db.add(plantao)
         db.commit()
         db.refresh(plantao)
@@ -75,6 +75,28 @@ class PlantaoRepository:
             Plantao.horario_inicio <= fim,
             Plantao.horario_fim >= inicio
         ).first() is not None
+
+    @staticmethod
+    def get_conflito(db: Session, usuario_id: int, inicio, fim) -> Plantao | None:
+        """Busca o plantão conflitante com o horário informado."""
+        return db.query(Plantao).filter(
+            Plantao.usuario_id == usuario_id,
+            Plantao.horario_inicio <= fim,
+            Plantao.horario_fim >= inicio
+        ).first()
+
+    @staticmethod
+    def update(db: Session, plantao_id: int, **kwargs) -> Plantao | None:
+        """Atualiza um plantão com os dados fornecidos."""
+        plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id))
+        if plantao is None:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(plantao, key):
+                setattr(plantao, key, value)
+        db.commit()
+        db.refresh(plantao)
+        return plantao
 
     @staticmethod
     def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:

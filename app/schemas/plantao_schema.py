@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Generic, Optional, TypeVar
+from typing import Generic, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
 from pydantic.generics import GenericModel
@@ -104,6 +104,10 @@ class PlantaoCreate(PlantaoBase):
         le=2880,
         example=60,
         description="Minutos antes do início para enviar a notificação."
+    )
+    acao_conflito: Literal["manter", "ajustar", "cancelar"] | None = Field(
+        default=None,
+        description="Ação a tomar quando houver conflito de horário: manter (não fazer nada), ajustar (ajustar horários) ou cancelar (cancelar plantão)."
     )
 
     @model_validator(mode="after")

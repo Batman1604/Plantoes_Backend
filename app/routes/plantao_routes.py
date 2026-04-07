@@ -190,16 +190,49 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
             detail=f"A duração do plantão não pode ser maior que {max_duration_hours} horas.",
         )
 
-    conflito = PlantaoRepository.existe_conflito(
+    # Verificar conflito
+    plantao_conflitante = PlantaoRepository.get_conflito(
         db,
         usuario_id=current_user.id,
         inicio=payload.horario_inicio,
         fim=payload.horario_fim,
     )
 
-    if conflito:
-        raise HTTPException(status_code=400, detail="Já existe um plantão nesse horário")
+    # Se houver conflito e acao_conflito for None
+    if plantao_conflitante and payload.acao_conflito is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Conflito de horário detectado. Escolha uma ação para resolver: 'manter', 'ajustar' ou 'cancelar'."
+        )
 
+    # Se acao_conflito == "cancelar"
+    if payload.acao_conflito == "cancelar":
+        logger.info("Criação de plantão cancelada por usuário %s", current_user.email)
+        return APIResponse(
+            success=True,
+            message="Criação de plantão cancelada conforme solicitado.",
+            data=None,
+        )
+
+    # Se acao_conflito == "ajustar"
+    if payload.acao_conflito == "ajustar" and plantao_conflitante:
+        try:
+            # Atualizar o horario_fim do plantão conflitante para o horario_inicio do novo
+            PlantaoRepository.update(
+                db,
+                plantao_conflitante.id,
+                horario_fim=payload.horario_inicio
+            )
+            logger.info(
+                "Plantão %s ajustado para resolver conflito com novo plantão do usuário %s",
+                plantao_conflitante.id,
+                current_user.email
+            )
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Erro ao ajustar plantão conflitante") from exc
+
+    # Criar plantão (acao_conflito == "manter" ou "ajustar" com ajuste realizado)
     data = payload.model_dump()
     data["usuario_id"] = current_user.id
 
@@ -211,9 +244,9 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
             message="Plantão criado com sucesso.",
             data=PlantaoResponse.model_validate(plantao),
         )
-    except Exception:
+    except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Erro ao criar plantão")
+        raise HTTPException(status_code=500, detail="Erro ao criar plantão") from exc
 
 
 @router.get(

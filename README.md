@@ -39,6 +39,10 @@ API para armazenar usuários e seus plantões com:
 ```bash
 uvicorn app.main:app --reload
 ```
+## Caso não funcione a primeira opção
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
 ## Fluxo de autenticação JWT
 1. Crie um usuário em `POST /api/usuarios`.
