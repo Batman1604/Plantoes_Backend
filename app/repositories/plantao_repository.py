@@ -70,20 +70,24 @@ class PlantaoRepository:
 
     @staticmethod
     def existe_conflito(db: Session, usuario_id: int, inicio, fim) -> bool:
-        return db.query(Plantao).filter(
-            Plantao.usuario_id == usuario_id,
-            Plantao.horario_inicio <= fim,
-            Plantao.horario_fim >= inicio
-        ).first() is not None
+        plantoes = db.query(Plantao).filter(Plantao.usuario_id == usuario_id).all()
+        for plantao in plantoes:
+            inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
+            fim_existente = datetime.combine(plantao.data, plantao.horario_fim)
+            if inicio_existente <= fim and fim_existente >= inicio:
+                return True
+        return False
 
     @staticmethod
     def get_conflito(db: Session, usuario_id: int, inicio, fim) -> Plantao | None:
         """Busca o plantão conflitante com o horário informado."""
-        return db.query(Plantao).filter(
-            Plantao.usuario_id == usuario_id,
-            Plantao.horario_inicio <= fim,
-            Plantao.horario_fim >= inicio
-        ).first()
+        plantoes = db.query(Plantao).filter(Plantao.usuario_id == usuario_id).all()
+        for plantao in plantoes:
+            inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
+            fim_existente = datetime.combine(plantao.data, plantao.horario_fim)
+            if inicio_existente <= fim and fim_existente >= inicio:
+                return plantao
+        return None
 
     @staticmethod
     def update(db: Session, plantao_id: int, **kwargs) -> Plantao | None:

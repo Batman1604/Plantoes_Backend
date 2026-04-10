@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import date, time
 from decimal import Decimal
 
 from sqlalchemy import create_engine, delete
@@ -36,22 +36,25 @@ class TestFinanceiroService(unittest.TestCase):
             usuario_id=1,
             local_id=1,
             valor=Decimal("100.50"),
-            horario_inicio=datetime(2000, 1, 10, 10, 0),
-            horario_fim=datetime(2000, 1, 10, 12, 0),
+            data=date(2000, 1, 10),
+            horario_inicio=time(10, 0),
+            horario_fim=time(12, 0),
         )
         self.criar_plantao(
             usuario_id=1,
             local_id=1,
             valor=Decimal("200.00"),
-            horario_inicio=datetime(2000, 1, 11, 11, 0),
-            horario_fim=datetime(2000, 1, 11, 13, 0),
+            data=date(2000, 1, 11),
+            horario_inicio=time(11, 0),
+            horario_fim=time(13, 0),
         )
         self.criar_plantao(
             usuario_id=2,
             local_id=1,
             valor=Decimal("50.00"),
-            horario_inicio=datetime(2000, 1, 11, 11, 0),
-            horario_fim=datetime(2000, 1, 11, 13, 0),
+            data=date(2000, 1, 11),
+            horario_inicio=time(11, 0),
+            horario_fim=time(13, 0),
         )
 
         resultado = FinanceiroService.calcular_total_mensal(self.db, usuario_id=1, mes=1, ano=2000)
@@ -64,22 +67,25 @@ class TestFinanceiroService(unittest.TestCase):
             usuario_id=1,
             local_id=1,
             valor=Decimal("120.00"),
-            horario_inicio=datetime(2000, 1, 10, 10, 0),
-            horario_fim=datetime(2000, 1, 10, 12, 0),
+            data=date(2000, 1, 10),
+            horario_inicio=time(10, 0),
+            horario_fim=time(12, 0),
         )
         self.criar_plantao(
             usuario_id=1,
             local_id=1,
             valor=Decimal("180.00"),
-            horario_inicio=datetime(2000, 1, 11, 11, 0),
-            horario_fim=datetime(2000, 1, 11, 13, 0),
+            data=date(2000, 1, 11),
+            horario_inicio=time(11, 0),
+            horario_fim=time(13, 0),
         )
         self.criar_plantao(
             usuario_id=2,
             local_id=1,
             valor=Decimal("75.00"),
-            horario_inicio=datetime(2000, 1, 11, 11, 0),
-            horario_fim=datetime(2000, 1, 11, 13, 0),
+            data=date(2000, 1, 11),
+            horario_inicio=time(11, 0),
+            horario_fim=time(13, 0),
         )
 
         resultado = FinanceiroService.calcular_total_anual(self.db, usuario_id=1, ano=2000)

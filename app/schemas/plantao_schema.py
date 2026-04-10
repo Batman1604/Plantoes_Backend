@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Generic, Literal, Optional, TypeVar
 
@@ -79,13 +79,17 @@ class PlantaoBase(BaseModel):
         example="180.00",
         description="Valor do plantão em reais. Deve ser maior que zero."
     )
-    horario_inicio: datetime = Field(
-        example="2026-04-10T08:00:00",
-        description="Data e hora de início do plantão."
+    data: date = Field(
+        example="2026-04-10",
+        description="Data do plantão."
     )
-    horario_fim: datetime = Field(
-        example="2026-04-10T16:00:00",
-        description="Data e hora de fim do plantão."
+    horario_inicio: time = Field(
+        example="08:00:00",
+        description="Hora de início do plantão."
+    )
+    horario_fim: time = Field(
+        example="16:00:00",
+        description="Hora de fim do plantão."
     )
     recorrencia: Optional[str] = Field(
         default=None,
@@ -112,11 +116,14 @@ class PlantaoCreate(PlantaoBase):
 
     @model_validator(mode="after")
     def validar_duracao(cls, values):
-        if values.horario_fim <= values.horario_inicio:
+        inicio = datetime.combine(values.data, values.horario_inicio)
+        fim = datetime.combine(values.data, values.horario_fim)
+
+        if fim <= inicio:
             raise ValueError("Horário de fim deve ser maior que o horário de início.")
 
         max_duration = timedelta(hours=48)
-        if values.horario_fim - values.horario_inicio > max_duration:
+        if fim - inicio > max_duration:
             raise ValueError("A duração do plantão não pode ser maior que 48 horas.")
 
         return values
