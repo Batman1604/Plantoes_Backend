@@ -179,11 +179,14 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     if local.usuario_id != current_user.id:
         raise HTTPException(status_code=403, detail="Local não pertence ao usuário autenticado")
 
-    if payload.horario_fim <= payload.horario_inicio:
+    inicio_dt = datetime.combine(payload.data, payload.horario_inicio)
+    fim_dt = datetime.combine(payload.data, payload.horario_fim)
+
+    if fim_dt <= inicio_dt:
         raise HTTPException(status_code=400, detail="Horário de fim deve ser maior que o horário de início")
 
     max_duration_hours = 48
-    duration = payload.horario_fim - payload.horario_inicio
+    duration = fim_dt - inicio_dt
     if duration.total_seconds() > max_duration_hours * 3600:
         raise HTTPException(
             status_code=400,
@@ -194,8 +197,8 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     plantao_conflitante = PlantaoRepository.get_conflito(
         db,
         usuario_id=current_user.id,
-        inicio=payload.horario_inicio,
-        fim=payload.horario_fim,
+        inicio=inicio_dt,
+        fim=fim_dt,
     )
 
     # Se houver conflito e acao_conflito for None
