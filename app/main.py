@@ -10,6 +10,7 @@ from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
+from app import models  # noqa: F401
 from app.core.database import Base, SessionLocal, engine
 from app.routes.plantao_routes import router
 from app.services.notificacao_service import NotificacaoService
@@ -97,6 +98,42 @@ def ensure_notificado_column() -> None:
 
 ensure_foreign_keys()
 ensure_notificado_column()
+
+
+def ensure_novas_colunas() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
+            if not any(column[1] == "executavel" for column in plantoes_cols):
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN executavel BOOLEAN NOT NULL DEFAULT 0"))
+            if not any(column[1] == "pagamento_plantao" for column in plantoes_cols):
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            executavel_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'plantoes' AND column_name = 'executavel'"
+                )
+            ).scalar() is not None
+            if not executavel_exists:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN executavel BOOLEAN NOT NULL DEFAULT FALSE"))
+
+            pagamento_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'plantoes' AND column_name = 'pagamento_plantao'"
+                )
+            ).scalar() is not None
+            if not pagamento_exists:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
+        return
+
+
+
+ensure_novas_colunas()
 
 app = FastAPI(title=settings.app_name)
 app.add_middleware(

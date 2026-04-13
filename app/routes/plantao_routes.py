@@ -30,6 +30,7 @@ from app.schemas.plantao_schema import (
     UserResponse,
 )
 from app.services.financeiro_service import FinanceiroService
+from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,12 @@ def listar_usuarios(current_user=Depends(get_current_user)):
 )
 def criar_local(payload: LocalCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     local_data = payload.model_dump()
+    if payload.dia_pagamento is not None:
+        local_data["dia_pagamento"] = PagamentoService.calcular_dia_util(
+            payload.data_inicio.year,
+            payload.data_inicio.month,
+            payload.dia_pagamento,
+        )
     local_data["usuario_id"] = current_user.id
     local = LocalRepository.create(db, LocalCreateWithUsuario.model_validate(local_data))
     logger.info("Local criado para usuário %s: %s", current_user.email, local.nome_local)
@@ -180,10 +187,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
         raise HTTPException(status_code=403, detail="Local não pertence ao usuário autenticado")
 
     inicio_dt = datetime.combine(payload.data, payload.horario_inicio)
-    fim_dt = datetime.combine(payload.data, payload.horario_fim)
-
-    if fim_dt <= inicio_dt:
-        raise HTTPException(status_code=400, detail="Horário de fim deve ser maior que o horário de início")
+    fim_dt = ajustar_fim_intervalo(inicio_dt, datetime.combine(payload.data, payload.horario_fim))
 
     max_duration_hours = 48
     duration = fim_dt - inicio_dt
@@ -238,6 +242,12 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     # Criar plantão (acao_conflito == "manter" ou "ajustar" com ajuste realizado)
     data = payload.model_dump()
     data["usuario_id"] = current_user.id
+    data["executavel"] = False
+    if local.dia_pagamento is not None:
+        data["pagamento_plantao"] = PagamentoService.calcular_data_pagamento_plantao(
+            payload.data,
+            local.dia_pagamento,
+        )
 
     try:
         plantao = PlantaoRepository.create(db, PlantaoCreateWithUsuario.model_validate(data))

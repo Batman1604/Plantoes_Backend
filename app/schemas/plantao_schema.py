@@ -120,7 +120,7 @@ class PlantaoCreate(PlantaoBase):
         fim = datetime.combine(values.data, values.horario_fim)
 
         if fim <= inicio:
-            raise ValueError("Horário de fim deve ser maior que o horário de início.")
+            fim += timedelta(days=1)
 
         max_duration = timedelta(hours=48)
         if fim - inicio > max_duration:
@@ -131,6 +131,8 @@ class PlantaoCreate(PlantaoBase):
 
 class PlantaoCreateWithUsuario(PlantaoCreate):
     usuario_id: int
+    executavel: bool = False
+    pagamento_plantao: Optional[date] = None
 
 
 class PlantaoResponse(PlantaoBase):
@@ -140,6 +142,8 @@ class PlantaoResponse(PlantaoBase):
     notificacao_ativa: bool
     notificacao_antecedencia_minutos: int
     notificado: bool
+    executavel: bool
+    pagamento_plantao: Optional[date] = None
 
     class Config:
         from_attributes = True
