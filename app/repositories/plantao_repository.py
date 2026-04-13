@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password, verify_password
 from app.models import Local, Plantao, TokenRevogado, User
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
+from app.services.pagamento_service import ajustar_fim_intervalo
 
 
 class UserRepository:
@@ -73,7 +74,7 @@ class PlantaoRepository:
         plantoes = db.query(Plantao).filter(Plantao.usuario_id == usuario_id).all()
         for plantao in plantoes:
             inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
-            fim_existente = datetime.combine(plantao.data, plantao.horario_fim)
+            fim_existente = ajustar_fim_intervalo(inicio_existente, datetime.combine(plantao.data, plantao.horario_fim))
             if inicio_existente <= fim and fim_existente >= inicio:
                 return True
         return False
@@ -84,7 +85,7 @@ class PlantaoRepository:
         plantoes = db.query(Plantao).filter(Plantao.usuario_id == usuario_id).all()
         for plantao in plantoes:
             inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
-            fim_existente = datetime.combine(plantao.data, plantao.horario_fim)
+            fim_existente = ajustar_fim_intervalo(inicio_existente, datetime.combine(plantao.data, plantao.horario_fim))
             if inicio_existente <= fim and fim_existente >= inicio:
                 return plantao
         return None

@@ -98,6 +98,42 @@ def ensure_notificado_column() -> None:
 ensure_foreign_keys()
 ensure_notificado_column()
 
+
+def ensure_novas_colunas() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            locais_cols = connection.execute(text("PRAGMA table_info(locais)")).all()
+            if not any(column[1] == "exucatado" for column in locais_cols):
+                connection.execute(text("ALTER TABLE locais ADD COLUMN exucatado BOOLEAN NOT NULL DEFAULT 0"))
+
+            plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
+            if not any(column[1] == "pagamento_plantao" for column in plantoes_cols):
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            exucatado_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'locais' AND column_name = 'exucatado'"
+                )
+            ).scalar() is not None
+            if not exucatado_exists:
+                connection.execute(text("ALTER TABLE locais ADD COLUMN exucatado BOOLEAN NOT NULL DEFAULT FALSE"))
+
+            pagamento_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'plantoes' AND column_name = 'pagamento_plantao'"
+                )
+            ).scalar() is not None
+            if not pagamento_exists:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
+        return
+
+ensure_novas_colunas()
+
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
     CORSMiddleware,
