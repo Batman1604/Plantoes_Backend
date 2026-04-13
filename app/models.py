@@ -48,6 +48,7 @@ class Plantao(Base):
     notificacao_ativa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notificacao_antecedencia_minutos: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     notificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    executavel: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     pagamento_plantao: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     local: Mapped[Local] = relationship(back_populates="plantoes")

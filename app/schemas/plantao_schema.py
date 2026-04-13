@@ -132,6 +132,7 @@ class PlantaoCreate(PlantaoBase):
 
 class PlantaoCreateWithUsuario(PlantaoCreate):
     usuario_id: int
+    executavel: bool = False
     pagamento_plantao: Optional[date] = None
 
 
@@ -142,6 +143,7 @@ class PlantaoResponse(PlantaoBase):
     notificacao_ativa: bool
     notificacao_antecedencia_minutos: int
     notificado: bool
+    executavel: bool
     pagamento_plantao: Optional[date] = None
 
     class Config:

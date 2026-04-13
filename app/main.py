@@ -10,6 +10,7 @@ from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
+from app import models  # noqa: F401
 from app.core.database import Base, SessionLocal, engine
 from app.routes.plantao_routes import router
 from app.services.notificacao_service import NotificacaoService
@@ -102,6 +103,9 @@ ensure_notificado_column()
 def ensure_novas_colunas() -> None:
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
+            plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
+            if not any(column[1] == "executavel" for column in plantoes_cols):
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN executavel BOOLEAN NOT NULL DEFAULT 0"))
             locais_cols = connection.execute(text("PRAGMA table_info(locais)")).all()
             if not any(column[1] == "exucatado" for column in locais_cols):
                 connection.execute(text("ALTER TABLE locais ADD COLUMN exucatado BOOLEAN NOT NULL DEFAULT 0"))
@@ -113,6 +117,14 @@ def ensure_novas_colunas() -> None:
 
     if engine.dialect.name == "postgresql":
         with engine.begin() as connection:
+            executavel_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'plantoes' AND column_name = 'executavel'"
+                )
+            ).scalar() is not None
+            if not executavel_exists:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN executavel BOOLEAN NOT NULL DEFAULT FALSE"))
             exucatado_exists = connection.execute(
                 text(
                     "SELECT 1 FROM information_schema.columns "
@@ -131,6 +143,8 @@ def ensure_novas_colunas() -> None:
             if not pagamento_exists:
                 connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
         return
+
+
 
 ensure_novas_colunas()
 

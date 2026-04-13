@@ -242,6 +242,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     # Criar plantão (acao_conflito == "manter" ou "ajustar" com ajuste realizado)
     data = payload.model_dump()
     data["usuario_id"] = current_user.id
+    data["executavel"] = False
     if local.dia_pagamento is not None:
         data["pagamento_plantao"] = PagamentoService.calcular_data_pagamento_plantao(
             payload.data,
