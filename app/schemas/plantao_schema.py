@@ -55,6 +55,7 @@ class LocalBase(BaseModel):
     data_inicio: date
     data_final: date
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
+    exucatado: bool = Field(default=False)
 
 
 class LocalCreate(LocalBase):
