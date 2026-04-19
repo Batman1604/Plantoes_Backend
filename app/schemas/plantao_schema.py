@@ -62,6 +62,14 @@ class LocalCreate(LocalBase):
     pass
 
 
+class LocalUpdate(BaseModel):
+    nome_local: str | None = Field(default=None, min_length=2, max_length=120)
+    data_inicio: date | None = None
+    data_final: date | None = None
+    dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
+    exucatado: bool | None = None
+
+
 class LocalCreateWithUsuario(LocalCreate):
     usuario_id: int
 
@@ -134,6 +142,17 @@ class PlantaoCreateWithUsuario(PlantaoCreate):
     usuario_id: int
     executado: bool = False
     pagamento_plantao: Optional[date] = None
+
+
+class PlantaoUpdate(BaseModel):
+    valor: Decimal | None = Field(default=None, gt=0)
+    data: date | None = None
+    horario_inicio: time | None = None
+    horario_fim: time | None = None
+    recorrencia: Optional[str] = Field(default=None, max_length=50)
+    local_id: int | None = None
+    notificacao_ativa: bool | None = None
+    notificacao_antecedencia_minutos: int | None = Field(default=None, ge=0, le=2880)
 
 
 class PlantaoResponse(PlantaoBase):
