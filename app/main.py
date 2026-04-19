@@ -104,11 +104,11 @@ def ensure_novas_colunas() -> None:
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
             plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
-            if not any(column[1] == "executavel" for column in plantoes_cols):
-                connection.execute(text("ALTER TABLE plantoes ADD COLUMN executavel BOOLEAN NOT NULL DEFAULT 0"))
+            if not any(column[1] == "executado" for column in plantoes_cols):
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN executado BOOLEAN NOT NULL DEFAULT 0"))
             locais_cols = connection.execute(text("PRAGMA table_info(locais)")).all()
-            if not any(column[1] == "exucatado" for column in locais_cols):
-                connection.execute(text("ALTER TABLE locais ADD COLUMN exucatado BOOLEAN NOT NULL DEFAULT 0"))
+            if not any(column[1] == "executado" for column in locais_cols):
+                connection.execute(text("ALTER TABLE locais ADD COLUMN executado BOOLEAN NOT NULL DEFAULT 0"))
 
             plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
             if not any(column[1] == "pagamento_plantao" for column in plantoes_cols):
@@ -117,22 +117,22 @@ def ensure_novas_colunas() -> None:
 
     if engine.dialect.name == "postgresql":
         with engine.begin() as connection:
-            executavel_exists = connection.execute(
+            executado_exists = connection.execute(
                 text(
                     "SELECT 1 FROM information_schema.columns "
-                    "WHERE table_name = 'plantoes' AND column_name = 'executavel'"
+                    "WHERE table_name = 'plantoes' AND column_name = 'executado'"
                 )
             ).scalar() is not None
-            if not executavel_exists:
-                connection.execute(text("ALTER TABLE plantoes ADD COLUMN executavel BOOLEAN NOT NULL DEFAULT FALSE"))
-            exucatado_exists = connection.execute(
+            if not executado_exists:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN executado BOOLEAN NOT NULL DEFAULT FALSE"))
+            executado_exists = connection.execute(
                 text(
                     "SELECT 1 FROM information_schema.columns "
-                    "WHERE table_name = 'locais' AND column_name = 'exucatado'"
+                    "WHERE table_name = 'locais' AND column_name = 'executado'"
                 )
             ).scalar() is not None
-            if not exucatado_exists:
-                connection.execute(text("ALTER TABLE locais ADD COLUMN exucatado BOOLEAN NOT NULL DEFAULT FALSE"))
+            if not executado_exists:
+                connection.execute(text("ALTER TABLE locais ADD COLUMN executado BOOLEAN NOT NULL DEFAULT FALSE"))
 
             pagamento_exists = connection.execute(
                 text(
