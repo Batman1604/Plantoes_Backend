@@ -219,6 +219,29 @@ def atualizar_local(
     )
 
 
+@router.delete(
+    "/locais/{local_id}",
+    response_model=APIResponse[None],
+    summary="Deletar local",
+    description="Remove um local do usuário autenticado e seus plantões associados.",
+)
+def deletar_local(
+    local_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    deletado = LocalRepository.delete_by_user(db, local_id, current_user.id)
+    if not deletado:
+        raise HTTPException(status_code=404, detail="Local não encontrado")
+
+    logger.info("Local %s deletado por %s", local_id, current_user.email)
+    return APIResponse(
+        success=True,
+        message="Local deletado com sucesso.",
+        data=None,
+    )
+
+
 @router.post(
     "/plantoes",
     response_model=APIResponse[PlantaoResponse],
@@ -402,6 +425,29 @@ def atualizar_executado_plantao(
         success=True,
         message="Status executado atualizado com sucesso.",
         data=PlantaoResponse.model_validate(plantao),
+    )
+
+
+@router.delete(
+    "/plantoes/{plantao_id}",
+    response_model=APIResponse[None],
+    summary="Deletar plantão",
+    description="Remove um plantão pertencente ao usuário autenticado.",
+)
+def deletar_plantao(
+    plantao_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    deletado = PlantaoRepository.delete_by_user(db, plantao_id, current_user.id)
+    if not deletado:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+
+    logger.info("Plantão %s deletado por %s", plantao_id, current_user.email)
+    return APIResponse(
+        success=True,
+        message="Plantão deletado com sucesso.",
+        data=None,
     )
 
 
