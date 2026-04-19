@@ -22,10 +22,12 @@ from app.schemas.plantao_schema import (
     LocalCreate,
     LocalCreateWithUsuario,
     LocalResponse,
+    LocalUpdate,
     PlantaoCreate,
     PlantaoCreateWithUsuario,
     PlantaoExecutadoUpdate,
     PlantaoResponse,
+    PlantaoUpdate,
     UserCreate,
     UserLogin,
     UserResponse,
@@ -176,6 +178,47 @@ def listar_locais(
     return LocalRepository.list_by_user(db, current_user.id)
 
 
+@router.patch(
+    "/locais/{local_id}",
+    response_model=APIResponse[LocalResponse],
+    summary="Atualizar local",
+    description="Atualiza os campos de um local pertencente ao usuário autenticado.",
+)
+def atualizar_local(
+    local_id: int,
+    payload: LocalUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dados_atualizacao = payload.model_dump(exclude_unset=True)
+    if not dados_atualizacao:
+        raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
+
+    local_atual = LocalRepository.get_by_id(db, local_id)
+    if local_atual is None or local_atual.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado")
+
+    data_inicio = dados_atualizacao.get("data_inicio", local_atual.data_inicio)
+    dia_pagamento = dados_atualizacao.get("dia_pagamento", local_atual.dia_pagamento)
+    if dia_pagamento is not None:
+        dados_atualizacao["dia_pagamento"] = PagamentoService.calcular_dia_util(
+            data_inicio.year,
+            data_inicio.month,
+            dia_pagamento,
+        )
+
+    local = LocalRepository.update_by_user(db, local_id, current_user.id, **dados_atualizacao)
+    if local is None:
+        raise HTTPException(status_code=404, detail="Local não encontrado")
+
+    logger.info("Local %s atualizado por %s", local_id, current_user.email)
+    return APIResponse(
+        success=True,
+        message="Local atualizado com sucesso.",
+        data=LocalResponse.model_validate(local),
+    )
+
+
 @router.post(
     "/plantoes",
     response_model=APIResponse[PlantaoResponse],
@@ -277,6 +320,60 @@ def listar_plantoes(
     current_user=Depends(get_current_user),
 ):
     return PlantaoRepository.list_by_user(db, current_user.id)
+
+
+@router.patch(
+    "/plantoes/{plantao_id}",
+    response_model=APIResponse[PlantaoResponse],
+    summary="Atualizar plantão",
+    description="Atualiza os campos de um plantão pertencente ao usuário autenticado.",
+)
+def atualizar_plantao(
+    plantao_id: int,
+    payload: PlantaoUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dados_atualizacao = payload.model_dump(exclude_unset=True)
+    if not dados_atualizacao:
+        raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
+
+    plantao_atual = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
+    if plantao_atual is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+
+    local_destino_id = dados_atualizacao.get("local_id", plantao_atual.local_id)
+    local = LocalRepository.get_by_id(db, local_destino_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado")
+
+    data_ref = dados_atualizacao.get("data", plantao_atual.data)
+    horario_inicio_ref = dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio)
+    horario_fim_ref = dados_atualizacao.get("horario_fim", plantao_atual.horario_fim)
+
+    inicio_dt = datetime.combine(data_ref, horario_inicio_ref)
+    fim_dt = ajustar_fim_intervalo(inicio_dt, datetime.combine(data_ref, horario_fim_ref))
+    if (fim_dt - inicio_dt).total_seconds() > 48 * 3600:
+        raise HTTPException(status_code=400, detail="A duração do plantão não pode ser maior que 48 horas.")
+
+    if local.dia_pagamento is not None:
+        dados_atualizacao["pagamento_plantao"] = PagamentoService.calcular_data_pagamento_plantao(
+            data_ref,
+            local.dia_pagamento,
+        )
+    else:
+        dados_atualizacao["pagamento_plantao"] = None
+
+    plantao = PlantaoRepository.update_by_user(db, plantao_id, current_user.id, **dados_atualizacao)
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+
+    logger.info("Plantão %s atualizado por %s", plantao_id, current_user.email)
+    return APIResponse(
+        success=True,
+        message="Plantão atualizado com sucesso.",
+        data=PlantaoResponse.model_validate(plantao),
+    )
 
 
 @router.patch(
