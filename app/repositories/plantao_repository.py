@@ -59,6 +59,27 @@ class LocalRepository:
     def list_all(db: Session) -> list[Local]:
         return db.scalars(select(Local).order_by(Local.data_inicio.desc())).all()
 
+    @staticmethod
+    def update_by_user(db: Session, local_id: int, usuario_id: int, **kwargs) -> Local | None:
+        local = db.scalar(select(Local).where(Local.id == local_id, Local.usuario_id == usuario_id))
+        if local is None:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(local, key):
+                setattr(local, key, value)
+        db.commit()
+        db.refresh(local)
+        return local
+
+    @staticmethod
+    def delete_by_user(db: Session, local_id: int, usuario_id: int) -> bool:
+        local = db.scalar(select(Local).where(Local.id == local_id, Local.usuario_id == usuario_id))
+        if local is None:
+            return False
+        db.delete(local)
+        db.commit()
+        return True
+
 
 class PlantaoRepository:
     @staticmethod
@@ -122,6 +143,31 @@ class PlantaoRepository:
     @staticmethod
     def list_all(db: Session) -> list[Plantao]:
         return db.scalars(select(Plantao).order_by(Plantao.id.desc())).all()
+
+    @staticmethod
+    def get_by_id_and_user(db: Session, plantao_id: int, usuario_id: int) -> Plantao | None:
+        return db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+
+    @staticmethod
+    def update_by_user(db: Session, plantao_id: int, usuario_id: int, **kwargs) -> Plantao | None:
+        plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+        if plantao is None:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(plantao, key):
+                setattr(plantao, key, value)
+        db.commit()
+        db.refresh(plantao)
+        return plantao
+
+    @staticmethod
+    def delete_by_user(db: Session, plantao_id: int, usuario_id: int) -> bool:
+        plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+        if plantao is None:
+            return False
+        db.delete(plantao)
+        db.commit()
+        return True
 
 
 class TokenRevogadoRepository:
