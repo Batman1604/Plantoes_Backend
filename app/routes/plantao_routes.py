@@ -24,6 +24,7 @@ from app.schemas.plantao_schema import (
     LocalResponse,
     PlantaoCreate,
     PlantaoCreateWithUsuario,
+    PlantaoExecutadoUpdate,
     PlantaoResponse,
     UserCreate,
     UserLogin,
@@ -276,6 +277,35 @@ def listar_plantoes(
     current_user=Depends(get_current_user),
 ):
     return PlantaoRepository.list_by_user(db, current_user.id)
+
+
+@router.patch(
+    "/plantoes/{plantao_id}/executado",
+    response_model=APIResponse[PlantaoResponse],
+    summary="Atualizar status de execução do plantão",
+    description="Atualiza o campo executado de um plantão pertencente ao usuário autenticado.",
+)
+def atualizar_executado_plantao(
+    plantao_id: int,
+    payload: PlantaoExecutadoUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    plantao = PlantaoRepository.update_executado(db, plantao_id, current_user.id, payload.executado)
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+
+    logger.info(
+        "Status executado do plantão %s atualizado para %s por %s",
+        plantao_id,
+        payload.executado,
+        current_user.email,
+    )
+    return APIResponse(
+        success=True,
+        message="Status executado atualizado com sucesso.",
+        data=PlantaoResponse.model_validate(plantao),
+    )
 
 
 @router.get(
