@@ -104,6 +104,17 @@ class PlantaoRepository:
         return plantao
 
     @staticmethod
+    def update_executado(db: Session, plantao_id: int, usuario_id: int, executado: bool) -> Plantao | None:
+        plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+        if plantao is None:
+            return None
+
+        plantao.executado = executado
+        db.commit()
+        db.refresh(plantao)
+        return plantao
+
+    @staticmethod
     def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:
         stmt = select(Plantao).where(Plantao.usuario_id == usuario_id).order_by(Plantao.id.desc())
         return db.scalars(stmt).all()

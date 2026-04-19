@@ -24,6 +24,7 @@ from app.schemas.plantao_schema import (
     LocalResponse,
     PlantaoCreate,
     PlantaoCreateWithUsuario,
+    PlantaoExecutadoUpdate,
     PlantaoResponse,
     UserCreate,
     UserLogin,
@@ -38,26 +39,29 @@ router = APIRouter(prefix="/api", tags=["plantoes"])
 security = HTTPBearer(auto_error=False)
 
 
+def unauthorized_exception() -> HTTPException:
+    return HTTPException(status_code=401, detail="Não autenticado")
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
 ):
     if credentials is None:
-        raise HTTPException(status_code=401, detail="Token de acesso ausente")
+        raise unauthorized_exception()
 
     token_payload = decode_access_token(credentials.credentials)
     if token_payload is None:
-        raise HTTPException(status_code=401, detail="Token inválido ou expirado")
+        raise unauthorized_exception()
 
     user_id = int(token_payload["user_id"])
     token_id = str(token_payload["jti"])
     if TokenRevogadoRepository.is_revoked(db, token_id):
-        raise HTTPException(status_code=401, detail="Token revogado")
+        raise unauthorized_exception()
 
     user = UserRepository.get_by_id(db, user_id)
     if user is None:
-        raise HTTPException(status_code=401, detail="Usuário do token não encontrado")
+        raise unauthorized_exception()
 
     return user
 
@@ -110,11 +114,11 @@ def logout_usuario(
     db: Session = Depends(get_db),
 ):
     if credentials is None:
-        raise HTTPException(status_code=401, detail="Token de acesso ausente")
+        raise unauthorized_exception()
 
     token_payload = decode_access_token(credentials.credentials)
     if token_payload is None:
-        raise HTTPException(status_code=401, detail="Token inválido ou expirado")
+        raise unauthorized_exception()
 
     try:
         TokenRevogadoRepository.revoke(
@@ -273,6 +277,35 @@ def listar_plantoes(
     current_user=Depends(get_current_user),
 ):
     return PlantaoRepository.list_by_user(db, current_user.id)
+
+
+@router.patch(
+    "/plantoes/{plantao_id}/executado",
+    response_model=APIResponse[PlantaoResponse],
+    summary="Atualizar status de execução do plantão",
+    description="Atualiza o campo executado de um plantão pertencente ao usuário autenticado.",
+)
+def atualizar_executado_plantao(
+    plantao_id: int,
+    payload: PlantaoExecutadoUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    plantao = PlantaoRepository.update_executado(db, plantao_id, current_user.id, payload.executado)
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+
+    logger.info(
+        "Status executado do plantão %s atualizado para %s por %s",
+        plantao_id,
+        payload.executado,
+        current_user.email,
+    )
+    return APIResponse(
+        success=True,
+        message="Status executado atualizado com sucesso.",
+        data=PlantaoResponse.model_validate(plantao),
+    )
 
 
 @router.get(
