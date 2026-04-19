@@ -71,6 +71,15 @@ class LocalRepository:
         db.refresh(local)
         return local
 
+    @staticmethod
+    def delete_by_user(db: Session, local_id: int, usuario_id: int) -> bool:
+        local = db.scalar(select(Local).where(Local.id == local_id, Local.usuario_id == usuario_id))
+        if local is None:
+            return False
+        db.delete(local)
+        db.commit()
+        return True
+
 
 class PlantaoRepository:
     @staticmethod
@@ -150,6 +159,15 @@ class PlantaoRepository:
         db.commit()
         db.refresh(plantao)
         return plantao
+
+    @staticmethod
+    def delete_by_user(db: Session, plantao_id: int, usuario_id: int) -> bool:
+        plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+        if plantao is None:
+            return False
+        db.delete(plantao)
+        db.commit()
+        return True
 
 
 class TokenRevogadoRepository:
