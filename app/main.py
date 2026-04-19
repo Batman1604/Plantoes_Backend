@@ -161,6 +161,17 @@ app.include_router(router)
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    if exc.status_code == 401:
+        logger.warning("Tentativa de acesso não autorizado")
+        return JSONResponse(
+            status_code=401,
+            content={
+                "success": False,
+                "message": "Não autenticado",
+                "code": "UNAUTHORIZED",
+            },
+        )
+
     logger.warning("HTTP exception: %s", exc.detail)
     return JSONResponse(
         status_code=exc.status_code,
