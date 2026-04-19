@@ -38,26 +38,29 @@ router = APIRouter(prefix="/api", tags=["plantoes"])
 security = HTTPBearer(auto_error=False)
 
 
+def unauthorized_exception() -> HTTPException:
+    return HTTPException(status_code=401, detail="Não autenticado")
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
 ):
     if credentials is None:
-        raise HTTPException(status_code=401, detail="Token de acesso ausente")
+        raise unauthorized_exception()
 
     token_payload = decode_access_token(credentials.credentials)
     if token_payload is None:
-        raise HTTPException(status_code=401, detail="Token inválido ou expirado")
+        raise unauthorized_exception()
 
     user_id = int(token_payload["user_id"])
     token_id = str(token_payload["jti"])
     if TokenRevogadoRepository.is_revoked(db, token_id):
-        raise HTTPException(status_code=401, detail="Token revogado")
+        raise unauthorized_exception()
 
     user = UserRepository.get_by_id(db, user_id)
     if user is None:
-        raise HTTPException(status_code=401, detail="Usuário do token não encontrado")
+        raise unauthorized_exception()
 
     return user
 
@@ -110,11 +113,11 @@ def logout_usuario(
     db: Session = Depends(get_db),
 ):
     if credentials is None:
-        raise HTTPException(status_code=401, detail="Token de acesso ausente")
+        raise unauthorized_exception()
 
     token_payload = decode_access_token(credentials.credentials)
     if token_payload is None:
-        raise HTTPException(status_code=401, detail="Token inválido ou expirado")
+        raise unauthorized_exception()
 
     try:
         TokenRevogadoRepository.revoke(
