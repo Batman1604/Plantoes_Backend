@@ -150,6 +150,14 @@ class PlantaoResponse(PlantaoBase):
         from_attributes = True
 
 
+class PlantaoExecutadoUpdate(BaseModel):
+    executado: bool = Field(
+        ...,
+        description="Indica se o plantão foi executado.",
+        example=True,
+    )
+
+
 class FinanceiroData(BaseModel):
     total: Decimal
     quantidade_plantoes: int
