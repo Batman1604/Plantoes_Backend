@@ -33,6 +33,7 @@ class UserLogin(BaseModel):
 class UserResponse(UserBase):
     id: int
     telefone: Optional[str] = None
+    plano: Literal["free", "premium"] = "free"
 
     class Config:
         from_attributes = True

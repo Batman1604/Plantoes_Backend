@@ -34,6 +34,7 @@ from app.schemas.plantao_schema import (
 )
 from app.services.financeiro_service import FinanceiroService
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
+from app.services.plano_service import PlanoService
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,26 @@ def listar_usuarios(current_user=Depends(get_current_user)):
 
 
 @router.post(
+    "/usuarios/upgrade",
+    response_model=APIResponse[UserResponse],
+    summary="Upgrade para premium",
+    description="Atualiza o plano do usuário autenticado para premium.",
+)
+def upgrade_usuario(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    atualizado = PlanoService.upgrade_para_premium(current_user)
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+
+    logger.info("Plano atualizado para %s: %s", current_user.plano, current_user.email)
+    return APIResponse(
+        success=True,
+        message="Usuário atualizado para premium" if atualizado else "Usuário já possui plano premium",
+        data=UserResponse.model_validate(current_user),
+    )
+
+
+@router.post(
     "/locais",
     response_model=LocalResponse,
     status_code=status.HTTP_201_CREATED,
@@ -250,6 +271,8 @@ def deletar_local(
     description="Cria um plantão para o usuário autenticado, validando duração e horários.",
 )
 def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    PlanoService.limitar_plano_free(db, current_user)
+
     local = LocalRepository.get_by_id(db, payload.local_id)
     if local is None:
         raise HTTPException(status_code=404, detail="Local não encontrado")
@@ -463,6 +486,7 @@ def obter_total_financeiro_mensal(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    PlanoService.exigir_premium(current_user)
     resultado = FinanceiroService.calcular_total_mensal(db, current_user.id, mes, ano)
     return APIResponse(success=True, message="Resumo financeiro mensal gerado com sucesso.", data=FinanceiroData.model_validate(resultado))
 
@@ -478,5 +502,6 @@ def obter_total_financeiro_anual(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    PlanoService.exigir_premium(current_user)
     resultado = FinanceiroService.calcular_total_anual(db, current_user.id, ano)
     return APIResponse(success=True, message="Resumo financeiro anual gerado com sucesso.", data=FinanceiroData.model_validate(resultado))

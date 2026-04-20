@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Time
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -8,12 +8,16 @@ from app.core.database import Base
 
 class User(Base):
     __tablename__ = "usuarios"
+    __table_args__ = (
+        CheckConstraint("plano IN ('free', 'premium')", name="ck_usuarios_plano"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     nome: Mapped[str] = mapped_column(String(120), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     telefone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     senha_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    plano: Mapped[str] = mapped_column(String(20), nullable=False, default="free")
 
     locais: Mapped[list["Local"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
 
