@@ -2,11 +2,21 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Generic, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from pydantic.generics import GenericModel
 
 
 DataT = TypeVar("DataT")
+
+
+def validar_formato_data(value: date | datetime | str | None):
+    if isinstance(value, datetime):
+        raise ValueError("Envie datas no formato YYYY-MM-DD, sem horário/fuso.")
+
+    if isinstance(value, str) and "T" in value:
+        raise ValueError("Envie datas no formato YYYY-MM-DD, sem horário/fuso.")
+
+    return value
 
 
 class APIResponse(GenericModel, Generic[DataT]):
@@ -57,6 +67,11 @@ class LocalBase(BaseModel):
     data_final: date
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
 
+    @field_validator("data_inicio", "data_final", mode="before")
+    @classmethod
+    def validar_campos_data(cls, value):
+        return validar_formato_data(value)
+
 
 class LocalCreate(LocalBase):
     pass
@@ -67,6 +82,11 @@ class LocalUpdate(BaseModel):
     data_inicio: date | None = None
     data_final: date | None = None
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
+
+    @field_validator("data_inicio", "data_final", mode="before")
+    @classmethod
+    def validar_campos_data(cls, value):
+        return validar_formato_data(value)
 
 
 class LocalCreateWithUsuario(LocalCreate):
@@ -105,6 +125,11 @@ class PlantaoBase(BaseModel):
         example="Semanal",
         description="Recorrência opcional do plantão."
     )
+
+    @field_validator("data", mode="before")
+    @classmethod
+    def validar_data_sem_horario_ou_fuso(cls, value):
+        return validar_formato_data(value)
 
 
 class PlantaoCreate(PlantaoBase):
@@ -152,6 +177,11 @@ class PlantaoUpdate(BaseModel):
     local_id: int | None = None
     notificacao_ativa: bool | None = None
     notificacao_antecedencia_minutos: int | None = Field(default=None, ge=0, le=2880)
+
+    @field_validator("data", mode="before")
+    @classmethod
+    def validar_data_sem_horario_ou_fuso(cls, value):
+        return validar_formato_data(value)
 
 
 class PlantaoResponse(PlantaoBase):
