@@ -8,17 +8,28 @@ from app.services.pagamento_service import PagamentoService
 
 
 class TestPagamentoEHorario(unittest.TestCase):
-    def test_calcula_dia_util_quando_cai_no_fim_de_semana(self):
-        # 13/09/2026 é domingo, então deve avançar para segunda-feira 14.
-        dia_util = PagamentoService.calcular_dia_util(2026, 9, 13)
-        self.assertEqual(dia_util, 14)
+    def test_calcula_indice_de_dia_util_no_mes(self):
+        # Em setembro/2026, o 5º dia útil é 07/09/2026.
+        data_dia_util = PagamentoService.calcular_data_dia_util_do_mes(2026, 9, 5)
+        self.assertEqual(data_dia_util, date(2026, 9, 7))
 
     def test_calcula_data_pagamento_para_mes_seguinte_quando_dia_ja_passou(self):
         data_pagamento = PagamentoService.calcular_data_pagamento_plantao(
             data_plantao=date(2026, 4, 20),
-            dia_pagamento=13,
+            indice_dia_pagamento=5,
+            data_inicio_ciclo=date(2026, 4, 21),
+            data_final_ciclo=date(2026, 5, 20),
         )
-        self.assertEqual(data_pagamento, date(2026, 5, 13))
+        self.assertEqual(data_pagamento, date(2026, 6, 5))
+
+    def test_calcula_data_pagamento_no_mes_de_fechamento_quando_dia_util_apos_fechamento(self):
+        data_pagamento = PagamentoService.calcular_data_pagamento_plantao(
+            data_plantao=date(2026, 4, 22),
+            indice_dia_pagamento=22,
+            data_inicio_ciclo=date(2026, 4, 21),
+            data_final_ciclo=date(2026, 5, 20),
+        )
+        self.assertEqual(data_pagamento, date(2026, 5, 29))
 
     def test_permite_plantao_virando_a_madrugada(self):
         payload = PlantaoCreate(
