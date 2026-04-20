@@ -113,6 +113,39 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         self.assertEqual(body["data"]["valor"], "400.00")
         self.assertEqual(body["data"]["horario_fim"], "16:00:00")
 
+    def test_criacao_plantao_calcula_pagamento_com_dia_util_recorrente(self):
+        headers = self.criar_usuario_e_token()
+
+        local_resp = self.client.post(
+            "/api/locais",
+            headers=headers,
+            json={
+                "nome_local": "Hospital Recorrente",
+                "data_inicio": "2026-04-21",
+                "data_final": "2026-05-20",
+                "dia_pagamento": 5,
+            },
+        )
+        local_id = local_resp.json()["id"]
+
+        plantao_resp = self.client.post(
+            "/api/plantoes",
+            headers=headers,
+            json={
+                "valor": "350.00",
+                "data": "2026-04-25",
+                "horario_inicio": "08:00:00",
+                "horario_fim": "14:00:00",
+                "local_id": local_id,
+                "notificacao_ativa": True,
+                "notificacao_antecedencia_minutos": 60,
+            },
+        )
+
+        self.assertEqual(plantao_resp.status_code, 201)
+        body = plantao_resp.json()
+        self.assertEqual(body["data"]["pagamento_plantao"], "2026-06-05")
+
 
 if __name__ == "__main__":
     unittest.main()
