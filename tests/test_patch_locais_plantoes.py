@@ -50,7 +50,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "data_inicio": "2026-04-01",
                 "data_final": "2026-12-31",
                 "dia_pagamento": 10,
-                "exucatado": False,
+                "executado": False,
             },
         )
         local_id = local_resp.json()["id"]
@@ -77,7 +77,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "data_inicio": "2026-04-01",
                 "data_final": "2026-12-31",
                 "dia_pagamento": 15,
-                "exucatado": False,
+                "executado": False,
             },
         )
         local_id = local_resp.json()["id"]
