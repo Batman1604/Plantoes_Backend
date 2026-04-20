@@ -174,12 +174,6 @@ def upgrade_usuario(db: Session = Depends(get_db), current_user=Depends(get_curr
 )
 def criar_local(payload: LocalCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     local_data = payload.model_dump()
-    if payload.dia_pagamento is not None:
-        local_data["dia_pagamento"] = PagamentoService.calcular_dia_util(
-            payload.data_inicio.year,
-            payload.data_inicio.month,
-            payload.dia_pagamento,
-        )
     local_data["usuario_id"] = current_user.id
     local = LocalRepository.create(db, LocalCreateWithUsuario.model_validate(local_data))
     logger.info("Local criado para usuário %s: %s", current_user.email, local.nome_local)
@@ -218,15 +212,6 @@ def atualizar_local(
     local_atual = LocalRepository.get_by_id(db, local_id)
     if local_atual is None or local_atual.usuario_id != current_user.id:
         raise HTTPException(status_code=404, detail="Local não encontrado")
-
-    data_inicio = dados_atualizacao.get("data_inicio", local_atual.data_inicio)
-    dia_pagamento = dados_atualizacao.get("dia_pagamento", local_atual.dia_pagamento)
-    if dia_pagamento is not None:
-        dados_atualizacao["dia_pagamento"] = PagamentoService.calcular_dia_util(
-            data_inicio.year,
-            data_inicio.month,
-            dia_pagamento,
-        )
 
     local = LocalRepository.update_by_user(db, local_id, current_user.id, **dados_atualizacao)
     if local is None:
@@ -338,8 +323,10 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     data["executado"] = False
     if local.dia_pagamento is not None:
         data["pagamento_plantao"] = PagamentoService.calcular_data_pagamento_plantao(
-            payload.data,
-            local.dia_pagamento,
+            data_plantao=payload.data,
+            indice_dia_pagamento=local.dia_pagamento,
+            data_inicio_ciclo=local.data_inicio,
+            data_final_ciclo=local.data_final,
         )
 
     try:
@@ -404,8 +391,10 @@ def atualizar_plantao(
 
     if local.dia_pagamento is not None:
         dados_atualizacao["pagamento_plantao"] = PagamentoService.calcular_data_pagamento_plantao(
-            data_ref,
-            local.dia_pagamento,
+            data_plantao=data_ref,
+            indice_dia_pagamento=local.dia_pagamento,
+            data_inicio_ciclo=local.data_inicio,
+            data_final_ciclo=local.data_final,
         )
     else:
         dados_atualizacao["pagamento_plantao"] = None
