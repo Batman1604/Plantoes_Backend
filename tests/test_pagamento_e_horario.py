@@ -1,6 +1,8 @@
 import unittest
 from datetime import date, time
 
+from pydantic import ValidationError
+
 from app.schemas.plantao_schema import PlantaoCreate
 from app.services.pagamento_service import PagamentoService
 
@@ -28,6 +30,16 @@ class TestPagamentoEHorario(unittest.TestCase):
         )
         self.assertEqual(payload.horario_inicio, time(12, 0))
         self.assertEqual(payload.horario_fim, time(0, 0))
+
+    def test_rejeita_data_com_horario_ou_fuso(self):
+        with self.assertRaises(ValidationError):
+            PlantaoCreate(
+                valor="200.00",
+                data="2026-05-05T00:00:00.000Z",
+                horario_inicio=time(12, 0),
+                horario_fim=time(18, 0),
+                local_id=1,
+            )
 
 
 if __name__ == "__main__":
