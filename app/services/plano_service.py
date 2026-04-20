@@ -1,0 +1,46 @@
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from app.models import Plantao, User
+
+
+class PlanoService:
+    PLANO_FREE = "free"
+    PLANO_PREMIUM = "premium"
+    LIMITE_PLANTOES_FREE = 10
+
+    @staticmethod
+    def obter_plano(usuario: User) -> str:
+        plano = (usuario.plano or PlanoService.PLANO_FREE).strip().lower()
+        if plano not in {PlanoService.PLANO_FREE, PlanoService.PLANO_PREMIUM}:
+            return PlanoService.PLANO_FREE
+        return plano
+
+    @staticmethod
+    def exigir_premium(usuario: User) -> None:
+        if PlanoService.obter_plano(usuario) != PlanoService.PLANO_PREMIUM:
+            raise HTTPException(
+                status_code=403,
+                detail="Funcionalidade exclusiva para usuários premium",
+            )
+
+    @staticmethod
+    def limitar_plano_free(db: Session, usuario: User) -> None:
+        if PlanoService.obter_plano(usuario) != PlanoService.PLANO_FREE:
+            return
+
+        total = db.query(Plantao).filter_by(usuario_id=usuario.id).count()
+        if total >= PlanoService.LIMITE_PLANTOES_FREE:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Limite do plano gratuito atingido ({PlanoService.LIMITE_PLANTOES_FREE} plantões)",
+            )
+
+    @staticmethod
+    def upgrade_para_premium(usuario: User) -> bool:
+        plano_atual = PlanoService.obter_plano(usuario)
+        if plano_atual == PlanoService.PLANO_PREMIUM:
+            return False
+
+        usuario.plano = PlanoService.PLANO_PREMIUM
+        return True

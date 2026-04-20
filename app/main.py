@@ -148,6 +148,73 @@ def ensure_novas_colunas() -> None:
 
 ensure_novas_colunas()
 
+
+def ensure_plano_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            usuarios_cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
+            if not any(column[1] == "plano" for column in usuarios_cols):
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN plano VARCHAR(20) NOT NULL DEFAULT 'free'"))
+            connection.execute(
+                text(
+                    "UPDATE usuarios "
+                    "SET plano = LOWER(TRIM(plano)) "
+                    "WHERE plano IS NOT NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE usuarios "
+                    "SET plano = 'free' "
+                    "WHERE plano IS NULL OR plano = '' OR plano NOT IN ('free', 'premium')"
+                )
+            )
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            plano_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'usuarios' AND column_name = 'plano'"
+                )
+            ).scalar() is not None
+            if not plano_exists:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN plano VARCHAR(20) NOT NULL DEFAULT 'free'"))
+            connection.execute(
+                text(
+                    "UPDATE usuarios "
+                    "SET plano = LOWER(TRIM(plano)) "
+                    "WHERE plano IS NOT NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE usuarios "
+                    "SET plano = 'free' "
+                    "WHERE plano IS NULL OR plano = '' OR plano NOT IN ('free', 'premium')"
+                )
+            )
+
+            constraint_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM pg_constraint "
+                    "WHERE conname = 'ck_usuarios_plano'"
+                )
+            ).scalar() is not None
+            if not constraint_exists:
+                connection.execute(
+                    text(
+                        "ALTER TABLE usuarios "
+                        "ADD CONSTRAINT ck_usuarios_plano "
+                        "CHECK (plano IN ('free', 'premium'))"
+                    )
+                )
+        return
+
+
+ensure_plano_column()
+
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
     CORSMiddleware,
@@ -169,6 +236,16 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
                 "success": False,
                 "message": "Não autenticado",
                 "code": "UNAUTHORIZED",
+            },
+        )
+
+    if exc.status_code == 403:
+        message = str(exc.detail)
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "message": message,
             },
         )
 
