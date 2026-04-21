@@ -16,6 +16,11 @@ class PagamentoService:
         return date(ano, mes, min(dia, ultimo_dia))
 
     @staticmethod
+    def _dia_do_ciclo_no_mes(ano: int, mes: int, dia_referencia: int) -> int:
+        ultimo_dia = monthrange(ano, mes)[1]
+        return min(dia_referencia, ultimo_dia)
+
+    @staticmethod
     def calcular_data_dia_util_do_mes(ano: int, mes: int, indice_dia_util: int) -> date:
         if indice_dia_util < 1:
             raise ValueError("O índice do dia útil deve ser maior ou igual a 1")
@@ -48,19 +53,35 @@ class PagamentoService:
         dia_final = data_final_ciclo.day
         ciclo_cruza_mes = dia_inicio > dia_final
 
+        dia_inicio_mes_plantao = PagamentoService._dia_do_ciclo_no_mes(
+            data_plantao.year,
+            data_plantao.month,
+            dia_inicio,
+        )
+        dia_final_mes_plantao = PagamentoService._dia_do_ciclo_no_mes(
+            data_plantao.year,
+            data_plantao.month,
+            dia_final,
+        )
+
         ano_fechamento = data_plantao.year
         mes_fechamento = data_plantao.month
 
         if ciclo_cruza_mes:
-            if data_plantao.day > dia_final:
+            if data_plantao.day > dia_final_mes_plantao:
                 ano_fechamento, mes_fechamento = PagamentoService._ajustar_ano_mes(ano_fechamento, mes_fechamento, 1)
         else:
-            if data_plantao.day > dia_final:
+            if data_plantao.day > dia_final_mes_plantao:
                 ano_fechamento, mes_fechamento = PagamentoService._ajustar_ano_mes(ano_fechamento, mes_fechamento, 1)
-            elif data_plantao.day < dia_inicio:
+            elif data_plantao.day < dia_inicio_mes_plantao:
                 ano_fechamento, mes_fechamento = PagamentoService._ajustar_ano_mes(ano_fechamento, mes_fechamento, -1)
 
-        data_fechamento = PagamentoService._data_com_dia_do_mes(ano_fechamento, mes_fechamento, dia_final)
+        dia_final_mes_fechamento = PagamentoService._dia_do_ciclo_no_mes(ano_fechamento, mes_fechamento, dia_final)
+        data_fechamento = PagamentoService._data_com_dia_do_mes(
+            ano_fechamento,
+            mes_fechamento,
+            dia_final_mes_fechamento,
+        )
         data_pagamento = PagamentoService.calcular_data_dia_util_do_mes(
             ano_fechamento,
             mes_fechamento,
