@@ -31,6 +31,7 @@ class Local(Base):
     data_inicio: Mapped[str] = mapped_column(Date, nullable=False)
     data_final: Mapped[str] = mapped_column(Date, nullable=False)
     dia_pagamento: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cor: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     usuario: Mapped[User] = relationship(back_populates="locais")
     plantoes: Mapped[list["Plantao"]] = relationship(back_populates="local", cascade="all, delete-orphan")
@@ -53,6 +54,7 @@ class Plantao(Base):
     notificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     executado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     pagamento_plantao: Mapped[date | None] = mapped_column(Date, nullable=True)
+    pagamento_recebido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     local: Mapped[Local] = relationship(back_populates="plantoes")
 

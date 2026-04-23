@@ -50,6 +50,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "data_inicio": "2026-04-01",
                 "data_final": "2026-12-31",
                 "dia_pagamento": 10,
+                "cor": "#2196F3",
                 "executado": False,
             },
         )
@@ -65,6 +66,34 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         body = response.json()
         self.assertTrue(body["success"])
         self.assertEqual(body["data"]["nome_local"], "Hospital B")
+        self.assertEqual(body["data"]["cor"], "#2196F3")
+
+    def test_patch_local_atualiza_cor(self):
+        headers = self.criar_usuario_e_token()
+
+        local_resp = self.client.post(
+            "/api/locais",
+            headers=headers,
+            json={
+                "nome_local": "Hospital Cor",
+                "data_inicio": "2026-04-01",
+                "data_final": "2026-12-31",
+                "dia_pagamento": 10,
+                "cor": "#FFEB3B",
+            },
+        )
+        local_id = local_resp.json()["id"]
+
+        response = self.client.patch(
+            f"/api/locais/{local_id}",
+            headers=headers,
+            json={"cor": "#9C27B0"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["data"]["cor"], "#9C27B0")
 
     def test_patch_plantao_atualiza_campos(self):
         headers = self.criar_usuario_e_token()
@@ -145,6 +174,48 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         self.assertEqual(plantao_resp.status_code, 201)
         body = plantao_resp.json()
         self.assertEqual(body["data"]["pagamento_plantao"], "2026-06-05")
+        self.assertFalse(body["data"]["pagamento_recebido"])
+
+    def test_patch_pagamento_recebido_do_plantao(self):
+        headers = self.criar_usuario_e_token()
+
+        local_resp = self.client.post(
+            "/api/locais",
+            headers=headers,
+            json={
+                "nome_local": "Hospital Pagamento",
+                "data_inicio": "2026-04-21",
+                "data_final": "2026-05-20",
+                "dia_pagamento": 5,
+            },
+        )
+        local_id = local_resp.json()["id"]
+
+        plantao_resp = self.client.post(
+            "/api/plantoes",
+            headers=headers,
+            json={
+                "valor": "500.00",
+                "data": "2026-04-25",
+                "horario_inicio": "07:00:00",
+                "horario_fim": "13:00:00",
+                "local_id": local_id,
+                "notificacao_ativa": True,
+                "notificacao_antecedencia_minutos": 60,
+            },
+        )
+        plantao_id = plantao_resp.json()["data"]["id"]
+
+        response = self.client.patch(
+            f"/api/plantoes/{plantao_id}/pagamento-recebido",
+            headers=headers,
+            json={"pagamento_recebido": True},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["success"])
+        self.assertTrue(body["data"]["pagamento_recebido"])
 
 
 if __name__ == "__main__":
