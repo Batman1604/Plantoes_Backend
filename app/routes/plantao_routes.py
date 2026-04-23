@@ -26,6 +26,7 @@ from app.schemas.plantao_schema import (
     PlantaoCreate,
     PlantaoCreateWithUsuario,
     PlantaoExecutadoUpdate,
+    PlantaoPagamentoRecebidoUpdate,
     PlantaoResponse,
     PlantaoUpdate,
     UserCreate,
@@ -321,6 +322,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     data = payload.model_dump()
     data["usuario_id"] = current_user.id
     data["executado"] = False
+    data["pagamento_recebido"] = False
     if local.dia_pagamento is not None:
         data["pagamento_plantao"] = PagamentoService.calcular_data_pagamento_plantao(
             data_plantao=payload.data,
@@ -390,14 +392,18 @@ def atualizar_plantao(
         raise HTTPException(status_code=400, detail="A duração do plantão não pode ser maior que 48 horas.")
 
     if local.dia_pagamento is not None:
-        dados_atualizacao["pagamento_plantao"] = PagamentoService.calcular_data_pagamento_plantao(
+        nova_data_pagamento = PagamentoService.calcular_data_pagamento_plantao(
             data_plantao=data_ref,
             indice_dia_pagamento=local.dia_pagamento,
             data_inicio_ciclo=local.data_inicio,
             data_final_ciclo=local.data_final,
         )
+        dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
+        if nova_data_pagamento != plantao_atual.pagamento_plantao:
+            dados_atualizacao["pagamento_recebido"] = False
     else:
         dados_atualizacao["pagamento_plantao"] = None
+        dados_atualizacao["pagamento_recebido"] = False
 
     plantao = PlantaoRepository.update_by_user(db, plantao_id, current_user.id, **dados_atualizacao)
     if plantao is None:
@@ -436,6 +442,47 @@ def atualizar_executado_plantao(
     return APIResponse(
         success=True,
         message="Status executado atualizado com sucesso.",
+        data=PlantaoResponse.model_validate(plantao),
+    )
+
+
+@router.patch(
+    "/plantoes/{plantao_id}/pagamento-recebido",
+    response_model=APIResponse[PlantaoResponse],
+    summary="Atualizar status de recebimento do pagamento",
+    description="Atualiza se o pagamento do dia do plantão foi recebido.",
+)
+def atualizar_pagamento_recebido_plantao(
+    plantao_id: int,
+    payload: PlantaoPagamentoRecebidoUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    plantao = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+
+    if plantao.pagamento_plantao is None:
+        raise HTTPException(status_code=400, detail="Este plantão não possui dia de pagamento vinculado")
+
+    plantao = PlantaoRepository.update_by_user(
+        db,
+        plantao_id,
+        current_user.id,
+        pagamento_recebido=payload.pagamento_recebido,
+    )
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+
+    logger.info(
+        "Status de pagamento recebido do plantão %s atualizado para %s por %s",
+        plantao_id,
+        payload.pagamento_recebido,
+        current_user.email,
+    )
+    return APIResponse(
+        success=True,
+        message="Status de pagamento recebido atualizado com sucesso.",
         data=PlantaoResponse.model_validate(plantao),
     )
 

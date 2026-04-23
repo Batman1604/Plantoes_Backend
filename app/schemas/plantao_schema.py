@@ -66,6 +66,7 @@ class LocalBase(BaseModel):
     data_inicio: date
     data_final: date
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
+    cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
 
     @field_validator("data_inicio", "data_final", mode="before")
     @classmethod
@@ -82,6 +83,7 @@ class LocalUpdate(BaseModel):
     data_inicio: date | None = None
     data_final: date | None = None
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
+    cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
 
     @field_validator("data_inicio", "data_final", mode="before")
     @classmethod
@@ -166,6 +168,7 @@ class PlantaoCreateWithUsuario(PlantaoCreate):
     usuario_id: int
     executado: bool = False
     pagamento_plantao: Optional[date] = None
+    pagamento_recebido: bool = False
 
 
 class PlantaoUpdate(BaseModel):
@@ -193,6 +196,7 @@ class PlantaoResponse(PlantaoBase):
     notificado: bool
     executado: bool
     pagamento_plantao: Optional[date] = None
+    pagamento_recebido: bool
 
     class Config:
         from_attributes = True
@@ -202,6 +206,14 @@ class PlantaoExecutadoUpdate(BaseModel):
     executado: bool = Field(
         ...,
         description="Indica se o plantão foi executado.",
+        example=True,
+    )
+
+
+class PlantaoPagamentoRecebidoUpdate(BaseModel):
+    pagamento_recebido: bool = Field(
+        ...,
+        description="Indica se o pagamento desse dia foi recebido.",
         example=True,
     )
 

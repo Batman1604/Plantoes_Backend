@@ -109,10 +109,18 @@ def ensure_novas_colunas() -> None:
             locais_cols = connection.execute(text("PRAGMA table_info(locais)")).all()
             if not any(column[1] == "executado" for column in locais_cols):
                 connection.execute(text("ALTER TABLE locais ADD COLUMN executado BOOLEAN NOT NULL DEFAULT 0"))
+            locais_cols = connection.execute(text("PRAGMA table_info(locais)")).all()
+            if not any(column[1] == "cor" for column in locais_cols):
+                connection.execute(text("ALTER TABLE locais ADD COLUMN cor VARCHAR(20) NULL"))
 
             plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
             if not any(column[1] == "pagamento_plantao" for column in plantoes_cols):
                 connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
+            plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
+            if not any(column[1] == "pagamento_recebido" for column in plantoes_cols):
+                connection.execute(
+                    text("ALTER TABLE plantoes ADD COLUMN pagamento_recebido BOOLEAN NOT NULL DEFAULT 0")
+                )
         return
 
     if engine.dialect.name == "postgresql":
@@ -134,6 +142,15 @@ def ensure_novas_colunas() -> None:
             if not executado_exists:
                 connection.execute(text("ALTER TABLE locais ADD COLUMN executado BOOLEAN NOT NULL DEFAULT FALSE"))
 
+            cor_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'locais' AND column_name = 'cor'"
+                )
+            ).scalar() is not None
+            if not cor_exists:
+                connection.execute(text("ALTER TABLE locais ADD COLUMN cor VARCHAR(20) NULL"))
+
             pagamento_exists = connection.execute(
                 text(
                     "SELECT 1 FROM information_schema.columns "
@@ -142,6 +159,17 @@ def ensure_novas_colunas() -> None:
             ).scalar() is not None
             if not pagamento_exists:
                 connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
+
+            pagamento_recebido_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'plantoes' AND column_name = 'pagamento_recebido'"
+                )
+            ).scalar() is not None
+            if not pagamento_recebido_exists:
+                connection.execute(
+                    text("ALTER TABLE plantoes ADD COLUMN pagamento_recebido BOOLEAN NOT NULL DEFAULT FALSE")
+                )
         return
 
 
