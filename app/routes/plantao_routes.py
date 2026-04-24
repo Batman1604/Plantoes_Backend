@@ -1,5 +1,6 @@
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -7,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models import Plantao
 from app.core.security import create_access_token, decode_access_token
 from app.repositories.plantao_repository import (
     LocalRepository,
@@ -373,6 +375,8 @@ def atualizar_plantao(
     if not dados_atualizacao:
         raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
 
+    aplicar_em = dados_atualizacao.pop("aplicar_em", "somente_este")
+
     plantao_atual = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
     if plantao_atual is None:
         raise HTTPException(status_code=404, detail="Plantão não encontrado")
@@ -391,23 +395,113 @@ def atualizar_plantao(
     if (fim_dt - inicio_dt).total_seconds() > 48 * 3600:
         raise HTTPException(status_code=400, detail="A duração do plantão não pode ser maior que 48 horas.")
 
-    if local.dia_pagamento is not None:
-        nova_data_pagamento = PagamentoService.calcular_data_pagamento_plantao(
-            data_plantao=data_ref,
-            indice_dia_pagamento=local.dia_pagamento,
-            data_inicio_ciclo=local.data_inicio,
-            data_final_ciclo=local.data_final,
-        )
-        dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
-        if nova_data_pagamento != plantao_atual.pagamento_plantao:
-            dados_atualizacao["pagamento_recebido"] = False
-    else:
-        dados_atualizacao["pagamento_plantao"] = None
+    def _calcular_data_pagamento(data_plantao):
+        if local.dia_pagamento is not None:
+            return PagamentoService.calcular_data_pagamento_plantao(
+                data_plantao=data_plantao,
+                indice_dia_pagamento=local.dia_pagamento,
+                data_inicio_ciclo=local.data_inicio,
+                data_final_ciclo=local.data_final,
+            )
+        return None
+
+    nova_data_pagamento = _calcular_data_pagamento(data_ref)
+    dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
+    if nova_data_pagamento != plantao_atual.pagamento_plantao:
         dados_atualizacao["pagamento_recebido"] = False
 
-    plantao = PlantaoRepository.update_by_user(db, plantao_id, current_user.id, **dados_atualizacao)
-    if plantao is None:
-        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+    if local.dia_pagamento is None:
+        dados_atualizacao["pagamento_recebido"] = False
+
+    try:
+        if aplicar_em == "somente_este":
+            plantao = PlantaoRepository.update_by_user(db, plantao_id, current_user.id, **dados_atualizacao)
+            if plantao is None:
+                raise HTTPException(status_code=404, detail="Plantão não encontrado")
+        else:
+            plantoes_futuros = PlantaoRepository.list_futuros_da_serie(db, plantao_atual)
+            if not plantoes_futuros:
+                raise HTTPException(status_code=404, detail="Série de plantões não encontrada")
+
+            nova_recorrencia = dados_atualizacao.get("recorrencia", plantao_atual.recorrencia)
+            data_ancora = plantao_atual.data
+            delta_data = None
+            if "data" in dados_atualizacao:
+                delta_data = dados_atualizacao["data"] - data_ancora
+            plantoes_por_data = {p.data: p for p in plantoes_futuros}
+            plantao_selecionado = plantoes_futuros[0]
+
+            def _aplicar_updates(plantao_item: Plantao, data_referencia, forcar_recorrencia=None):
+                for chave, valor in dados_atualizacao.items():
+                    if chave == "data":
+                        continue
+                    setattr(plantao_item, chave, valor)
+                if delta_data is not None:
+                    plantao_item.data = data_referencia + delta_data
+                if forcar_recorrencia is not None:
+                    plantao_item.recorrencia = forcar_recorrencia
+                plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.data)
+                plantao_item.pagamento_recebido = False
+
+            if nova_recorrencia == "Unico":
+                for p in plantoes_futuros[1:]:
+                    db.delete(p)
+                _aplicar_updates(plantao_selecionado, plantao_selecionado.data, forcar_recorrencia="Unico")
+
+            elif plantao_atual.recorrencia == "Semanal" and nova_recorrencia == "Quinzenal":
+                for p in plantoes_futuros[1:]:
+                    diferenca = (p.data - data_ancora).days
+                    if diferenca % 14 != 0:
+                        db.delete(p)
+                    else:
+                        _aplicar_updates(p, p.data, forcar_recorrencia="Quinzenal")
+                _aplicar_updates(plantao_selecionado, plantao_selecionado.data, forcar_recorrencia="Quinzenal")
+
+            elif plantao_atual.recorrencia == "Quinzenal" and nova_recorrencia == "Semanal":
+                for p in plantoes_futuros:
+                    _aplicar_updates(p, p.data, forcar_recorrencia="Semanal")
+
+                data_limite = local.data_final
+                proxima_data = data_ancora + timedelta(days=7)
+                while proxima_data <= data_limite:
+                    if proxima_data not in plantoes_por_data:
+                        novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
+                        if isinstance(novo_valor, Decimal):
+                            novo_valor = float(novo_valor)
+                        novo_plantao = Plantao(
+                            usuario_id=current_user.id,
+                            local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
+                            valor=novo_valor,
+                            data=proxima_data,
+                            horario_inicio=dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio),
+                            horario_fim=dados_atualizacao.get("horario_fim", plantao_atual.horario_fim),
+                            recorrencia="Semanal",
+                            notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
+                            notificacao_antecedencia_minutos=dados_atualizacao.get(
+                                "notificacao_antecedencia_minutos",
+                                plantao_atual.notificacao_antecedencia_minutos,
+                            ),
+                            notificado=False,
+                            executado=False,
+                            pagamento_plantao=_calcular_data_pagamento(proxima_data),
+                            pagamento_recebido=False,
+                        )
+                        db.add(novo_plantao)
+                    proxima_data += timedelta(days=7)
+
+            else:
+                for p in plantoes_futuros:
+                    _aplicar_updates(p, p.data)
+
+            db.commit()
+            db.refresh(plantao_selecionado)
+            plantao = plantao_selecionado
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Erro ao atualizar plantão") from exc
 
     logger.info("Plantão %s atualizado por %s", plantao_id, current_user.email)
     return APIResponse(
