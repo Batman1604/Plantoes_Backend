@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -38,6 +39,41 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         )
         token = login.json()["data"]["access_token"]
         return {"Authorization": f"Bearer {token}"}
+
+    def criar_local(self, headers):
+        local_resp = self.client.post(
+            "/api/locais",
+            headers=headers,
+            json={
+                "nome_local": "Hospital Recorrencia",
+                "data_inicio": "2026-04-01",
+                "data_final": "2026-08-31",
+                "dia_pagamento": 10,
+            },
+        )
+        return local_resp.json()["id"]
+
+    def criar_plantoes_recorrentes(self, headers, local_id, recorrencia, inicio, total, passo_dias):
+        ids = []
+        data_cursor = inicio
+        for _ in range(total):
+            response = self.client.post(
+                "/api/plantoes",
+                headers=headers,
+                json={
+                    "valor": "250.00",
+                    "data": data_cursor.isoformat(),
+                    "horario_inicio": "08:00:00",
+                    "horario_fim": "14:00:00",
+                    "recorrencia": recorrencia,
+                    "local_id": local_id,
+                    "notificacao_ativa": True,
+                    "notificacao_antecedencia_minutos": 60,
+                },
+            )
+            ids.append(response.json()["data"]["id"])
+            data_cursor += timedelta(days=passo_dias)
+        return ids
 
     def test_patch_local_atualiza_campos(self):
         headers = self.criar_usuario_e_token()
@@ -216,6 +252,59 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         body = response.json()
         self.assertTrue(body["success"])
         self.assertTrue(body["data"]["pagamento_recebido"])
+
+    def test_patch_plantao_futuros_de_semanal_para_quinzenal_remove_intercalados(self):
+        headers = self.criar_usuario_e_token()
+        local_id = self.criar_local(headers)
+        ids = self.criar_plantoes_recorrentes(headers, local_id, "Semanal", date(2026, 5, 1), 6, 7)
+
+        response = self.client.patch(
+            f"/api/plantoes/{ids[0]}",
+            headers=headers,
+            json={"aplicar_em": "este_e_futuros", "recorrencia": "Quinzenal"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        plantoes = self.client.get("/api/plantoes", headers=headers).json()
+        self.assertEqual(len(plantoes), 3)
+        datas = sorted([item["data"] for item in plantoes])
+        self.assertEqual(datas, ["2026-05-01", "2026-05-15", "2026-05-29"])
+        self.assertTrue(all(item["recorrencia"] == "Quinzenal" for item in plantoes))
+
+    def test_patch_plantao_futuros_de_quinzenal_para_semanal_cria_datas_intermediarias(self):
+        headers = self.criar_usuario_e_token()
+        local_id = self.criar_local(headers)
+        ids = self.criar_plantoes_recorrentes(headers, local_id, "Quinzenal", date(2026, 5, 1), 4, 14)
+
+        response = self.client.patch(
+            f"/api/plantoes/{ids[0]}",
+            headers=headers,
+            json={"aplicar_em": "este_e_futuros", "recorrencia": "Semanal"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        plantoes = self.client.get("/api/plantoes", headers=headers).json()
+        datas = sorted([item["data"] for item in plantoes])
+        self.assertIn("2026-05-08", datas)
+        self.assertIn("2026-05-22", datas)
+        self.assertTrue(all(item["recorrencia"] == "Semanal" for item in plantoes))
+
+    def test_patch_plantao_futuros_para_unico_remove_demais(self):
+        headers = self.criar_usuario_e_token()
+        local_id = self.criar_local(headers)
+        ids = self.criar_plantoes_recorrentes(headers, local_id, "Semanal", date(2026, 5, 1), 4, 7)
+
+        response = self.client.patch(
+            f"/api/plantoes/{ids[0]}",
+            headers=headers,
+            json={"aplicar_em": "este_e_futuros", "recorrencia": "Unico"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        plantoes = self.client.get("/api/plantoes", headers=headers).json()
+        self.assertEqual(len(plantoes), 1)
+        self.assertEqual(plantoes[0]["data"], "2026-05-01")
+        self.assertEqual(plantoes[0]["recorrencia"], "Unico")
 
 
 if __name__ == "__main__":
