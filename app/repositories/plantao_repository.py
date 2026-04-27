@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -162,6 +162,27 @@ class PlantaoRepository:
         return plantao
 
     @staticmethod
+    def list_futuros_da_serie(db: Session, plantao_referencia: Plantao) -> list[Plantao]:
+        stmt = (
+            select(Plantao)
+            .where(
+                Plantao.usuario_id == plantao_referencia.usuario_id,
+                Plantao.local_id == plantao_referencia.local_id,
+                Plantao.horario_inicio == plantao_referencia.horario_inicio,
+                Plantao.horario_fim == plantao_referencia.horario_fim,
+                Plantao.data >= plantao_referencia.data,
+            )
+            .order_by(Plantao.data.asc(), Plantao.id.asc())
+        )
+
+        if plantao_referencia.recorrencia is None:
+            stmt = stmt.where(Plantao.recorrencia.is_(None))
+        else:
+            stmt = stmt.where(Plantao.recorrencia == plantao_referencia.recorrencia)
+
+        return db.scalars(stmt).all()
+
+    @staticmethod
     def delete_by_user(db: Session, plantao_id: int, usuario_id: int) -> bool:
         plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
         if plantao is None:
@@ -169,6 +190,11 @@ class PlantaoRepository:
         db.delete(plantao)
         db.commit()
         return True
+
+    @staticmethod
+    def list_ids_e_datas_por_local(db: Session, local_id: int) -> list[tuple[int, date]]:
+        stmt = select(Plantao.id, Plantao.data).where(Plantao.local_id == local_id)
+        return db.execute(stmt).all()
 
 
 class TokenRevogadoRepository:
