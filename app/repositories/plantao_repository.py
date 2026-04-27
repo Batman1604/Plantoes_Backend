@@ -92,7 +92,8 @@ class PlantaoRepository:
 
     @staticmethod
     def existe_conflito(db: Session, usuario_id: int, inicio, fim) -> bool:
-        plantoes = db.query(Plantao).filter(Plantao.usuario_id == usuario_id).all()
+        stmt = select(Plantao).where(Plantao.usuario_id == usuario_id)
+        plantoes = db.scalars(stmt).all()
         for plantao in plantoes:
             inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
             fim_existente = ajustar_fim_intervalo(inicio_existente, datetime.combine(plantao.data, plantao.horario_fim))
@@ -102,8 +103,8 @@ class PlantaoRepository:
 
     @staticmethod
     def get_conflito(db: Session, usuario_id: int, inicio, fim) -> Plantao | None:
-        """Busca o plantão conflitante com o horário informado."""
-        plantoes = db.query(Plantao).filter(Plantao.usuario_id == usuario_id).all()
+        stmt = select(Plantao).where(Plantao.usuario_id == usuario_id)
+        plantoes = db.scalars(stmt).all()
         for plantao in plantoes:
             inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
             fim_existente = ajustar_fim_intervalo(inicio_existente, datetime.combine(plantao.data, plantao.horario_fim))

@@ -46,7 +46,7 @@ class NotificacaoService:
             f"(valor R${plantao.valor})."
         )
         logger.info("Enviando notificação para plantão %s do usuário %s", plantao.id, email)
-        print(mensagem)
+        logger.info(mensagem)
 
     @staticmethod
     def processar_notificacoes(db: Session) -> None:

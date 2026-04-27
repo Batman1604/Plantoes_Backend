@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Plantao, User
@@ -29,7 +30,7 @@ class PlanoService:
         if PlanoService.obter_plano(usuario) != PlanoService.PLANO_FREE:
             return
 
-        total = db.query(Plantao).filter_by(usuario_id=usuario.id).count()
+        total = db.scalar(select(func.count()).select_from(Plantao).where(Plantao.usuario_id == usuario.id)) or 0
         if total >= PlanoService.LIMITE_PLANTOES_FREE:
             raise HTTPException(
                 status_code=403,
