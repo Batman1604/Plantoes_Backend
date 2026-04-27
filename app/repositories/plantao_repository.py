@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -189,6 +189,11 @@ class PlantaoRepository:
         db.delete(plantao)
         db.commit()
         return True
+
+    @staticmethod
+    def list_ids_e_datas_por_local(db: Session, local_id: int) -> list[tuple[int, date]]:
+        stmt = select(Plantao.id, Plantao.data).where(Plantao.local_id == local_id)
+        return db.execute(stmt).all()
 
 
 class TokenRevogadoRepository:

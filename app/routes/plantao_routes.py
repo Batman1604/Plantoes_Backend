@@ -215,16 +215,41 @@ def atualizar_local(
     local_atual = LocalRepository.get_by_id(db, local_id)
     if local_atual is None or local_atual.usuario_id != current_user.id:
         raise HTTPException(status_code=404, detail="Local não encontrado")
+    dia_pagamento_anterior = local_atual.dia_pagamento
+    dia_pagamento_novo = dados_atualizacao.get("dia_pagamento", dia_pagamento_anterior)
+    dia_pagamento_alterado = dia_pagamento_novo != dia_pagamento_anterior
 
-    local = LocalRepository.update_by_user(db, local_id, current_user.id, **dados_atualizacao)
-    if local is None:
-        raise HTTPException(status_code=404, detail="Local não encontrado")
+    try:
+        for key, value in dados_atualizacao.items():
+            if hasattr(local_atual, key):
+                setattr(local_atual, key, value)
+
+        if dia_pagamento_alterado and dia_pagamento_novo is not None:
+            plantoes = PlantaoRepository.list_ids_e_datas_por_local(db, local_id)
+            if plantoes:
+                atualizacoes = [
+                    {
+                        "id": plantao_id,
+                        "pagamento_plantao": PagamentoService.calcular_data_pagamento_por_dia_mes(
+                            data_plantao=data_plantao,
+                            dia_pagamento=dia_pagamento_novo,
+                        ),
+                    }
+                    for plantao_id, data_plantao in plantoes
+                ]
+                db.bulk_update_mappings(Plantao, atualizacoes)
+
+        db.commit()
+        db.refresh(local_atual)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Erro ao atualizar local") from exc
 
     logger.info("Local %s atualizado por %s", local_id, current_user.email)
     return APIResponse(
         success=True,
         message="Local atualizado com sucesso.",
-        data=LocalResponse.model_validate(local),
+        data=LocalResponse.model_validate(local_atual),
     )
 
 
