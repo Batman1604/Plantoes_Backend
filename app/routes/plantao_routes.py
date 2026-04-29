@@ -20,6 +20,7 @@ from app.schemas.plantao_schema import (
     APIResponse,
     AuthResponse,
     AuthStatusResponse,
+    FeedbackCreate,
     FinanceiroData,
     LocalCreate,
     LocalCreateWithUsuario,
@@ -38,6 +39,7 @@ from app.schemas.plantao_schema import (
 from app.services.financeiro_service import FinanceiroService
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 from app.services.plano_service import PlanoService
+from app.services.feedback_service import FeedbackService
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,24 @@ def logout_usuario(
         raise HTTPException(status_code=500, detail="Falha ao processar logout") from exc
 
     return AuthStatusResponse(autenticado=False, usuario=None)
+
+
+@router.post(
+    "/feedback",
+    response_model=APIResponse[None],
+    summary="Enviar feedback",
+    description="Envia um feedback do usuário autenticado por e-mail para a equipe de desenvolvimento.",
+)
+def enviar_feedback(payload: FeedbackCreate, current_user=Depends(get_current_user)):
+    try:
+        FeedbackService.enviar_feedback(current_user, payload.mensagem)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Falha ao enviar feedback do usuário %s", current_user.email)
+        raise HTTPException(status_code=500, detail="Não foi possível enviar o feedback no momento.") from exc
+
+    return APIResponse(success=True, message="Feedback enviado com sucesso.", data=None)
 
 
 @router.get("/usuarios", response_model=UserResponse)

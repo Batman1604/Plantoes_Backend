@@ -61,6 +61,10 @@ class AuthStatusResponse(BaseModel):
     usuario: Optional[UserResponse] = None
 
 
+class FeedbackCreate(BaseModel):
+    mensagem: str = Field(min_length=5, max_length=2000, example="Sugestão: adicionar filtro por local na tela de plantões.")
+
+
 class LocalBase(BaseModel):
     nome_local: str = Field(min_length=2, max_length=120)
     data_inicio: date
