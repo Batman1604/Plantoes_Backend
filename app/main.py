@@ -13,6 +13,7 @@ from app.core.config import settings
 from app import models  # noqa: F401
 from app.core.database import Base, SessionLocal, engine
 from app.routes.plantao_routes import router
+from app.routes.politicas_routes import router as politicas_router
 from app.services.notificacao_service import NotificacaoService
 
 logging.basicConfig(
@@ -252,6 +253,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(politicas_router)
 
 
 @app.exception_handler(StarletteHTTPException)
