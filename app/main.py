@@ -244,6 +244,44 @@ def ensure_plano_column() -> None:
 
 ensure_plano_column()
 
+
+def ensure_usuario_datas_columns() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            usuarios_cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
+            if not any(column[1] == "criado_em" for column in usuarios_cols):
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN criado_em DATETIME NULL"))
+                connection.execute(text("UPDATE usuarios SET criado_em = CURRENT_TIMESTAMP WHERE criado_em IS NULL"))
+            usuarios_cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
+            if not any(column[1] == "pagamento_realizado" for column in usuarios_cols):
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN pagamento_realizado DATE NULL"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            criado_em_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'usuarios' AND column_name = 'criado_em'"
+                )
+            ).scalar() is not None
+            if not criado_em_exists:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN criado_em TIMESTAMPTZ"))
+                connection.execute(text("UPDATE usuarios SET criado_em = NOW() WHERE criado_em IS NULL"))
+
+            pagamento_realizado_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'usuarios' AND column_name = 'pagamento_realizado'"
+                )
+            ).scalar() is not None
+            if not pagamento_realizado_exists:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN pagamento_realizado DATE NULL"))
+        return
+
+
+ensure_usuario_datas_columns()
+
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
     CORSMiddleware,

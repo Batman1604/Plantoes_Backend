@@ -44,6 +44,8 @@ class UserResponse(UserBase):
     id: int
     telefone: Optional[str] = None
     plano: Literal["free", "premium"] = "free"
+    criado_em: datetime
+    pagamento_realizado: Optional[date] = None
 
     class Config:
         from_attributes = True
