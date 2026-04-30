@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 
 from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -18,6 +18,8 @@ class User(Base):
     telefone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     senha_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     plano: Mapped[str] = mapped_column(String(20), nullable=False, default="free")
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    pagamento_realizado: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     locais: Mapped[list["Local"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
 
