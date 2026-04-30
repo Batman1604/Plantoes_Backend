@@ -534,6 +534,37 @@ def atualizar_plantao(
                         db.add(novo_plantao)
                     proxima_data += timedelta(days=7)
 
+            elif plantao_atual.recorrencia == "Unico" and nova_recorrencia in {"Semanal", "Quinzenal"}:
+                intervalo_dias = 7 if nova_recorrencia == "Semanal" else 14
+                _aplicar_updates(plantao_selecionado, plantao_selecionado.data, forcar_recorrencia=nova_recorrencia)
+
+                data_limite = local.data_final
+                proxima_data = plantao_selecionado.data + timedelta(days=intervalo_dias)
+                while proxima_data <= data_limite:
+                    novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
+                    if isinstance(novo_valor, Decimal):
+                        novo_valor = float(novo_valor)
+                    novo_plantao = Plantao(
+                        usuario_id=current_user.id,
+                        local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
+                        valor=novo_valor,
+                        data=proxima_data,
+                        horario_inicio=dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio),
+                        horario_fim=dados_atualizacao.get("horario_fim", plantao_atual.horario_fim),
+                        recorrencia=nova_recorrencia,
+                        notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
+                        notificacao_antecedencia_minutos=dados_atualizacao.get(
+                            "notificacao_antecedencia_minutos",
+                            plantao_atual.notificacao_antecedencia_minutos,
+                        ),
+                        notificado=False,
+                        executado=False,
+                        pagamento_plantao=_calcular_data_pagamento(proxima_data),
+                        pagamento_recebido=False,
+                    )
+                    db.add(novo_plantao)
+                    proxima_data += timedelta(days=intervalo_dias)
+
             else:
                 for p in plantoes_futuros:
                     _aplicar_updates(p, p.data)
