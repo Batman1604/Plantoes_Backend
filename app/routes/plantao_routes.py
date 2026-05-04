@@ -20,6 +20,7 @@ from app.schemas.plantao_schema import (
     APIResponse,
     AuthResponse,
     AuthStatusResponse,
+    FeedbackCreate,
     FinanceiroData,
     LocalCreate,
     LocalCreateWithUsuario,
@@ -38,6 +39,7 @@ from app.schemas.plantao_schema import (
 from app.services.financeiro_service import FinanceiroService
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 from app.services.plano_service import PlanoService
+from app.services.feedback_service import FeedbackService
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,24 @@ def logout_usuario(
         raise HTTPException(status_code=500, detail="Falha ao processar logout") from exc
 
     return AuthStatusResponse(autenticado=False, usuario=None)
+
+
+@router.post(
+    "/feedback",
+    response_model=APIResponse[None],
+    summary="Enviar feedback",
+    description="Envia um feedback do usuário autenticado por e-mail para a equipe de desenvolvimento.",
+)
+def enviar_feedback(payload: FeedbackCreate, current_user=Depends(get_current_user)):
+    try:
+        FeedbackService.enviar_feedback(current_user, payload.mensagem)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Falha ao enviar feedback do usuário %s", current_user.email)
+        raise HTTPException(status_code=500, detail="Não foi possível enviar o feedback no momento.") from exc
+
+    return APIResponse(success=True, message="Feedback enviado com sucesso.", data=None)
 
 
 @router.get("/usuarios", response_model=UserResponse)
@@ -468,7 +488,7 @@ def atualizar_plantao(
                 plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.data)
                 plantao_item.pagamento_recebido = False
 
-            if nova_recorrencia == "Unico":
+            if nova_recorrencia in (None, "Unico"):
                 for p in plantoes_futuros[1:]:
                     db.delete(p)
                 _aplicar_updates(plantao_selecionado, plantao_selecionado.data, forcar_recorrencia="Unico")
@@ -501,6 +521,7 @@ def atualizar_plantao(
                             horario_inicio=dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio),
                             horario_fim=dados_atualizacao.get("horario_fim", plantao_atual.horario_fim),
                             recorrencia="Semanal",
+                            sobreaviso=dados_atualizacao.get("sobreaviso", plantao_atual.sobreaviso),
                             notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
                             notificacao_antecedencia_minutos=dados_atualizacao.get(
                                 "notificacao_antecedencia_minutos",
@@ -513,6 +534,38 @@ def atualizar_plantao(
                         )
                         db.add(novo_plantao)
                     proxima_data += timedelta(days=7)
+
+            elif plantao_atual.recorrencia in (None, "Unico") and nova_recorrencia in {"Semanal", "Quinzenal"}:
+                intervalo_dias = 7 if nova_recorrencia == "Semanal" else 14
+                _aplicar_updates(plantao_selecionado, plantao_selecionado.data, forcar_recorrencia=nova_recorrencia)
+
+                data_limite = local.data_final
+                proxima_data = plantao_selecionado.data + timedelta(days=intervalo_dias)
+                while proxima_data <= data_limite:
+                    novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
+                    if isinstance(novo_valor, Decimal):
+                        novo_valor = float(novo_valor)
+                    novo_plantao = Plantao(
+                        usuario_id=current_user.id,
+                        local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
+                        valor=novo_valor,
+                        data=proxima_data,
+                        horario_inicio=dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio),
+                        horario_fim=dados_atualizacao.get("horario_fim", plantao_atual.horario_fim),
+                        recorrencia=nova_recorrencia,
+                        sobreaviso=dados_atualizacao.get("sobreaviso", plantao_atual.sobreaviso),
+                        notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
+                        notificacao_antecedencia_minutos=dados_atualizacao.get(
+                            "notificacao_antecedencia_minutos",
+                            plantao_atual.notificacao_antecedencia_minutos,
+                        ),
+                        notificado=False,
+                        executado=False,
+                        pagamento_plantao=_calcular_data_pagamento(proxima_data),
+                        pagamento_recebido=False,
+                    )
+                    db.add(novo_plantao)
+                    proxima_data += timedelta(days=intervalo_dias)
 
             else:
                 for p in plantoes_futuros:

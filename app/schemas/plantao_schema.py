@@ -44,6 +44,8 @@ class UserResponse(UserBase):
     id: int
     telefone: Optional[str] = None
     plano: Literal["free", "premium"] = "free"
+    criado_em: datetime
+    pagamento_realizado: Optional[date] = None
 
     class Config:
         from_attributes = True
@@ -61,12 +63,17 @@ class AuthStatusResponse(BaseModel):
     usuario: Optional[UserResponse] = None
 
 
+class FeedbackCreate(BaseModel):
+    mensagem: str = Field(min_length=5, max_length=2000, example="Sugestão: adicionar filtro por local na tela de plantões.")
+
+
 class LocalBase(BaseModel):
     nome_local: str = Field(min_length=2, max_length=120)
     data_inicio: date
     data_final: date
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
     cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
+    endereco_local: Optional[str] = Field(default=None, max_length=255)
 
     @field_validator("data_inicio", "data_final", mode="before")
     @classmethod
@@ -84,6 +91,7 @@ class LocalUpdate(BaseModel):
     data_final: date | None = None
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
     cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
+    endereco_local: Optional[str] = Field(default=None, max_length=255)
 
     @field_validator("data_inicio", "data_final", mode="before")
     @classmethod
@@ -127,6 +135,7 @@ class PlantaoBase(BaseModel):
         example="Semanal",
         description="Recorrência opcional do plantão."
     )
+    sobreaviso: bool = Field(default=False, example=False, description="Indica se o plantão é de sobreaviso.")
 
     @field_validator("data", mode="before")
     @classmethod
@@ -177,6 +186,7 @@ class PlantaoUpdate(BaseModel):
     horario_inicio: time | None = None
     horario_fim: time | None = None
     recorrencia: Optional[str] = Field(default=None, max_length=50)
+    sobreaviso: bool | None = None
     local_id: int | None = None
     notificacao_ativa: bool | None = None
     notificacao_antecedencia_minutos: int | None = Field(default=None, ge=0, le=2880)

@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -44,4 +46,5 @@ class PlanoService:
             return False
 
         usuario.plano = PlanoService.PLANO_PREMIUM
+        usuario.pagamento_realizado = date.today()
         return True

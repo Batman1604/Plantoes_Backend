@@ -13,6 +13,7 @@ from app.core.config import settings
 from app import models  # noqa: F401
 from app.core.database import Base, SessionLocal, engine
 from app.routes.plantao_routes import router
+from app.routes.politicas_routes import router as politicas_router
 from app.services.notificacao_service import NotificacaoService
 
 logging.basicConfig(
@@ -243,6 +244,82 @@ def ensure_plano_column() -> None:
 
 ensure_plano_column()
 
+
+def ensure_usuario_datas_columns() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            usuarios_cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
+            if not any(column[1] == "criado_em" for column in usuarios_cols):
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN criado_em DATETIME NULL"))
+                connection.execute(text("UPDATE usuarios SET criado_em = CURRENT_TIMESTAMP WHERE criado_em IS NULL"))
+            usuarios_cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
+            if not any(column[1] == "pagamento_realizado" for column in usuarios_cols):
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN pagamento_realizado DATE NULL"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            criado_em_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'usuarios' AND column_name = 'criado_em'"
+                )
+            ).scalar() is not None
+            if not criado_em_exists:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN criado_em TIMESTAMPTZ"))
+                connection.execute(text("UPDATE usuarios SET criado_em = NOW() WHERE criado_em IS NULL"))
+
+            pagamento_realizado_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'usuarios' AND column_name = 'pagamento_realizado'"
+                )
+            ).scalar() is not None
+            if not pagamento_realizado_exists:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN pagamento_realizado DATE NULL"))
+        return
+
+
+ensure_usuario_datas_columns()
+
+
+def ensure_sobreaviso_e_endereco_columns() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
+            if not any(column[1] == "sobreaviso" for column in plantoes_cols):
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN sobreaviso BOOLEAN NOT NULL DEFAULT 0"))
+            locais_cols = connection.execute(text("PRAGMA table_info(locais)")).all()
+            if not any(column[1] == "endereco_local" for column in locais_cols):
+                connection.execute(text("ALTER TABLE locais ADD COLUMN endereco_local VARCHAR(255) NULL"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            sobreaviso_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'plantoes' AND column_name = 'sobreaviso'"
+                )
+            ).scalar() is not None
+            if not sobreaviso_exists:
+                connection.execute(
+                    text("ALTER TABLE plantoes ADD COLUMN sobreaviso BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+
+            endereco_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'locais' AND column_name = 'endereco_local'"
+                )
+            ).scalar() is not None
+            if not endereco_exists:
+                connection.execute(text("ALTER TABLE locais ADD COLUMN endereco_local VARCHAR(255) NULL"))
+        return
+
+
+ensure_sobreaviso_e_endereco_columns()
+
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
     CORSMiddleware,
@@ -252,6 +329,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(politicas_router)
 
 
 @app.exception_handler(StarletteHTTPException)

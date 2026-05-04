@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 
 from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -18,6 +18,8 @@ class User(Base):
     telefone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     senha_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     plano: Mapped[str] = mapped_column(String(20), nullable=False, default="free")
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    pagamento_realizado: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     locais: Mapped[list["Local"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
 
@@ -32,6 +34,7 @@ class Local(Base):
     data_final: Mapped[str] = mapped_column(Date, nullable=False)
     dia_pagamento: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cor: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    endereco_local: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     usuario: Mapped[User] = relationship(back_populates="locais")
     plantoes: Mapped[list["Plantao"]] = relationship(back_populates="local", cascade="all, delete-orphan")
@@ -55,6 +58,7 @@ class Plantao(Base):
     executado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     pagamento_plantao: Mapped[date | None] = mapped_column(Date, nullable=True)
     pagamento_recebido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sobreaviso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     local: Mapped[Local] = relationship(back_populates="plantoes")
 
