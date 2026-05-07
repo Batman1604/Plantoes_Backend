@@ -28,7 +28,7 @@ class Local(Base):
     __tablename__ = "locais"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
     nome_local: Mapped[str] = mapped_column(String(120), nullable=False)
     data_inicio: Mapped[str] = mapped_column(Date, nullable=False)
     data_final: Mapped[str] = mapped_column(Date, nullable=False)
@@ -46,10 +46,10 @@ class Plantao(Base):
     __tablename__ = "plantoes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
-    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
-    data: Mapped[date] = Column(Date, nullable=False)
+    data: Mapped[date] = Column(Date, nullable=False, index=True)
     horario_inicio: Mapped[time] = Column(Time, nullable=False)
     horario_fim: Mapped[time] = Column(Time, nullable=False)
     recorrencia: Mapped[str | None] = mapped_column(String(50), nullable=True)

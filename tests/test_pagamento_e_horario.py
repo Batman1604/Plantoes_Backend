@@ -14,13 +14,16 @@ class TestPagamentoEHorario(unittest.TestCase):
         self.assertEqual(data_dia_util, date(2026, 9, 7))
 
     def test_calcula_data_pagamento_para_mes_seguinte_quando_dia_ja_passou(self):
+        # Ciclo 21/abr → 20/mai; plantão em 20/abr está no ciclo anterior (21/mar→20/abr).
+        # 5º dia útil de abril = 07/04, que é ≤ ao fechamento 20/04, logo avança para maio.
+        # 5º dia útil de maio/2026 = 07/05.
         data_pagamento = PagamentoService.calcular_data_pagamento_plantao(
             data_plantao=date(2026, 4, 20),
             indice_dia_pagamento=5,
             data_inicio_ciclo=date(2026, 4, 21),
             data_final_ciclo=date(2026, 5, 20),
         )
-        self.assertEqual(data_pagamento, date(2026, 6, 5))
+        self.assertEqual(data_pagamento, date(2026, 5, 7))
 
     def test_calcula_data_pagamento_no_mes_de_fechamento_quando_dia_util_apos_fechamento(self):
         data_pagamento = PagamentoService.calcular_data_pagamento_plantao(

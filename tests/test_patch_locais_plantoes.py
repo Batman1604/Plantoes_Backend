@@ -386,7 +386,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         plantoes = self.client.get("/api/plantoes", headers=headers).json()
         self.assertEqual(len(plantoes), 1)
         self.assertEqual(plantoes[0]["data"], "2026-05-01")
-        self.assertEqual(plantoes[0]["recorrencia"], "Unico")
+        self.assertIsNone(plantoes[0]["recorrencia"])
 
 
 if __name__ == "__main__":

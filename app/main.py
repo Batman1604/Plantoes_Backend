@@ -346,6 +346,43 @@ def ensure_util_corrido_column() -> None:
 
 ensure_util_corrido_column()
 
+
+def ensure_indexes() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_locais_usuario_id ON locais (usuario_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_id ON plantoes (usuario_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_local_id ON plantoes (local_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_data ON plantoes (data)"
+            ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_locais_usuario_id ON locais (usuario_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_id ON plantoes (usuario_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_local_id ON plantoes (local_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_data ON plantoes (data)"
+            ))
+        return
+
+
+ensure_indexes()
+
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
     CORSMiddleware,

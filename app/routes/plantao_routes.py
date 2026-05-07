@@ -370,6 +370,8 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
 
     # Criar plantão (acao_conflito == "manter" ou "ajustar" com ajuste realizado)
     data = payload.model_dump()
+    if data.get("recorrencia") == "Unico":
+        data["recorrencia"] = None
     data["usuario_id"] = current_user.id
     data["executado"] = False
     data["pagamento_recebido"] = False
@@ -425,6 +427,8 @@ def atualizar_plantao(
         raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
 
     aplicar_em = dados_atualizacao.pop("aplicar_em", "somente_este")
+    if dados_atualizacao.get("recorrencia") == "Unico":
+        dados_atualizacao["recorrencia"] = None
 
     plantao_atual = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
     if plantao_atual is None:
@@ -493,10 +497,10 @@ def atualizar_plantao(
                 plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.data)
                 plantao_item.pagamento_recebido = False
 
-            if nova_recorrencia in (None, "Unico"):
+            if "recorrencia" in dados_atualizacao and nova_recorrencia is None:
                 for p in plantoes_futuros[1:]:
                     db.delete(p)
-                _aplicar_updates(plantao_selecionado, plantao_selecionado.data, forcar_recorrencia="Unico")
+                _aplicar_updates(plantao_selecionado, plantao_selecionado.data)
 
             elif plantao_atual.recorrencia == "Semanal" and nova_recorrencia == "Quinzenal":
                 for p in plantoes_futuros[1:]:
