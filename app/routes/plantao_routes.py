@@ -237,14 +237,16 @@ def atualizar_local(
         raise HTTPException(status_code=404, detail="Local não encontrado")
     dia_pagamento_anterior = local_atual.dia_pagamento
     dia_pagamento_novo = dados_atualizacao.get("dia_pagamento", dia_pagamento_anterior)
-    dia_pagamento_alterado = dia_pagamento_novo != dia_pagamento_anterior
+    util_corrido_anterior = local_atual.util_corrido
+    util_corrido_novo = dados_atualizacao.get("util_corrido", util_corrido_anterior)
+    recalcular_pagamento = (dia_pagamento_novo != dia_pagamento_anterior) or (util_corrido_novo != util_corrido_anterior)
 
     try:
         for key, value in dados_atualizacao.items():
             if hasattr(local_atual, key):
                 setattr(local_atual, key, value)
 
-        if dia_pagamento_alterado and dia_pagamento_novo is not None:
+        if recalcular_pagamento and dia_pagamento_novo is not None:
             plantoes = PlantaoRepository.list_ids_e_datas_por_local(db, local_id)
             if plantoes:
                 atualizacoes = [
@@ -253,6 +255,7 @@ def atualizar_local(
                         "pagamento_plantao": PagamentoService.calcular_data_pagamento_por_dia_mes(
                             data_plantao=data_plantao,
                             dia_pagamento=dia_pagamento_novo,
+                            util_corrido=util_corrido_novo,
                         ),
                     }
                     for plantao_id, data_plantao in plantoes
@@ -376,6 +379,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
             indice_dia_pagamento=local.dia_pagamento,
             data_inicio_ciclo=local.data_inicio,
             data_final_ciclo=local.data_final,
+            util_corrido=local.util_corrido,
         )
 
     try:
@@ -447,6 +451,7 @@ def atualizar_plantao(
                 indice_dia_pagamento=local.dia_pagamento,
                 data_inicio_ciclo=local.data_inicio,
                 data_final_ciclo=local.data_final,
+                util_corrido=local.util_corrido,
             )
         return None
 

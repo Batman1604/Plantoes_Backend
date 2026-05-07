@@ -320,6 +320,32 @@ def ensure_sobreaviso_e_endereco_columns() -> None:
 
 ensure_sobreaviso_e_endereco_columns()
 
+
+def ensure_util_corrido_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            locais_cols = connection.execute(text("PRAGMA table_info(locais)")).all()
+            if not any(column[1] == "util_corrido" for column in locais_cols):
+                connection.execute(text("ALTER TABLE locais ADD COLUMN util_corrido BOOLEAN NOT NULL DEFAULT 1"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            util_corrido_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'locais' AND column_name = 'util_corrido'"
+                )
+            ).scalar() is not None
+            if not util_corrido_exists:
+                connection.execute(
+                    text("ALTER TABLE locais ADD COLUMN util_corrido BOOLEAN NOT NULL DEFAULT TRUE")
+                )
+        return
+
+
+ensure_util_corrido_column()
+
 app = FastAPI(title=settings.app_name)
 app.add_middleware(
     CORSMiddleware,

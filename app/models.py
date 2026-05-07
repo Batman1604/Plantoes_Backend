@@ -33,6 +33,7 @@ class Local(Base):
     data_inicio: Mapped[str] = mapped_column(Date, nullable=False)
     data_final: Mapped[str] = mapped_column(Date, nullable=False)
     dia_pagamento: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    util_corrido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     cor: Mapped[str | None] = mapped_column(String(20), nullable=True)
     endereco_local: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

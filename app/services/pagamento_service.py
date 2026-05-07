@@ -48,6 +48,7 @@ class PagamentoService:
         indice_dia_pagamento: int,
         data_inicio_ciclo: date,
         data_final_ciclo: date,
+        util_corrido: bool = True,
     ) -> date:
         dia_inicio = data_inicio_ciclo.day
         dia_final = data_final_ciclo.day
@@ -82,24 +83,39 @@ class PagamentoService:
             mes_fechamento,
             dia_final_mes_fechamento,
         )
-        data_pagamento = PagamentoService.calcular_data_dia_util_do_mes(
-            ano_fechamento,
-            mes_fechamento,
-            indice_dia_pagamento,
-        )
+
+        if util_corrido:
+            data_pagamento = PagamentoService.calcular_data_dia_util_do_mes(
+                ano_fechamento,
+                mes_fechamento,
+                indice_dia_pagamento,
+            )
+        else:
+            data_pagamento = PagamentoService._data_com_dia_do_mes(
+                ano_fechamento,
+                mes_fechamento,
+                indice_dia_pagamento,
+            )
 
         if data_pagamento <= data_fechamento:
             ano_pagamento, mes_pagamento = PagamentoService._ajustar_ano_mes(ano_fechamento, mes_fechamento, 1)
-            data_pagamento = PagamentoService.calcular_data_dia_util_do_mes(
-                ano_pagamento,
-                mes_pagamento,
-                indice_dia_pagamento,
-            )
+            if util_corrido:
+                data_pagamento = PagamentoService.calcular_data_dia_util_do_mes(
+                    ano_pagamento,
+                    mes_pagamento,
+                    indice_dia_pagamento,
+                )
+            else:
+                data_pagamento = PagamentoService._data_com_dia_do_mes(
+                    ano_pagamento,
+                    mes_pagamento,
+                    indice_dia_pagamento,
+                )
 
         return data_pagamento
 
     @staticmethod
-    def calcular_data_pagamento_por_dia_mes(data_plantao: date, dia_pagamento: int) -> date:
+    def calcular_data_pagamento_por_dia_mes(data_plantao: date, dia_pagamento: int, util_corrido: bool = True) -> date:
         if dia_pagamento < 1:
             raise ValueError("O dia de pagamento deve ser maior ou igual a 1")
 
@@ -110,9 +126,9 @@ class PagamentoService:
         )
         data_pagamento = PagamentoService._data_com_dia_do_mes(ano_pagamento, mes_pagamento, dia_pagamento)
 
-        # Ajuste para o próximo dia útil quando cair em final de semana
-        while data_pagamento.weekday() >= 5:
-            data_pagamento += timedelta(days=1)
+        if util_corrido:
+            while data_pagamento.weekday() >= 5:
+                data_pagamento += timedelta(days=1)
 
         return data_pagamento
 

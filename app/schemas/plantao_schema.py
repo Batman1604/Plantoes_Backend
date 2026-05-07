@@ -72,6 +72,7 @@ class LocalBase(BaseModel):
     data_inicio: date
     data_final: date
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
+    util_corrido: bool = Field(default=True, description="True = dia útil, False = dia corrido")
     cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
     endereco_local: Optional[str] = Field(default=None, max_length=255)
 
@@ -90,6 +91,7 @@ class LocalUpdate(BaseModel):
     data_inicio: date | None = None
     data_final: date | None = None
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
+    util_corrido: Optional[bool] = Field(default=None, description="True = dia útil, False = dia corrido")
     cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
     endereco_local: Optional[str] = Field(default=None, max_length=255)
 
