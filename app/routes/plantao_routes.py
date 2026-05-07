@@ -722,3 +722,24 @@ def obter_total_financeiro_anual(
     PlanoService.exigir_premium(current_user)
     resultado = FinanceiroService.calcular_total_anual(db, current_user.id, ano)
     return APIResponse(success=True, message="Resumo financeiro anual gerado com sucesso.", data=FinanceiroData.model_validate(resultado))
+
+
+@router.get(
+    "/financeiro/mensal/local",
+    response_model=APIResponse[FinanceiroData],
+    summary="Resumo financeiro mensal por local",
+    description="Retorna o total e a quantidade de plantões de um local específico no mês solicitado.",
+)
+def obter_total_financeiro_mensal_por_local(
+    local_id: int = Query(..., description="ID do local."),
+    mes: int = Query(..., ge=1, le=12, description="Mês do relatório (1-12)."),
+    ano: int = Query(..., ge=1, description="Ano do relatório."),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    PlanoService.exigir_premium(current_user)
+    local = LocalRepository.get_by_id(db, local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado")
+    resultado = FinanceiroService.calcular_total_mensal_por_local(db, current_user.id, local_id, mes, ano)
+    return APIResponse(success=True, message="Resumo financeiro mensal do local gerado com sucesso.", data=FinanceiroData.model_validate(resultado))
