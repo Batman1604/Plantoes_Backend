@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -14,6 +15,7 @@ from app import models  # noqa: F401
 from app.core.database import Base, SessionLocal, engine
 from app.routes.plantao_routes import router
 from app.routes.politicas_routes import router as politicas_router
+from app.repositories.plantao_repository import TokenRevogadoRepository
 from app.services.notificacao_service import NotificacaoService
 
 logging.basicConfig(
@@ -383,11 +385,19 @@ def ensure_indexes() -> None:
 
 ensure_indexes()
 
-app = FastAPI(title=settings.app_name)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    thread = threading.Thread(target=notificacao_worker, daemon=True, name="notificacao-worker")
+    thread.start()
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -444,19 +454,26 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 
 def notificacao_worker() -> None:
+    cleanup_counter = 0
     while True:
         try:
             with SessionLocal() as db:
                 NotificacaoService.processar_notificacoes(db)
         except Exception:
             logger.exception("Erro ao executar worker de notificações")
+
+        cleanup_counter += 1
+        if cleanup_counter >= 60:
+            cleanup_counter = 0
+            try:
+                with SessionLocal() as db:
+                    removed = TokenRevogadoRepository.cleanup_expired(db)
+                    if removed:
+                        logger.info("Tokens revogados expirados removidos: %d", removed)
+            except Exception:
+                logger.exception("Erro ao limpar tokens revogados expirados")
+
         time.sleep(60)
-
-
-@app.on_event("startup")
-def iniciar_worker_notificacoes() -> None:
-    thread = threading.Thread(target=notificacao_worker, daemon=True, name="notificacao-worker")
-    thread.start()
 
 
 @app.get("/health", tags=["health"])

@@ -18,8 +18,11 @@ class TestPlanos(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         db_file = Path("test_planos.db")
-        if db_file.exists():
-            db_file.unlink()
+        try:
+            if db_file.exists():
+                db_file.unlink()
+        except PermissionError:
+            pass
 
     def criar_usuario_e_token(self):
         email = f"plan-user-{uuid4()}@example.com"

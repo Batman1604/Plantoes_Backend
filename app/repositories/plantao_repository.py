@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
@@ -209,3 +209,9 @@ class TokenRevogadoRepository:
     @staticmethod
     def is_revoked(db: Session, jti: str) -> bool:
         return db.scalar(select(TokenRevogado.id).where(TokenRevogado.jti == jti)) is not None
+
+    @staticmethod
+    def cleanup_expired(db: Session) -> int:
+        result = db.execute(delete(TokenRevogado).where(TokenRevogado.expira_em < datetime.now(UTC)))
+        db.commit()
+        return result.rowcount

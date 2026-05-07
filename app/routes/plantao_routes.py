@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from app.core.rate_limiter import rate_limit
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -81,7 +82,7 @@ def get_current_user(
     summary="Criar usuário",
     description="Cria um novo usuário para acessar o sistema.",
 )
-def criar_usuario(payload: UserCreate, db: Session = Depends(get_db)):
+def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
     try:
         user = UserRepository.create(db, payload)
         logger.info("Usuário criado: %s", user.email)
@@ -97,7 +98,7 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db)):
     summary="Autenticar usuário",
     description="Autentica o usuário e retorna um token de acesso JWT.",
 )
-def autenticar_usuario(payload: UserLogin, db: Session = Depends(get_db)):
+def autenticar_usuario(payload: UserLogin, db: Session = Depends(get_db), _=Depends(rate_limit(10, 60))):
     user = UserRepository.authenticate(db, payload)
     if user is None:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
@@ -142,6 +143,36 @@ def logout_usuario(
         raise HTTPException(status_code=500, detail="Falha ao processar logout") from exc
 
     return AuthStatusResponse(autenticado=False, usuario=None)
+
+
+@router.post(
+    "/auth/refresh",
+    response_model=APIResponse[AuthResponse],
+    summary="Renovar token",
+    description="Revoga o token atual e emite um novo com validade estendida.",
+)
+def refresh_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    token_payload = decode_access_token(credentials.credentials)
+    try:
+        TokenRevogadoRepository.revoke(
+            db,
+            jti=str(token_payload["jti"]),
+            usuario_id=int(token_payload["user_id"]),
+            expira_em=token_payload["exp"],
+        )
+    except IntegrityError:
+        db.rollback()
+
+    new_token = create_access_token(current_user.id)
+    return APIResponse(
+        success=True,
+        message="Token renovado com sucesso.",
+        data=AuthResponse(autenticado=True, access_token=new_token, usuario=UserResponse.model_validate(current_user)),
+    )
 
 
 @router.post(
