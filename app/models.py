@@ -66,6 +66,17 @@ class Plantao(Base):
     local: Mapped[Local] = relationship(back_populates="plantoes")
 
 
+class Financeiro(Base):
+    __tablename__ = "financeiro"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
+    valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    data: Mapped[date] = mapped_column(Date, nullable=False)
+
+    local: Mapped[Local] = relationship()
+
+
 class TokenRevogado(Base):
     __tablename__ = "tokens_revogados"
 

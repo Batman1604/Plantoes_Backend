@@ -429,6 +429,46 @@ def ensure_email_verificado_e_device_token_columns() -> None:
 ensure_email_verificado_e_device_token_columns()
 
 
+def ensure_financeiro_table() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            table_exists = connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='financeiro'")
+            ).fetchone()
+            if not table_exists:
+                connection.execute(text(
+                    "CREATE TABLE financeiro ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE, "
+                    "valor NUMERIC(10,2) NOT NULL, "
+                    "data DATE NOT NULL"
+                    ")"
+                ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            table_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'financeiro'"
+                )
+            ).scalar() is not None
+            if not table_exists:
+                connection.execute(text(
+                    "CREATE TABLE financeiro ("
+                    "id SERIAL PRIMARY KEY, "
+                    "local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE, "
+                    "valor NUMERIC(10,2) NOT NULL, "
+                    "data DATE NOT NULL"
+                    ")"
+                ))
+        return
+
+
+ensure_financeiro_table()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     thread = threading.Thread(target=notificacao_worker, daemon=True, name="notificacao-worker")
