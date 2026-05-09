@@ -358,6 +358,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
 
     def test_patch_plantao_futuros_de_quinzenal_para_semanal_cria_datas_intermediarias(self):
         headers = self.criar_usuario_e_token()
+        self.client.post("/api/usuarios/upgrade", headers=headers)
         local_id = self.criar_local(headers)
         ids = self.criar_plantoes_recorrentes(headers, local_id, "Quinzenal", date(2026, 5, 1), 4, 14)
 

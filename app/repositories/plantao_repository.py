@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -91,24 +91,27 @@ class PlantaoRepository:
         return plantao
 
     @staticmethod
-    def existe_conflito(db: Session, usuario_id: int, inicio, fim) -> bool:
-        stmt = select(Plantao).where(Plantao.usuario_id == usuario_id)
-        plantoes = db.scalars(stmt).all()
-        for plantao in plantoes:
+    def get_conflito(
+        db: Session,
+        usuario_id: int,
+        inicio: datetime,
+        fim: datetime,
+        excluir_id: int | None = None,
+    ) -> Plantao | None:
+        # Filter by date range first to use the index on plantoes.data
+        data_min = inicio.date() - timedelta(days=1)
+        data_max = fim.date() + timedelta(days=1)
+        stmt = select(Plantao).where(
+            Plantao.usuario_id == usuario_id,
+            Plantao.data >= data_min,
+            Plantao.data <= data_max,
+        )
+        if excluir_id is not None:
+            stmt = stmt.where(Plantao.id != excluir_id)
+        for plantao in db.scalars(stmt).all():
             inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
             fim_existente = ajustar_fim_intervalo(inicio_existente, datetime.combine(plantao.data, plantao.horario_fim))
-            if inicio_existente <= fim and fim_existente >= inicio:
-                return True
-        return False
-
-    @staticmethod
-    def get_conflito(db: Session, usuario_id: int, inicio, fim) -> Plantao | None:
-        stmt = select(Plantao).where(Plantao.usuario_id == usuario_id)
-        plantoes = db.scalars(stmt).all()
-        for plantao in plantoes:
-            inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
-            fim_existente = ajustar_fim_intervalo(inicio_existente, datetime.combine(plantao.data, plantao.horario_fim))
-            if inicio_existente <= fim and fim_existente >= inicio:
+            if inicio_existente < fim and fim_existente > inicio:
                 return plantao
         return None
 

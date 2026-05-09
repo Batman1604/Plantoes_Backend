@@ -346,6 +346,12 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     if local.usuario_id != current_user.id:
         raise HTTPException(status_code=403, detail="Local não pertence ao usuário autenticado")
 
+    if payload.data < local.data_inicio or payload.data > local.data_final:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Data fora do período do local ({local.data_inicio} a {local.data_final}).",
+        )
+
     inicio_dt = datetime.combine(payload.data, payload.horario_inicio)
     fim_dt = ajustar_fim_intervalo(inicio_dt, datetime.combine(payload.data, payload.horario_fim))
 
@@ -474,6 +480,12 @@ def atualizar_plantao(
     horario_inicio_ref = dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio)
     horario_fim_ref = dados_atualizacao.get("horario_fim", plantao_atual.horario_fim)
 
+    if "data" in dados_atualizacao and (data_ref < local.data_inicio or data_ref > local.data_final):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Data fora do período do local ({local.data_inicio} a {local.data_final}).",
+        )
+
     inicio_dt = datetime.combine(data_ref, horario_inicio_ref)
     fim_dt = ajustar_fim_intervalo(inicio_dt, datetime.combine(data_ref, horario_fim_ref))
     if (fim_dt - inicio_dt).total_seconds() > 48 * 3600:
@@ -497,6 +509,21 @@ def atualizar_plantao(
 
     if local.dia_pagamento is None:
         dados_atualizacao["pagamento_recebido"] = False
+
+    conflito_relevante = any(k in dados_atualizacao for k in ("data", "horario_inicio", "horario_fim"))
+    if conflito_relevante and aplicar_em == "somente_este":
+        conflito = PlantaoRepository.get_conflito(
+            db,
+            usuario_id=current_user.id,
+            inicio=inicio_dt,
+            fim=fim_dt,
+            excluir_id=plantao_id,
+        )
+        if conflito:
+            raise HTTPException(
+                status_code=409,
+                detail="Conflito de horário detectado com outro plantão existente.",
+            )
 
     try:
         if aplicar_em == "somente_este":
@@ -543,10 +570,17 @@ def atualizar_plantao(
                 _aplicar_updates(plantao_selecionado, plantao_selecionado.data, forcar_recorrencia="Quinzenal")
 
             elif plantao_atual.recorrencia == "Quinzenal" and nova_recorrencia == "Semanal":
+                data_limite = local.data_final
+                _d, novos_count = data_ancora + timedelta(days=7), 0
+                while _d <= data_limite:
+                    if _d not in plantoes_por_data:
+                        novos_count += 1
+                    _d += timedelta(days=7)
+                PlanoService.verificar_limite_serie(db, current_user, novos_count)
+
                 for p in plantoes_futuros:
                     _aplicar_updates(p, p.data, forcar_recorrencia="Semanal")
 
-                data_limite = local.data_final
                 proxima_data = data_ancora + timedelta(days=7)
                 while proxima_data <= data_limite:
                     if proxima_data not in plantoes_por_data:
@@ -577,9 +611,15 @@ def atualizar_plantao(
 
             elif plantao_atual.recorrencia in (None, "Unico") and nova_recorrencia in {"Semanal", "Quinzenal"}:
                 intervalo_dias = 7 if nova_recorrencia == "Semanal" else 14
+                data_limite = local.data_final
+                _d2, novos_count2 = plantao_selecionado.data + timedelta(days=intervalo_dias), 0
+                while _d2 <= data_limite:
+                    novos_count2 += 1
+                    _d2 += timedelta(days=intervalo_dias)
+                PlanoService.verificar_limite_serie(db, current_user, novos_count2)
+
                 _aplicar_updates(plantao_selecionado, plantao_selecionado.data, forcar_recorrencia=nova_recorrencia)
 
-                data_limite = local.data_final
                 proxima_data = plantao_selecionado.data + timedelta(days=intervalo_dias)
                 while proxima_data <= data_limite:
                     novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
