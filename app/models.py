@@ -20,6 +20,8 @@ class User(Base):
     plano: Mapped[str] = mapped_column(String(20), nullable=False, default="free")
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     pagamento_realizado: Mapped[date | None] = mapped_column(Date, nullable=True)
+    email_verificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    device_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     locais: Mapped[list["Local"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
 

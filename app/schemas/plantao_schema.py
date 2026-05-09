@@ -46,6 +46,7 @@ class UserResponse(UserBase):
     plano: Literal["free", "premium"] = "free"
     criado_em: datetime
     pagamento_realizado: Optional[date] = None
+    email_verificado: bool = False
 
     class Config:
         from_attributes = True
@@ -61,6 +62,24 @@ class AuthResponse(BaseModel):
 class AuthStatusResponse(BaseModel):
     autenticado: bool
     usuario: Optional[UserResponse] = None
+
+
+class SenhaResetRequest(BaseModel):
+    email: EmailStr = Field(example="joao@example.com")
+
+
+class SenhaResetConfirmar(BaseModel):
+    token: str = Field(min_length=1)
+    nova_senha: str = Field(min_length=8, max_length=128, example="NovaSenhaForte123")
+
+
+class AlterarSenhaRequest(BaseModel):
+    senha_atual: str = Field(min_length=8, max_length=128)
+    nova_senha: str = Field(min_length=8, max_length=128)
+
+
+class DeviceTokenUpdate(BaseModel):
+    device_token: str = Field(min_length=1, max_length=255)
 
 
 class FeedbackCreate(BaseModel):

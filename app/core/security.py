@@ -28,6 +28,28 @@ def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(digest.hex(), expected_hash)
 
 
+def create_purpose_token(email: str, purpose: str, expire_minutes: int) -> str:
+    expires_at = datetime.now(UTC) + timedelta(minutes=expire_minutes)
+    payload = {
+        "sub": email,
+        "purpose": purpose,
+        "jti": str(uuid4()),
+        "exp": expires_at,
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def decode_purpose_token(token: str, purpose: str) -> str | None:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        if payload.get("purpose") != purpose:
+            return None
+        email = payload.get("sub")
+        return str(email) if email else None
+    except (JWTError, ValueError):
+        return None
+
+
 def create_access_token(user_id: int) -> str:
     expires_at = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
     payload = {

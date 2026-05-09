@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models import Plantao
-from app.core.security import create_access_token, decode_access_token
+from app.core.security import (
+    create_access_token,
+    create_purpose_token,
+    decode_access_token,
+    decode_purpose_token,
+    verify_password,
+)
 from app.repositories.plantao_repository import (
     LocalRepository,
     PlantaoRepository,
@@ -19,8 +25,10 @@ from app.repositories.plantao_repository import (
 )
 from app.schemas.plantao_schema import (
     APIResponse,
+    AlterarSenhaRequest,
     AuthResponse,
     AuthStatusResponse,
+    DeviceTokenUpdate,
     FeedbackCreate,
     FinanceiroData,
     LocalCreate,
@@ -33,14 +41,17 @@ from app.schemas.plantao_schema import (
     PlantaoPagamentoRecebidoUpdate,
     PlantaoResponse,
     PlantaoUpdate,
+    SenhaResetConfirmar,
+    SenhaResetRequest,
     UserCreate,
     UserLogin,
     UserResponse,
 )
+from app.services.email_service import EmailService
+from app.services.feedback_service import FeedbackService
 from app.services.financeiro_service import FinanceiroService
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 from app.services.plano_service import PlanoService
-from app.services.feedback_service import FeedbackService
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +97,17 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(
     try:
         user = UserRepository.create(db, payload)
         logger.info("Usuário criado: %s", user.email)
-        return APIResponse(success=True, message="Usuário criado com sucesso.", data=UserResponse.model_validate(user))
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="Email já cadastrado") from exc
+
+    try:
+        token_verificacao = create_purpose_token(user.email, "email_verification", expire_minutes=24 * 60)
+        EmailService.enviar_verificacao(user.email, token_verificacao)
+    except Exception:
+        logger.warning("Falha ao enviar email de verificação para %s", user.email)
+
+    return APIResponse(success=True, message="Usuário criado com sucesso.", data=UserResponse.model_validate(user))
 
 
 @router.post(
@@ -173,6 +191,133 @@ def refresh_token(
         message="Token renovado com sucesso.",
         data=AuthResponse(autenticado=True, access_token=new_token, usuario=UserResponse.model_validate(current_user)),
     )
+
+
+@router.get(
+    "/auth/verificar-email",
+    response_model=APIResponse[None],
+    summary="Verificar email",
+    description="Verifica o email do usuário usando o token enviado por email.",
+)
+def verificar_email(token: str = Query(...), db: Session = Depends(get_db)):
+    email = decode_purpose_token(token, "email_verification")
+    if not email:
+        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
+    user = UserRepository.get_by_email(db, email)
+    if not user:
+        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
+    UserRepository.marcar_email_verificado(db, user.id)
+    return APIResponse(success=True, message="Email verificado com sucesso.", data=None)
+
+
+@router.post(
+    "/auth/reenviar-verificacao",
+    response_model=APIResponse[None],
+    summary="Reenviar verificação de email",
+)
+def reenviar_verificacao(current_user=Depends(get_current_user)):
+    if current_user.email_verificado:
+        raise HTTPException(status_code=400, detail="Email já verificado.")
+    try:
+        token = create_purpose_token(current_user.email, "email_verification", expire_minutes=24 * 60)
+        EmailService.enviar_verificacao(current_user.email, token)
+    except Exception:
+        logger.warning("Falha ao reenviar verificação para %s", current_user.email)
+    return APIResponse(success=True, message="Email de verificação enviado.", data=None)
+
+
+@router.post(
+    "/auth/esqueci-senha",
+    response_model=APIResponse[None],
+    summary="Solicitar redefinição de senha",
+    description="Envia um email com token para redefinição de senha. Sempre retorna 200 por segurança.",
+)
+def esqueci_senha(payload: SenhaResetRequest, db: Session = Depends(get_db), _=Depends(rate_limit(3, 60))):
+    user = UserRepository.get_by_email(db, payload.email)
+    if user:
+        try:
+            token = create_purpose_token(user.email, "password_reset", expire_minutes=60)
+            EmailService.enviar_reset_senha(user.email, token)
+        except Exception:
+            logger.warning("Falha ao enviar email de reset para %s", payload.email)
+    return APIResponse(success=True, message="Se o email existir, as instruções foram enviadas.", data=None)
+
+
+@router.post(
+    "/auth/redefinir-senha",
+    response_model=APIResponse[None],
+    summary="Redefinir senha com token",
+)
+def redefinir_senha(payload: SenhaResetConfirmar, db: Session = Depends(get_db)):
+    email = decode_purpose_token(payload.token, "password_reset")
+    if not email:
+        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
+    user = UserRepository.get_by_email(db, email)
+    if not user:
+        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
+    UserRepository.update_senha(db, user.id, payload.nova_senha)
+    logger.info("Senha redefinida via token para %s", email)
+    return APIResponse(success=True, message="Senha redefinida com sucesso.", data=None)
+
+
+@router.patch(
+    "/usuarios/senha",
+    response_model=APIResponse[None],
+    summary="Alterar senha",
+    description="Altera a senha do usuário autenticado.",
+)
+def alterar_senha(
+    payload: AlterarSenhaRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if not verify_password(payload.senha_atual, current_user.senha_hash or ""):
+        raise HTTPException(status_code=400, detail="Senha atual incorreta.")
+    UserRepository.update_senha(db, current_user.id, payload.nova_senha)
+    logger.info("Senha alterada para %s", current_user.email)
+    return APIResponse(success=True, message="Senha alterada com sucesso.", data=None)
+
+
+@router.delete(
+    "/usuarios",
+    response_model=APIResponse[None],
+    summary="Excluir conta",
+    description="Exclui permanentemente a conta do usuário autenticado e todos os seus dados.",
+)
+def deletar_conta(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    token_payload = decode_access_token(credentials.credentials)
+    if token_payload:
+        try:
+            TokenRevogadoRepository.revoke(
+                db,
+                jti=str(token_payload["jti"]),
+                usuario_id=int(token_payload["user_id"]),
+                expira_em=token_payload["exp"],
+            )
+        except IntegrityError:
+            db.rollback()
+
+    UserRepository.delete(db, current_user.id)
+    logger.info("Conta excluída: %s", current_user.email)
+    return APIResponse(success=True, message="Conta excluída com sucesso.", data=None)
+
+
+@router.put(
+    "/usuarios/device-token",
+    response_model=APIResponse[None],
+    summary="Registrar device token para push notifications",
+)
+def registrar_device_token(
+    payload: DeviceTokenUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    UserRepository.update_device_token(db, current_user.id, payload.device_token)
+    return APIResponse(success=True, message="Device token registrado.", data=None)
 
 
 @router.post(

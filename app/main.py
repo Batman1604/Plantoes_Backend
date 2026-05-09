@@ -386,6 +386,49 @@ def ensure_indexes() -> None:
 ensure_indexes()
 
 
+def ensure_email_verificado_e_device_token_columns() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
+            col_names = {c[1] for c in cols}
+            if "email_verificado" not in col_names:
+                connection.execute(
+                    text("ALTER TABLE usuarios ADD COLUMN email_verificado BOOLEAN NOT NULL DEFAULT 0")
+                )
+            if "device_token" not in col_names:
+                connection.execute(
+                    text("ALTER TABLE usuarios ADD COLUMN device_token VARCHAR(255) NULL")
+                )
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            ev_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'usuarios' AND column_name = 'email_verificado'"
+                )
+            ).scalar() is not None
+            if not ev_exists:
+                connection.execute(
+                    text("ALTER TABLE usuarios ADD COLUMN email_verificado BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+            dt_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'usuarios' AND column_name = 'device_token'"
+                )
+            ).scalar() is not None
+            if not dt_exists:
+                connection.execute(
+                    text("ALTER TABLE usuarios ADD COLUMN device_token VARCHAR(255) NULL")
+                )
+        return
+
+
+ensure_email_verificado_e_device_token_columns()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     thread = threading.Thread(target=notificacao_worker, daemon=True, name="notificacao-worker")

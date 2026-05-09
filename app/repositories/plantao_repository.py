@@ -36,6 +36,41 @@ class UserRepository:
     def get_by_id(db: Session, user_id: int) -> User | None:
         return db.scalar(select(User).where(User.id == user_id))
 
+    @staticmethod
+    def get_by_email(db: Session, email: str) -> User | None:
+        return db.scalar(select(User).where(User.email == email))
+
+    @staticmethod
+    def delete(db: Session, user_id: int) -> bool:
+        user = db.scalar(select(User).where(User.id == user_id))
+        if user is None:
+            return False
+        db.delete(user)
+        db.commit()
+        return True
+
+    @staticmethod
+    def update_senha(db: Session, user_id: int, nova_senha: str) -> None:
+        from app.core.security import hash_password
+        user = db.scalar(select(User).where(User.id == user_id))
+        if user:
+            user.senha_hash = hash_password(nova_senha)
+            db.commit()
+
+    @staticmethod
+    def marcar_email_verificado(db: Session, user_id: int) -> None:
+        user = db.scalar(select(User).where(User.id == user_id))
+        if user:
+            user.email_verificado = True
+            db.commit()
+
+    @staticmethod
+    def update_device_token(db: Session, user_id: int, device_token: str) -> None:
+        user = db.scalar(select(User).where(User.id == user_id))
+        if user:
+            user.device_token = device_token
+            db.commit()
+
 
 class LocalRepository:
     @staticmethod
