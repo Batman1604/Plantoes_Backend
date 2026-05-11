@@ -51,7 +51,7 @@ class TestPlanos(unittest.TestCase):
                 "data_inicio": "2026-01-01",
                 "data_final": "2026-12-31",
                 "dia_pagamento": 10,
-                "exucatado": False,
+                "executado": False,
             },
         )
         return response.json()["id"]

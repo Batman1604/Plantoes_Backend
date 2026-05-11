@@ -491,12 +491,6 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     if local.usuario_id != current_user.id:
         raise HTTPException(status_code=403, detail="Local não pertence ao usuário autenticado")
 
-    if payload.data < local.data_inicio or payload.data > local.data_final:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Data fora do período do local ({local.data_inicio} a {local.data_final}).",
-        )
-
     inicio_dt = datetime.combine(payload.data, payload.horario_inicio)
     fim_dt = ajustar_fim_intervalo(inicio_dt, datetime.combine(payload.data, payload.horario_fim))
 
@@ -624,12 +618,6 @@ def atualizar_plantao(
     data_ref = dados_atualizacao.get("data", plantao_atual.data)
     horario_inicio_ref = dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio)
     horario_fim_ref = dados_atualizacao.get("horario_fim", plantao_atual.horario_fim)
-
-    if "data" in dados_atualizacao and (data_ref < local.data_inicio or data_ref > local.data_final):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Data fora do período do local ({local.data_inicio} a {local.data_final}).",
-        )
 
     inicio_dt = datetime.combine(data_ref, horario_inicio_ref)
     fim_dt = ajustar_fim_intervalo(inicio_dt, datetime.combine(data_ref, horario_fim_ref))

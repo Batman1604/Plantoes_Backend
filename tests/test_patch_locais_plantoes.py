@@ -90,7 +90,6 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "data_final": "2026-12-31",
                 "dia_pagamento": 10,
                 "cor": "#2196F3",
-                "executado": False,
             },
         )
         local_id = local_resp.json()["id"]
