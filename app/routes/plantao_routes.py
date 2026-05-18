@@ -21,6 +21,7 @@ from app.repositories.plantao_repository import (
     LocalRepository,
     PlantaoRepository,
     TokenRevogadoRepository,
+    TransferenciaRepository,
     UserRepository,
 )
 from app.schemas.plantao_schema import (
@@ -43,6 +44,8 @@ from app.schemas.plantao_schema import (
     PlantaoUpdate,
     SenhaResetConfirmar,
     SenhaResetRequest,
+    TransferenciaCreate,
+    TransferenciaResponse,
     UserCreate,
     UserLogin,
     UserResponse,
@@ -52,6 +55,7 @@ from app.services.feedback_service import FeedbackService
 from app.services.financeiro_service import FinanceiroService
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 from app.services.plano_service import PlanoService
+from app.services.sms_service import SmsService
 
 logger = logging.getLogger(__name__)
 
@@ -947,3 +951,84 @@ def obter_total_financeiro_mensal_por_local(
         raise HTTPException(status_code=404, detail="Local não encontrado")
     resultado = FinanceiroService.calcular_total_mensal_por_local(db, current_user.id, local_id, mes, ano)
     return APIResponse(success=True, message="Resumo financeiro mensal do local gerado com sucesso.", data=FinanceiroData.model_validate(resultado))
+
+
+@router.post(
+    "/plantoes/{plantao_id}/transferir",
+    response_model=APIResponse[TransferenciaResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Transferir plantão",
+    description=(
+        "Transfere um plantão para outra pessoa informando nome e telefone. "
+        "Uma mensagem é enviada ao destinatário e o plantão deixa de aparecer na lista do remetente. "
+        "Se o telefone corresponder a um usuário cadastrado, o vínculo é registrado automaticamente "
+        "(base para a futura funcionalidade de lista de amigos)."
+    ),
+)
+def transferir_plantao(
+    plantao_id: int,
+    payload: TransferenciaCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    plantao = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado")
+
+    # Verifica se o destinatário já tem conta (pelo telefone) para vincular o registro
+    destinatario_usuario = UserRepository.get_by_phone(db, payload.destinatario_telefone)
+    destinatario_usuario_id = destinatario_usuario.id if destinatario_usuario else None
+
+    if destinatario_usuario_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Não é possível transferir um plantão para si mesmo")
+
+    local = LocalRepository.get_by_id(db, plantao.local_id)
+    nome_local = local.nome_local if local else "local não informado"
+
+    mensagem = (
+        f"Olá {payload.destinatario_nome}! {current_user.nome} transferiu um plantão para você.\n"
+        f"Data: {plantao.data.strftime('%d/%m/%Y')}\n"
+        f"Local: {nome_local}\n"
+        f"Horário: {plantao.horario_inicio.strftime('%H:%M')} às {plantao.horario_fim.strftime('%H:%M')}\n"
+        f"Valor: R$ {float(plantao.valor):.2f}"
+    )
+
+    try:
+        plantao.transferido = True
+        db.add(plantao)
+        transferencia = TransferenciaRepository.create(
+            db,
+            plantao_id=plantao.id,
+            remetente_id=current_user.id,
+            destinatario_usuario_id=destinatario_usuario_id,
+            destinatario_nome=payload.destinatario_nome,
+            destinatario_telefone=payload.destinatario_telefone,
+        )
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Erro ao registrar transferência") from exc
+
+    # Envio de mensagem não reverte a transferência em caso de falha
+    sms_enviado = SmsService.enviar(payload.destinatario_telefone, mensagem)
+    if sms_enviado:
+        TransferenciaRepository.marcar_sms_enviado(db, transferencia.id)
+        transferencia.sms_enviado = True
+
+    mensagem_retorno = "Plantão transferido com sucesso."
+    if not sms_enviado:
+        mensagem_retorno += " A notificação por mensagem não pôde ser enviada, mas a transferência foi registrada."
+
+    logger.info(
+        "Plantão %s transferido por %s para %s (%s). SMS enviado: %s",
+        plantao_id,
+        current_user.email,
+        payload.destinatario_nome,
+        payload.destinatario_telefone,
+        sms_enviado,
+    )
+
+    return APIResponse(
+        success=True,
+        message=mensagem_retorno,
+        data=TransferenciaResponse.model_validate(transferencia),
+    )

@@ -32,16 +32,16 @@ class Local(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
     nome_local: Mapped[str] = mapped_column(String(120), nullable=False)
-    data_inicio: Mapped[str] = mapped_column(Date, nullable=False)
-    data_final: Mapped[str] = mapped_column(Date, nullable=False)
+    data_inicio: Mapped[date] = mapped_column(Date, nullable=False)
+    data_final: Mapped[date] = mapped_column(Date, nullable=False)
     dia_pagamento: Mapped[int | None] = mapped_column(Integer, nullable=True)
     util_corrido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     cor: Mapped[str | None] = mapped_column(String(20), nullable=True)
     endereco_local: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    executado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     usuario: Mapped[User] = relationship(back_populates="locais")
     plantoes: Mapped[list["Plantao"]] = relationship(back_populates="local", cascade="all, delete-orphan")
-
 
 
 class Plantao(Base):
@@ -62,8 +62,43 @@ class Plantao(Base):
     pagamento_plantao: Mapped[date | None] = mapped_column(Date, nullable=True)
     pagamento_recebido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sobreaviso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    transferido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     local: Mapped[Local] = relationship(back_populates="plantoes")
+    transferencia: Mapped["Transferencia | None"] = relationship(
+        back_populates="plantao",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class Transferencia(Base):
+    __tablename__ = "transferencias"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    plantao_id: Mapped[int] = mapped_column(
+        ForeignKey("plantoes.id", ondelete="CASCADE"), nullable=False, index=True, unique=True
+    )
+    remetente_id: Mapped[int] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Preenchido automaticamente se o telefone do destinatário corresponder a um usuário cadastrado.
+    # Permite rastrear transferências entre usuários registrados (base para lista de amigos futura).
+    destinatario_usuario_id: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    destinatario_nome: Mapped[str] = mapped_column(String(120), nullable=False)
+    destinatario_telefone: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="enviado")
+    canal: Mapped[str] = mapped_column(String(20), nullable=False, default="sms")
+    sms_enviado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    plantao: Mapped[Plantao] = relationship(back_populates="transferencia", foreign_keys=[plantao_id])
+    remetente: Mapped[User] = relationship(foreign_keys=[remetente_id])
+    destinatario: Mapped[User | None] = relationship(foreign_keys=[destinatario_usuario_id])
 
 
 class Financeiro(Base):

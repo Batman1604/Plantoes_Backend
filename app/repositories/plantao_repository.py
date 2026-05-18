@@ -1,10 +1,10 @@
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
-from app.models import Local, Plantao, TokenRevogado, User
+from app.models import Local, Plantao, TokenRevogado, Transferencia, User
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
 from app.services.pagamento_service import ajustar_fim_intervalo
 
@@ -21,7 +21,7 @@ class UserRepository:
 
     @staticmethod
     def authenticate(db: Session, payload: UserLogin) -> User | None:
-        user = db.scalar(select(User).where(User.email == payload.email))
+        user = db.scalar(select(User).where(func.lower(User.email) == payload.email.lower()))
         if user is None or not user.senha_hash:
             return None
         if not verify_password(payload.senha, user.senha_hash):
@@ -38,7 +38,11 @@ class UserRepository:
 
     @staticmethod
     def get_by_email(db: Session, email: str) -> User | None:
-        return db.scalar(select(User).where(User.email == email))
+        return db.scalar(select(User).where(func.lower(User.email) == email.lower()))
+
+    @staticmethod
+    def get_by_phone(db: Session, telefone: str) -> User | None:
+        return db.scalar(select(User).where(User.telefone == telefone))
 
     @staticmethod
     def delete(db: Session, user_id: int) -> bool:
@@ -140,6 +144,7 @@ class PlantaoRepository:
             Plantao.usuario_id == usuario_id,
             Plantao.data >= data_min,
             Plantao.data <= data_max,
+            Plantao.transferido.is_(False),
         )
         if excluir_id is not None:
             stmt = stmt.where(Plantao.id != excluir_id)
@@ -152,7 +157,6 @@ class PlantaoRepository:
 
     @staticmethod
     def update(db: Session, plantao_id: int, **kwargs) -> Plantao | None:
-        """Atualiza um plantão com os dados fornecidos."""
         plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id))
         if plantao is None:
             return None
@@ -165,7 +169,13 @@ class PlantaoRepository:
 
     @staticmethod
     def update_executado(db: Session, plantao_id: int, usuario_id: int, executado: bool) -> Plantao | None:
-        plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+        plantao = db.scalar(
+            select(Plantao).where(
+                Plantao.id == plantao_id,
+                Plantao.usuario_id == usuario_id,
+                Plantao.transferido.is_(False),
+            )
+        )
         if plantao is None:
             return None
 
@@ -176,7 +186,11 @@ class PlantaoRepository:
 
     @staticmethod
     def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:
-        stmt = select(Plantao).where(Plantao.usuario_id == usuario_id).order_by(Plantao.id.desc())
+        stmt = (
+            select(Plantao)
+            .where(Plantao.usuario_id == usuario_id, Plantao.transferido.is_(False))
+            .order_by(Plantao.id.desc())
+        )
         return db.scalars(stmt).all()
 
     @staticmethod
@@ -185,11 +199,23 @@ class PlantaoRepository:
 
     @staticmethod
     def get_by_id_and_user(db: Session, plantao_id: int, usuario_id: int) -> Plantao | None:
-        return db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+        return db.scalar(
+            select(Plantao).where(
+                Plantao.id == plantao_id,
+                Plantao.usuario_id == usuario_id,
+                Plantao.transferido.is_(False),
+            )
+        )
 
     @staticmethod
     def update_by_user(db: Session, plantao_id: int, usuario_id: int, **kwargs) -> Plantao | None:
-        plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+        plantao = db.scalar(
+            select(Plantao).where(
+                Plantao.id == plantao_id,
+                Plantao.usuario_id == usuario_id,
+                Plantao.transferido.is_(False),
+            )
+        )
         if plantao is None:
             return None
         for key, value in kwargs.items():
@@ -209,6 +235,7 @@ class PlantaoRepository:
                 Plantao.horario_inicio == plantao_referencia.horario_inicio,
                 Plantao.horario_fim == plantao_referencia.horario_fim,
                 Plantao.data >= plantao_referencia.data,
+                Plantao.transferido.is_(False),
             )
             .order_by(Plantao.data.asc(), Plantao.id.asc())
         )
@@ -222,7 +249,13 @@ class PlantaoRepository:
 
     @staticmethod
     def delete_by_user(db: Session, plantao_id: int, usuario_id: int) -> bool:
-        plantao = db.scalar(select(Plantao).where(Plantao.id == plantao_id, Plantao.usuario_id == usuario_id))
+        plantao = db.scalar(
+            select(Plantao).where(
+                Plantao.id == plantao_id,
+                Plantao.usuario_id == usuario_id,
+                Plantao.transferido.is_(False),
+            )
+        )
         if plantao is None:
             return False
         db.delete(plantao)
@@ -233,6 +266,52 @@ class PlantaoRepository:
     def list_ids_e_datas_por_local(db: Session, local_id: int) -> list[tuple[int, date]]:
         stmt = select(Plantao.id, Plantao.data).where(Plantao.local_id == local_id)
         return db.execute(stmt).all()
+
+
+class TransferenciaRepository:
+    @staticmethod
+    def create(
+        db: Session,
+        *,
+        plantao_id: int,
+        remetente_id: int,
+        destinatario_usuario_id: int | None,
+        destinatario_nome: str,
+        destinatario_telefone: str,
+        sms_enviado: bool = False,
+    ) -> Transferencia:
+        transferencia = Transferencia(
+            plantao_id=plantao_id,
+            remetente_id=remetente_id,
+            destinatario_usuario_id=destinatario_usuario_id,
+            destinatario_nome=destinatario_nome,
+            destinatario_telefone=destinatario_telefone,
+            sms_enviado=sms_enviado,
+        )
+        db.add(transferencia)
+        db.commit()
+        db.refresh(transferencia)
+        return transferencia
+
+    @staticmethod
+    def get_by_plantao(db: Session, plantao_id: int) -> Transferencia | None:
+        return db.scalar(select(Transferencia).where(Transferencia.plantao_id == plantao_id))
+
+    @staticmethod
+    def list_enviadas_por_usuario(db: Session, usuario_id: int) -> list[Transferencia]:
+        stmt = (
+            select(Transferencia)
+            .where(Transferencia.remetente_id == usuario_id)
+            .order_by(Transferencia.criado_em.desc())
+        )
+        return db.scalars(stmt).all()
+
+    @staticmethod
+    def marcar_sms_enviado(db: Session, transferencia_id: int) -> None:
+        transferencia = db.scalar(select(Transferencia).where(Transferencia.id == transferencia_id))
+        if transferencia:
+            transferencia.sms_enviado = True
+            db.commit()
 
 
 class TokenRevogadoRepository:

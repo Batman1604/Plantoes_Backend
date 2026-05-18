@@ -2,9 +2,9 @@ from datetime import datetime, timedelta
 import logging
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.models import Plantao
+from app.models import Local, Plantao
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,15 @@ class NotificacaoService:
 
     @staticmethod
     def buscar_plantoes_para_notificar(db: Session) -> list[Plantao]:
-        stmt = select(Plantao).where(
-            Plantao.notificacao_ativa.is_(True),
-            Plantao.notificado.is_(False),
+        stmt = (
+            select(Plantao)
+            .where(
+                Plantao.notificacao_ativa.is_(True),
+                Plantao.notificado.is_(False),
+            )
+            .options(joinedload(Plantao.local).joinedload(Local.usuario))
         )
-        plantoes = db.scalars(stmt).all()
+        plantoes = db.scalars(stmt).unique().all()
 
         agora = datetime.now()
         plantoes_para_notificar = []
@@ -66,6 +70,6 @@ class NotificacaoService:
                 plantao.notificado = True
                 db.add(plantao)
                 db.commit()
-            except Exception as exc:
+            except Exception:
                 db.rollback()
                 logger.exception("Falha ao processar notificação para plantão %s", plantao.id)

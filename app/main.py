@@ -19,10 +19,16 @@ from app.repositories.plantao_repository import TokenRevogadoRepository
 from app.services.notificacao_service import NotificacaoService
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+if settings.jwt_secret_key == "change-me-in-production":
+    logger.warning("JWT_SECRET_KEY está usando o valor padrão. Defina JWT_SECRET_KEY no .env antes de ir para produção.")
+
+if "DeusAbutre" in settings.database_url:
+    logger.warning("DATABASE_URL está usando credenciais padrão. Defina DATABASE_URL no .env antes de ir para produção.")
 
 Base.metadata.create_all(bind=engine)
 
@@ -174,7 +180,6 @@ def ensure_novas_colunas() -> None:
                     text("ALTER TABLE plantoes ADD COLUMN pagamento_recebido BOOLEAN NOT NULL DEFAULT FALSE")
                 )
         return
-
 
 
 ensure_novas_colunas()
@@ -364,6 +369,15 @@ def ensure_indexes() -> None:
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_plantoes_data ON plantoes (data)"
             ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_data ON plantoes (usuario_id, data)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_local_data ON plantoes (usuario_id, local_id, data)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_financeiro_local_id ON financeiro (local_id)"
+            ))
         return
 
     if engine.dialect.name == "postgresql":
@@ -379,6 +393,15 @@ def ensure_indexes() -> None:
             ))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_plantoes_data ON plantoes (data)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_data ON plantoes (usuario_id, data)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_local_data ON plantoes (usuario_id, local_id, data)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_financeiro_local_id ON financeiro (local_id)"
             ))
         return
 
@@ -469,20 +492,49 @@ def ensure_financeiro_table() -> None:
 ensure_financeiro_table()
 
 
+def ensure_transferido_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
+            if not any(c[1] == "transferido" for c in cols):
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN transferido BOOLEAN NOT NULL DEFAULT 0"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'plantoes' AND column_name = 'transferido'"
+                )
+            ).scalar() is not None
+            if not exists:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN transferido BOOLEAN NOT NULL DEFAULT FALSE"))
+        return
+
+
+ensure_transferido_column()
+
+_notificacao_thread: threading.Thread | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    thread = threading.Thread(target=notificacao_worker, daemon=True, name="notificacao-worker")
-    thread.start()
+    global _notificacao_thread
+    _notificacao_thread = threading.Thread(target=notificacao_worker, daemon=True, name="notificacao-worker")
+    _notificacao_thread.start()
     yield
 
+
+_cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(router)
 app.include_router(politicas_router)
@@ -508,6 +560,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             content={
                 "success": False,
                 "message": message,
+                "code": "FORBIDDEN",
             },
         )
 
@@ -561,4 +614,11 @@ def notificacao_worker() -> None:
 
 @app.get("/health", tags=["health"])
 def health_check():
-    return {"status": "ok"}
+    worker_alive = _notificacao_thread is not None and _notificacao_thread.is_alive()
+    if not worker_alive:
+        logger.error("Worker de notificações não está em execução")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "notifications_worker": "down"},
+        )
+    return {"status": "ok", "notifications_worker": "up"}

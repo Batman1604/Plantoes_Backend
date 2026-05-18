@@ -100,6 +100,13 @@ class LocalBase(BaseModel):
     def validar_campos_data(cls, value):
         return validar_formato_data(value)
 
+    @model_validator(mode="after")
+    def validar_intervalo_datas(self):
+        if self.data_inicio is not None and self.data_final is not None:
+            if self.data_inicio > self.data_final:
+                raise ValueError("data_inicio deve ser menor ou igual a data_final")
+        return self
+
 
 class LocalCreate(LocalBase):
     pass
@@ -150,9 +157,8 @@ class PlantaoBase(BaseModel):
         example="16:00:00",
         description="Hora de fim do plantão."
     )
-    recorrencia: Optional[str] = Field(
+    recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(
         default=None,
-        max_length=50,
         example="Semanal",
         description="Recorrência opcional do plantão."
     )
@@ -199,6 +205,7 @@ class PlantaoCreateWithUsuario(PlantaoCreate):
     executado: bool = False
     pagamento_plantao: Optional[date] = None
     pagamento_recebido: bool = False
+    transferido: bool = False
 
 
 class PlantaoUpdate(BaseModel):
@@ -206,7 +213,7 @@ class PlantaoUpdate(BaseModel):
     data: date | None = None
     horario_inicio: time | None = None
     horario_fim: time | None = None
-    recorrencia: Optional[str] = Field(default=None, max_length=50)
+    recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(default=None)
     sobreaviso: bool | None = None
     local_id: int | None = None
     notificacao_ativa: bool | None = None
@@ -232,6 +239,33 @@ class PlantaoResponse(PlantaoBase):
     executado: bool
     pagamento_plantao: Optional[date] = None
     pagamento_recebido: bool
+    transferido: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class TransferenciaCreate(BaseModel):
+    destinatario_nome: str = Field(min_length=2, max_length=120, example="Maria Santos")
+    destinatario_telefone: str = Field(
+        min_length=8,
+        max_length=30,
+        example="+5511999999999",
+        description="Telefone do destinatário com DDI e DDD. Ex: +5511999999999",
+    )
+
+
+class TransferenciaResponse(BaseModel):
+    id: int
+    plantao_id: int
+    remetente_id: int
+    destinatario_usuario_id: Optional[int] = None
+    destinatario_nome: str
+    destinatario_telefone: str
+    status: str
+    canal: str
+    sms_enviado: bool
+    criado_em: datetime
 
     class Config:
         from_attributes = True
