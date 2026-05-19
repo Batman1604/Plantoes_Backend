@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Generic, Literal, Optional, TypeVar
 
@@ -145,17 +145,13 @@ class PlantaoBase(BaseModel):
         example="180.00",
         description="Valor do plantão em reais. Deve ser maior que zero."
     )
-    data: date = Field(
-        example="2026-04-10",
-        description="Data do plantão."
+    horario_inicio: datetime = Field(
+        example="2026-04-10T08:00:00",
+        description="Data e hora de início do plantão."
     )
-    horario_inicio: time = Field(
-        example="08:00:00",
-        description="Hora de início do plantão."
-    )
-    horario_fim: time = Field(
-        example="16:00:00",
-        description="Hora de fim do plantão."
+    horario_fim: datetime = Field(
+        example="2026-04-10T16:00:00",
+        description="Data e hora de fim do plantão."
     )
     recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(
         default=None,
@@ -163,11 +159,6 @@ class PlantaoBase(BaseModel):
         description="Recorrência opcional do plantão."
     )
     sobreaviso: bool = Field(default=False, example=False, description="Indica se o plantão é de sobreaviso.")
-
-    @field_validator("data", mode="before")
-    @classmethod
-    def validar_data_sem_horario_ou_fuso(cls, value):
-        return validar_formato_data(value)
 
 
 class PlantaoCreate(PlantaoBase):
@@ -187,8 +178,8 @@ class PlantaoCreate(PlantaoBase):
 
     @model_validator(mode="after")
     def validar_duracao(cls, values):
-        inicio = datetime.combine(values.data, values.horario_inicio)
-        fim = datetime.combine(values.data, values.horario_fim)
+        inicio = values.horario_inicio
+        fim = values.horario_fim
 
         if fim <= inicio:
             fim += timedelta(days=1)
@@ -210,9 +201,8 @@ class PlantaoCreateWithUsuario(PlantaoCreate):
 
 class PlantaoUpdate(BaseModel):
     valor: Decimal | None = Field(default=None, gt=0)
-    data: date | None = None
-    horario_inicio: time | None = None
-    horario_fim: time | None = None
+    horario_inicio: datetime | None = None
+    horario_fim: datetime | None = None
     recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(default=None)
     sobreaviso: bool | None = None
     local_id: int | None = None
@@ -222,11 +212,6 @@ class PlantaoUpdate(BaseModel):
         default="somente_este",
         description="Define se a alteração será aplicada somente neste plantão ou no plantão selecionado e nos futuros recorrentes.",
     )
-
-    @field_validator("data", mode="before")
-    @classmethod
-    def validar_data_sem_horario_ou_fuso(cls, value):
-        return validar_formato_data(value)
 
 
 class PlantaoResponse(PlantaoBase):

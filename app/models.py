@@ -1,6 +1,6 @@
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Time
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -51,9 +51,8 @@ class Plantao(Base):
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
     local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
-    data: Mapped[date] = Column(Date, nullable=False, index=True)
-    horario_inicio: Mapped[time] = Column(Time, nullable=False)
-    horario_fim: Mapped[time] = Column(Time, nullable=False)
+    horario_inicio: Mapped[datetime] = Column(DateTime, nullable=False)
+    horario_fim: Mapped[datetime] = Column(DateTime, nullable=False)
     recorrencia: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notificacao_ativa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notificacao_antecedencia_minutos: Mapped[int] = mapped_column(Integer, nullable=False, default=60)

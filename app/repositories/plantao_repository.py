@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -137,20 +137,16 @@ class PlantaoRepository:
         fim: datetime,
         excluir_id: int | None = None,
     ) -> Plantao | None:
-        # Filter by date range first to use the index on plantoes.data
-        data_min = inicio.date() - timedelta(days=1)
-        data_max = fim.date() + timedelta(days=1)
         stmt = select(Plantao).where(
             Plantao.usuario_id == usuario_id,
-            Plantao.data >= data_min,
-            Plantao.data <= data_max,
+            Plantao.horario_inicio < fim,
             Plantao.transferido.is_(False),
         )
         if excluir_id is not None:
             stmt = stmt.where(Plantao.id != excluir_id)
         for plantao in db.scalars(stmt).all():
-            inicio_existente = datetime.combine(plantao.data, plantao.horario_inicio)
-            fim_existente = ajustar_fim_intervalo(inicio_existente, datetime.combine(plantao.data, plantao.horario_fim))
+            inicio_existente = plantao.horario_inicio
+            fim_existente = ajustar_fim_intervalo(inicio_existente, plantao.horario_fim)
             if inicio_existente < fim and fim_existente > inicio:
                 return plantao
         return None
@@ -232,12 +228,10 @@ class PlantaoRepository:
             .where(
                 Plantao.usuario_id == plantao_referencia.usuario_id,
                 Plantao.local_id == plantao_referencia.local_id,
-                Plantao.horario_inicio == plantao_referencia.horario_inicio,
-                Plantao.horario_fim == plantao_referencia.horario_fim,
-                Plantao.data >= plantao_referencia.data,
+                Plantao.horario_inicio >= plantao_referencia.horario_inicio,
                 Plantao.transferido.is_(False),
             )
-            .order_by(Plantao.data.asc(), Plantao.id.asc())
+            .order_by(Plantao.horario_inicio.asc(), Plantao.id.asc())
         )
 
         if plantao_referencia.recorrencia is None:
@@ -263,8 +257,8 @@ class PlantaoRepository:
         return True
 
     @staticmethod
-    def list_ids_e_datas_por_local(db: Session, local_id: int) -> list[tuple[int, date]]:
-        stmt = select(Plantao.id, Plantao.data).where(Plantao.local_id == local_id)
+    def list_ids_e_datas_por_local(db: Session, local_id: int) -> list[tuple[int, datetime]]:
+        stmt = select(Plantao.id, Plantao.horario_inicio).where(Plantao.local_id == local_id)
         return db.execute(stmt).all()
 
 
