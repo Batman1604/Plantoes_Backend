@@ -44,6 +44,21 @@ class EmailService:
         )
 
     @staticmethod
+    def enviar_codigo_whatsapp(email: str, codigo: str) -> bool:
+        corpo = (
+            "Olá!\n\n"
+            "Seu código de verificação para acesso via WhatsApp ao Plantões App é:\n\n"
+            f"  {codigo}\n\n"
+            "Este código é válido por 10 minutos.\n\n"
+            "Se você não solicitou este código, ignore este email."
+        )
+        return _enviar_email(
+            para=email,
+            assunto="Código de acesso WhatsApp — Plantões App",
+            corpo=corpo,
+        )
+
+    @staticmethod
     def enviar_reset_senha(email: str, token: str) -> bool:
         corpo = (
             "Olá!\n\n"

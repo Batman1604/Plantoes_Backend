@@ -43,6 +43,31 @@ class SmsService:
 
     @staticmethod
     def _enviar_whatsapp(telefone: str, mensagem: str) -> bool:
-        # TODO: substituir pela integração WhatsApp (Twilio Sandbox: "whatsapp:+numero")
-        logger.info("[WHATSAPP STUB] Para: %s | Mensagem: %s", telefone, mensagem)
-        return True
+        from app.core.config import settings
+        import httpx
+
+        if not settings.whatsapp_token or not settings.whatsapp_phone_number_id:
+            logger.warning("[WHATSAPP] Credenciais não configuradas. Para: %s", telefone)
+            return False
+
+        url = f"https://graph.facebook.com/v19.0/{settings.whatsapp_phone_number_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {settings.whatsapp_token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": telefone,
+            "type": "text",
+            "text": {"body": mensagem},
+        }
+        try:
+            response = httpx.post(url, json=payload, headers=headers, timeout=10)
+            if response.status_code == 200:
+                logger.info("[WHATSAPP] Mensagem enviada para %s", telefone)
+                return True
+            logger.warning("[WHATSAPP] Falha ao enviar para %s: %s", telefone, response.text)
+            return False
+        except Exception:
+            logger.exception("[WHATSAPP] Erro ao enviar mensagem para %s", telefone)
+            return False

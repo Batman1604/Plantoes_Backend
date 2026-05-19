@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     allowed_origins: str = "*"
     log_level: str = "INFO"
+    anthropic_api_key: str = ""
+    whatsapp_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_verify_token: str = "plantoes_whatsapp_verify"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

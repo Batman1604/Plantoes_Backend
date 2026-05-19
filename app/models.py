@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -119,3 +119,18 @@ class TokenRevogado(Base):
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
     revogado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WhatsappSessao(Base):
+    __tablename__ = "whatsapp_sessoes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    telefone: Mapped[str] = mapped_column(String(30), unique=True, nullable=False, index=True)
+    usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=True)
+    estado: Mapped[str] = mapped_column(String(30), nullable=False, default="aguardando_email")
+    historico: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    codigo_verificacao: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    usuario: Mapped["User | None"] = relationship(foreign_keys=[usuario_id])

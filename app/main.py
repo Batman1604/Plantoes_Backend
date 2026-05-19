@@ -15,6 +15,7 @@ from app import models  # noqa: F401
 from app.core.database import Base, SessionLocal, engine
 from app.routes.plantao_routes import router
 from app.routes.politicas_routes import router as politicas_router
+from app.routes.whatsapp_routes import router as whatsapp_router
 from app.repositories.plantao_repository import TokenRevogadoRepository
 from app.services.notificacao_service import NotificacaoService
 
@@ -550,6 +551,7 @@ app.add_middleware(
 )
 app.include_router(router)
 app.include_router(politicas_router)
+app.include_router(whatsapp_router)
 
 
 @app.exception_handler(StarletteHTTPException)
