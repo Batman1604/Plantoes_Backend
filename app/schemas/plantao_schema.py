@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Generic, Literal, Optional, TypeVar
 
@@ -139,26 +139,54 @@ class LocalResponse(LocalBase):
         from_attributes = True
 
 
+_RECORRENCIA_MAP = {
+    "weekly": "Semanal",
+    "biweekly": "Quinzenal",
+    "fortnightly": "Quinzenal",
+    "single": "Unico",
+    "once": "Unico",
+    "semanal": "Semanal",
+    "quinzenal": "Quinzenal",
+    "unico": "Unico",
+}
+
+
+def _normalizar_recorrencia(value: str | None) -> str | None:
+    if value is None:
+        return None
+    mapped = _RECORRENCIA_MAP.get(value.lower())
+    if mapped is None:
+        raise ValueError(
+            f"Recorrência inválida: '{value}'. Use Semanal/weekly, Quinzenal/biweekly ou Unico/single."
+        )
+    return mapped
+
+
 class PlantaoBase(BaseModel):
     valor: Decimal = Field(
         gt=0,
         example="180.00",
         description="Valor do plantão em reais. Deve ser maior que zero."
     )
-    horario_inicio: datetime = Field(
+    data_inicio: datetime = Field(
         example="2026-04-10T08:00:00",
         description="Data e hora de início do plantão."
     )
-    horario_fim: datetime = Field(
+    data_fim: datetime = Field(
         example="2026-04-10T16:00:00",
         description="Data e hora de fim do plantão."
     )
     recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(
         default=None,
         example="Semanal",
-        description="Recorrência opcional do plantão."
+        description="Recorrência opcional do plantão. Aceita português ou inglês (weekly, biweekly, single)."
     )
     sobreaviso: bool = Field(default=False, example=False, description="Indica se o plantão é de sobreaviso.")
+
+    @field_validator("recorrencia", mode="before")
+    @classmethod
+    def normalizar_recorrencia(cls, value):
+        return _normalizar_recorrencia(value)
 
 
 class PlantaoCreate(PlantaoBase):
@@ -178,8 +206,8 @@ class PlantaoCreate(PlantaoBase):
 
     @model_validator(mode="after")
     def validar_duracao(cls, values):
-        inicio = values.horario_inicio
-        fim = values.horario_fim
+        inicio = values.data_inicio
+        fim = values.data_fim
 
         if fim <= inicio:
             fim += timedelta(days=1)
@@ -191,8 +219,17 @@ class PlantaoCreate(PlantaoBase):
         return values
 
 
-class PlantaoCreateWithUsuario(PlantaoCreate):
+class PlantaoCreateWithUsuario(BaseModel):
     usuario_id: int
+    local_id: int
+    valor: Decimal
+    data_inicio: date
+    horario_inicio: time
+    horario_fim: time
+    recorrencia: Optional[str] = None
+    sobreaviso: bool = False
+    notificacao_ativa: bool = True
+    notificacao_antecedencia_minutos: int = 60
     executado: bool = False
     pagamento_plantao: Optional[date] = None
     pagamento_recebido: bool = False
@@ -201,8 +238,8 @@ class PlantaoCreateWithUsuario(PlantaoCreate):
 
 class PlantaoUpdate(BaseModel):
     valor: Decimal | None = Field(default=None, gt=0)
-    horario_inicio: datetime | None = None
-    horario_fim: datetime | None = None
+    data_inicio: datetime | None = None
+    data_fim: datetime | None = None
     recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(default=None)
     sobreaviso: bool | None = None
     local_id: int | None = None
@@ -213,11 +250,21 @@ class PlantaoUpdate(BaseModel):
         description="Define se a alteração será aplicada somente neste plantão ou no plantão selecionado e nos futuros recorrentes.",
     )
 
+    @field_validator("recorrencia", mode="before")
+    @classmethod
+    def normalizar_recorrencia(cls, value):
+        return _normalizar_recorrencia(value)
 
-class PlantaoResponse(PlantaoBase):
+
+class PlantaoResponse(BaseModel):
     id: int
     usuario_id: int
     local_id: int
+    valor: Decimal
+    data_inicio: datetime
+    data_fim: datetime
+    recorrencia: Optional[str] = None
+    sobreaviso: bool
     notificacao_ativa: bool
     notificacao_antecedencia_minutos: int
     notificado: bool
@@ -228,6 +275,33 @@ class PlantaoResponse(PlantaoBase):
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def from_orm_model(cls, obj):
+        if hasattr(obj, "horario_inicio"):
+            inicio_dt = datetime.combine(obj.data_inicio, obj.horario_inicio)
+            fim_dt = datetime.combine(obj.data_inicio, obj.horario_fim)
+            if fim_dt <= inicio_dt:
+                fim_dt += timedelta(days=1)
+            return {
+                "id": obj.id,
+                "usuario_id": obj.usuario_id,
+                "local_id": obj.local_id,
+                "valor": obj.valor,
+                "data_inicio": inicio_dt,
+                "data_fim": fim_dt,
+                "recorrencia": obj.recorrencia,
+                "sobreaviso": obj.sobreaviso,
+                "notificacao_ativa": obj.notificacao_ativa,
+                "notificacao_antecedencia_minutos": obj.notificacao_antecedencia_minutos,
+                "notificado": obj.notificado,
+                "executado": obj.executado,
+                "pagamento_plantao": obj.pagamento_plantao,
+                "pagamento_recebido": obj.pagamento_recebido,
+                "transferido": obj.transferido,
+            }
+        return obj
 
 
 class TransferenciaCreate(BaseModel):

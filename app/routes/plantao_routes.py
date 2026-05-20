@@ -433,12 +433,12 @@ def atualizar_local(
                     {
                         "id": plantao_id,
                         "pagamento_plantao": PagamentoService.calcular_data_pagamento_por_dia_mes(
-                            data_plantao=horario_inicio_plantao.date(),
+                            data_plantao=data_plantao,
                             dia_pagamento=dia_pagamento_novo,
                             util_corrido=util_corrido_novo,
                         ),
                     }
-                    for plantao_id, horario_inicio_plantao in plantoes
+                    for plantao_id, data_plantao in plantoes
                 ]
                 db.bulk_update_mappings(Plantao, atualizacoes)
 
@@ -495,8 +495,8 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     if local.usuario_id != current_user.id:
         raise HTTPException(status_code=403, detail="Local não pertence ao usuário autenticado")
 
-    inicio_dt = payload.horario_inicio
-    fim_dt = ajustar_fim_intervalo(inicio_dt, payload.horario_fim)
+    inicio_dt = payload.data_inicio
+    fim_dt = ajustar_fim_intervalo(inicio_dt, payload.data_fim)
 
     max_duration_hours = 48
     duration = fim_dt - inicio_dt
@@ -537,7 +537,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
             PlantaoRepository.update(
                 db,
                 plantao_conflitante.id,
-                horario_fim=payload.horario_inicio
+                horario_fim=payload.data_inicio.time()
             )
             logger.info(
                 "Plantão %s ajustado para resolver conflito com novo plantão do usuário %s",
@@ -549,15 +549,11 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
             raise HTTPException(status_code=500, detail="Erro ao ajustar plantão conflitante") from exc
 
     # Criar plantão (acao_conflito == "manter" ou "ajustar" com ajuste realizado)
-    data = payload.model_dump()
-    if data.get("recorrencia") == "Unico":
-        data["recorrencia"] = None
-    data["usuario_id"] = current_user.id
-    data["executado"] = False
-    data["pagamento_recebido"] = False
+    recorrencia = payload.recorrencia if payload.recorrencia != "Unico" else None
+    pagamento_plantao = None
     if local.dia_pagamento is not None:
-        data["pagamento_plantao"] = PagamentoService.calcular_data_pagamento_plantao(
-            data_plantao=payload.horario_inicio.date(),
+        pagamento_plantao = PagamentoService.calcular_data_pagamento_plantao(
+            data_plantao=payload.data_inicio.date(),
             indice_dia_pagamento=local.dia_pagamento,
             data_inicio_ciclo=local.data_inicio,
             data_final_ciclo=local.data_final,
@@ -565,7 +561,25 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
         )
 
     try:
-        plantao = PlantaoRepository.create(db, PlantaoCreateWithUsuario.model_validate(data))
+        plantao = PlantaoRepository.create(
+            db,
+            PlantaoCreateWithUsuario(
+                usuario_id=current_user.id,
+                local_id=payload.local_id,
+                valor=payload.valor,
+                data_inicio=payload.data_inicio.date(),
+                horario_inicio=payload.data_inicio.time(),
+                horario_fim=payload.data_fim.time(),
+                recorrencia=recorrencia,
+                sobreaviso=payload.sobreaviso,
+                notificacao_ativa=payload.notificacao_ativa,
+                notificacao_antecedencia_minutos=payload.notificacao_antecedencia_minutos,
+                executado=False,
+                pagamento_plantao=pagamento_plantao,
+                pagamento_recebido=False,
+                transferido=False,
+            ),
+        )
         logger.info("Plantão criado para usuário %s no local %s", current_user.email, payload.local_id)
         return APIResponse(
             success=True,
@@ -619,18 +633,20 @@ def atualizar_plantao(
     if local is None or local.usuario_id != current_user.id:
         raise HTTPException(status_code=404, detail="Local não encontrado")
 
-    horario_inicio_ref = dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio)
-    horario_fim_ref = dados_atualizacao.get("horario_fim", plantao_atual.horario_fim)
+    inicio_dt_atual = datetime.combine(plantao_atual.data_inicio, plantao_atual.horario_inicio)
+    fim_dt_atual = ajustar_fim_intervalo(inicio_dt_atual, datetime.combine(plantao_atual.data_inicio, plantao_atual.horario_fim))
 
-    inicio_dt = horario_inicio_ref
-    fim_dt = ajustar_fim_intervalo(inicio_dt, horario_fim_ref)
+    inicio_dt = dados_atualizacao["data_inicio"] if "data_inicio" in dados_atualizacao else inicio_dt_atual
+    fim_dt = dados_atualizacao["data_fim"] if "data_fim" in dados_atualizacao else fim_dt_atual
+    fim_dt = ajustar_fim_intervalo(inicio_dt, fim_dt)
+
     if (fim_dt - inicio_dt).total_seconds() > 48 * 3600:
         raise HTTPException(status_code=400, detail="A duração do plantão não pode ser maior que 48 horas.")
 
-    def _calcular_data_pagamento(dt_plantao):
+    def _calcular_data_pagamento(data_plantao):
         if local.dia_pagamento is not None:
             return PagamentoService.calcular_data_pagamento_plantao(
-                data_plantao=dt_plantao.date(),
+                data_plantao=data_plantao,
                 indice_dia_pagamento=local.dia_pagamento,
                 data_inicio_ciclo=local.data_inicio,
                 data_final_ciclo=local.data_final,
@@ -638,7 +654,7 @@ def atualizar_plantao(
             )
         return None
 
-    nova_data_pagamento = _calcular_data_pagamento(horario_inicio_ref)
+    nova_data_pagamento = _calcular_data_pagamento(inicio_dt.date())
     dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
     if nova_data_pagamento != plantao_atual.pagamento_plantao:
         dados_atualizacao["pagamento_recebido"] = False
@@ -646,7 +662,7 @@ def atualizar_plantao(
     if local.dia_pagamento is None:
         dados_atualizacao["pagamento_recebido"] = False
 
-    conflito_relevante = any(k in dados_atualizacao for k in ("horario_inicio", "horario_fim"))
+    conflito_relevante = any(k in dados_atualizacao for k in ("data_inicio", "data_fim"))
     if conflito_relevante and aplicar_em == "somente_este":
         conflito = PlantaoRepository.get_conflito(
             db,
@@ -661,9 +677,18 @@ def atualizar_plantao(
                 detail="Conflito de horário detectado com outro plantão existente.",
             )
 
+    def _decompor_datetimes(dados: dict) -> dict:
+        result = {k: v for k, v in dados.items() if k not in ("data_inicio", "data_fim")}
+        if "data_inicio" in dados and dados["data_inicio"] is not None:
+            result["data_inicio"] = dados["data_inicio"].date()
+            result["horario_inicio"] = dados["data_inicio"].time()
+        if "data_fim" in dados and dados["data_fim"] is not None:
+            result["horario_fim"] = dados["data_fim"].time()
+        return result
+
     try:
         if aplicar_em == "somente_este":
-            plantao = PlantaoRepository.update_by_user(db, plantao_id, current_user.id, **dados_atualizacao)
+            plantao = PlantaoRepository.update_by_user(db, plantao_id, current_user.id, **_decompor_datetimes(dados_atualizacao))
             if plantao is None:
                 raise HTTPException(status_code=404, detail="Plantão não encontrado")
         else:
@@ -672,42 +697,43 @@ def atualizar_plantao(
                 raise HTTPException(status_code=404, detail="Série de plantões não encontrada")
 
             nova_recorrencia = dados_atualizacao.get("recorrencia", plantao_atual.recorrencia)
-            data_ancora = plantao_atual.horario_inicio.date()
+            data_ancora = plantao_atual.data_inicio
             delta_data = None
-            if "horario_inicio" in dados_atualizacao:
-                delta_data = dados_atualizacao["horario_inicio"].date() - data_ancora
-            plantoes_por_data = {p.horario_inicio.date(): p for p in plantoes_futuros}
+            if "data_inicio" in dados_atualizacao:
+                delta_data = dados_atualizacao["data_inicio"].date() - data_ancora
+            plantoes_por_data = {p.data_inicio: p for p in plantoes_futuros}
             plantao_selecionado = plantoes_futuros[0]
 
             def _aplicar_updates(plantao_item: Plantao, data_referencia, forcar_recorrencia=None):
                 for chave, valor in dados_atualizacao.items():
-                    if chave in ("horario_inicio", "horario_fim"):
+                    if chave in ("data_inicio", "data_fim"):
                         continue
-                    setattr(plantao_item, chave, valor)
+                    if hasattr(plantao_item, chave):
+                        setattr(plantao_item, chave, valor)
                 new_date = data_referencia + delta_data if delta_data is not None else data_referencia
-                new_time_inicio = dados_atualizacao.get("horario_inicio", plantao_item.horario_inicio).time()
-                new_time_fim = dados_atualizacao.get("horario_fim", plantao_item.horario_fim).time()
-                new_inicio = datetime.combine(new_date, new_time_inicio)
-                plantao_item.horario_inicio = new_inicio
-                plantao_item.horario_fim = ajustar_fim_intervalo(new_inicio, datetime.combine(new_date, new_time_fim))
+                new_time_inicio = dados_atualizacao["data_inicio"].time() if "data_inicio" in dados_atualizacao else plantao_item.horario_inicio
+                new_time_fim = dados_atualizacao["data_fim"].time() if "data_fim" in dados_atualizacao else plantao_item.horario_fim
+                plantao_item.data_inicio = new_date
+                plantao_item.horario_inicio = new_time_inicio
+                plantao_item.horario_fim = new_time_fim
                 if forcar_recorrencia is not None:
                     plantao_item.recorrencia = forcar_recorrencia
-                plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.horario_inicio)
+                plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.data_inicio)
                 plantao_item.pagamento_recebido = False
 
             if "recorrencia" in dados_atualizacao and nova_recorrencia is None:
                 for p in plantoes_futuros[1:]:
                     db.delete(p)
-                _aplicar_updates(plantao_selecionado, plantao_selecionado.horario_inicio.date())
+                _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio)
 
             elif plantao_atual.recorrencia == "Semanal" and nova_recorrencia == "Quinzenal":
                 for p in plantoes_futuros[1:]:
-                    diferenca = (p.horario_inicio.date() - data_ancora).days
+                    diferenca = (p.data_inicio - data_ancora).days
                     if diferenca % 14 != 0:
                         db.delete(p)
                     else:
-                        _aplicar_updates(p, p.horario_inicio.date(), forcar_recorrencia="Quinzenal")
-                _aplicar_updates(plantao_selecionado, plantao_selecionado.horario_inicio.date(), forcar_recorrencia="Quinzenal")
+                        _aplicar_updates(p, p.data_inicio, forcar_recorrencia="Quinzenal")
+                _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio, forcar_recorrencia="Quinzenal")
 
             elif plantao_atual.recorrencia == "Quinzenal" and nova_recorrencia == "Semanal":
                 data_limite = local.data_final
@@ -719,7 +745,7 @@ def atualizar_plantao(
                 PlanoService.verificar_limite_serie(db, current_user, novos_count)
 
                 for p in plantoes_futuros:
-                    _aplicar_updates(p, p.horario_inicio.date(), forcar_recorrencia="Semanal")
+                    _aplicar_updates(p, p.data_inicio, forcar_recorrencia="Semanal")
 
                 proxima_data = data_ancora + timedelta(days=7)
                 while proxima_data <= data_limite:
@@ -727,15 +753,15 @@ def atualizar_plantao(
                         novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
                         if isinstance(novo_valor, Decimal):
                             novo_valor = float(novo_valor)
-                        novo_time_inicio = dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio).time()
-                        novo_time_fim = dados_atualizacao.get("horario_fim", plantao_atual.horario_fim).time()
-                        novo_inicio_dt = datetime.combine(proxima_data, novo_time_inicio)
+                        novo_time_inicio = dados_atualizacao["data_inicio"].time() if "data_inicio" in dados_atualizacao else plantao_atual.horario_inicio
+                        novo_time_fim = dados_atualizacao["data_fim"].time() if "data_fim" in dados_atualizacao else plantao_atual.horario_fim
                         novo_plantao = Plantao(
                             usuario_id=current_user.id,
                             local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
                             valor=novo_valor,
-                            horario_inicio=novo_inicio_dt,
-                            horario_fim=ajustar_fim_intervalo(novo_inicio_dt, datetime.combine(proxima_data, novo_time_fim)),
+                            data_inicio=proxima_data,
+                            horario_inicio=novo_time_inicio,
+                            horario_fim=novo_time_fim,
                             recorrencia="Semanal",
                             sobreaviso=dados_atualizacao.get("sobreaviso", plantao_atual.sobreaviso),
                             notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
@@ -745,7 +771,7 @@ def atualizar_plantao(
                             ),
                             notificado=False,
                             executado=False,
-                            pagamento_plantao=_calcular_data_pagamento(novo_inicio_dt),
+                            pagamento_plantao=_calcular_data_pagamento(proxima_data),
                             pagamento_recebido=False,
                         )
                         db.add(novo_plantao)
@@ -754,28 +780,28 @@ def atualizar_plantao(
             elif plantao_atual.recorrencia in (None, "Unico") and nova_recorrencia in {"Semanal", "Quinzenal"}:
                 intervalo_dias = 7 if nova_recorrencia == "Semanal" else 14
                 data_limite = local.data_final
-                _d2, novos_count2 = plantao_selecionado.horario_inicio.date() + timedelta(days=intervalo_dias), 0
+                _d2, novos_count2 = plantao_selecionado.data_inicio + timedelta(days=intervalo_dias), 0
                 while _d2 <= data_limite:
                     novos_count2 += 1
                     _d2 += timedelta(days=intervalo_dias)
                 PlanoService.verificar_limite_serie(db, current_user, novos_count2)
 
-                _aplicar_updates(plantao_selecionado, plantao_selecionado.horario_inicio.date(), forcar_recorrencia=nova_recorrencia)
+                _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio, forcar_recorrencia=nova_recorrencia)
 
-                proxima_data = plantao_selecionado.horario_inicio.date() + timedelta(days=intervalo_dias)
+                proxima_data = plantao_selecionado.data_inicio + timedelta(days=intervalo_dias)
                 while proxima_data <= data_limite:
                     novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
                     if isinstance(novo_valor, Decimal):
                         novo_valor = float(novo_valor)
-                    novo_time_inicio = dados_atualizacao.get("horario_inicio", plantao_atual.horario_inicio).time()
-                    novo_time_fim = dados_atualizacao.get("horario_fim", plantao_atual.horario_fim).time()
-                    novo_inicio_dt = datetime.combine(proxima_data, novo_time_inicio)
+                    novo_time_inicio = dados_atualizacao["data_inicio"].time() if "data_inicio" in dados_atualizacao else plantao_atual.horario_inicio
+                    novo_time_fim = dados_atualizacao["data_fim"].time() if "data_fim" in dados_atualizacao else plantao_atual.horario_fim
                     novo_plantao = Plantao(
                         usuario_id=current_user.id,
                         local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
                         valor=novo_valor,
-                        horario_inicio=novo_inicio_dt,
-                        horario_fim=ajustar_fim_intervalo(novo_inicio_dt, datetime.combine(proxima_data, novo_time_fim)),
+                        data_inicio=proxima_data,
+                        horario_inicio=novo_time_inicio,
+                        horario_fim=novo_time_fim,
                         recorrencia=nova_recorrencia,
                         sobreaviso=dados_atualizacao.get("sobreaviso", plantao_atual.sobreaviso),
                         notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
@@ -785,7 +811,7 @@ def atualizar_plantao(
                         ),
                         notificado=False,
                         executado=False,
-                        pagamento_plantao=_calcular_data_pagamento(novo_inicio_dt),
+                        pagamento_plantao=_calcular_data_pagamento(proxima_data),
                         pagamento_recebido=False,
                     )
                     db.add(novo_plantao)
@@ -793,7 +819,7 @@ def atualizar_plantao(
 
             else:
                 for p in plantoes_futuros:
-                    _aplicar_updates(p, p.horario_inicio.date())
+                    _aplicar_updates(p, p.data_inicio)
 
             db.commit()
             db.refresh(plantao_selecionado)
@@ -994,7 +1020,7 @@ def transferir_plantao(
 
     mensagem = (
         f"Olá {payload.destinatario_nome}! {current_user.nome} transferiu um plantão para você.\n"
-        f"Data: {plantao.horario_inicio.strftime('%d/%m/%Y')}\n"
+        f"Data: {plantao.data_inicio.strftime('%d/%m/%Y')}\n"
         f"Local: {nome_local}\n"
         f"Horário: {plantao.horario_inicio.strftime('%H:%M')} às {plantao.horario_fim.strftime('%H:%M')}\n"
         f"Valor: R$ {float(plantao.valor):.2f}"

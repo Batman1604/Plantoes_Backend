@@ -14,8 +14,8 @@ class FinanceiroService:
             func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),
         ).where(
             Plantao.usuario_id == usuario_id,
-            extract("month", Plantao.horario_inicio) == mes,
-            extract("year", Plantao.horario_inicio) == ano,
+            extract("month", Plantao.data_inicio) == mes,
+            extract("year", Plantao.data_inicio) == ano,
         )
         resultado = db.execute(stmt).one()
         return {
@@ -30,7 +30,7 @@ class FinanceiroService:
             func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),
         ).where(
             Plantao.usuario_id == usuario_id,
-            extract("year", Plantao.horario_inicio) == ano,
+            extract("year", Plantao.data_inicio) == ano,
         )
         resultado = db.execute(stmt).one()
         return {
@@ -46,8 +46,8 @@ class FinanceiroService:
         ).where(
             Plantao.usuario_id == usuario_id,
             Plantao.local_id == local_id,
-            extract("month", Plantao.horario_inicio) == mes,
-            extract("year", Plantao.horario_inicio) == ano,
+            extract("month", Plantao.data_inicio) == mes,
+            extract("year", Plantao.data_inicio) == ano,
         )
         resultado = db.execute(stmt).one()
         return {

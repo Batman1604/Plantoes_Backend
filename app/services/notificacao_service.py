@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class NotificacaoService:
     @staticmethod
     def obter_datetime_inicio(plantao: Plantao) -> datetime:
-        return plantao.horario_inicio
+        return datetime.combine(plantao.data_inicio, plantao.horario_inicio)
 
     @staticmethod
     def calcular_momento_notificacao(plantao: Plantao) -> datetime:

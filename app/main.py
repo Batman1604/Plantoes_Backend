@@ -377,10 +377,10 @@ def ensure_indexes() -> None:
                 "CREATE INDEX IF NOT EXISTS ix_plantoes_local_id ON plantoes (local_id)"
             ))
             connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_plantoes_horario_inicio ON plantoes (horario_inicio)"
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_data_inicio ON plantoes (data_inicio)"
             ))
             connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_horario ON plantoes (usuario_id, horario_inicio)"
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_data_inicio ON plantoes (usuario_id, data_inicio)"
             ))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_financeiro_local_id ON financeiro (local_id)"
@@ -408,10 +408,10 @@ def ensure_indexes() -> None:
                 "CREATE INDEX IF NOT EXISTS ix_plantoes_local_id ON plantoes (local_id)"
             ))
             connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_plantoes_horario_inicio ON plantoes (horario_inicio)"
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_data_inicio ON plantoes (data_inicio)"
             ))
             connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_horario ON plantoes (usuario_id, horario_inicio)"
+                "CREATE INDEX IF NOT EXISTS ix_plantoes_usuario_data_inicio ON plantoes (usuario_id, data_inicio)"
             ))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_financeiro_local_id ON financeiro (local_id)"

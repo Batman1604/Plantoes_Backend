@@ -45,20 +45,19 @@ TOOLS = [
     },
     {
         "name": "criar_plantao",
-        "description": "Cria um novo plantão. Requer local_id (obtido via listar_locais), valor, data e horários.",
+        "description": "Cria um novo plantão. Requer local_id (obtido via listar_locais), valor, data_inicio e data_fim.",
         "input_schema": {
             "type": "object",
-            "required": ["local_id", "valor", "data", "horario_inicio", "horario_fim"],
+            "required": ["local_id", "valor", "data_inicio", "data_fim"],
             "properties": {
                 "local_id": {"type": "integer", "description": "ID do local onde o plantão será realizado"},
                 "valor": {"type": "number", "description": "Valor em reais do plantão"},
-                "data": {"type": "string", "description": "Data no formato YYYY-MM-DD"},
-                "horario_inicio": {"type": "string", "description": "Horário de início no formato HH:MM"},
-                "horario_fim": {"type": "string", "description": "Horário de fim no formato HH:MM"},
+                "data_inicio": {"type": "string", "description": "Data e hora de início no formato ISO 8601: YYYY-MM-DDTHH:MM:SS"},
+                "data_fim": {"type": "string", "description": "Data e hora de fim no formato ISO 8601: YYYY-MM-DDTHH:MM:SS"},
                 "sobreaviso": {"type": "boolean", "description": "Se é plantão de sobreaviso"},
                 "recorrencia": {
                     "type": "string",
-                    "enum": ["Semanal", "Quinzenal"],
+                    "enum": ["Semanal", "Quinzenal", "Unico"],
                     "description": "Recorrência opcional do plantão",
                 },
                 "acao_conflito": {
@@ -87,9 +86,8 @@ TOOLS = [
             "properties": {
                 "plantao_id": {"type": "integer"},
                 "valor": {"type": "number"},
-                "data": {"type": "string", "description": "formato YYYY-MM-DD"},
-                "horario_inicio": {"type": "string", "description": "formato HH:MM"},
-                "horario_fim": {"type": "string", "description": "formato HH:MM"},
+                "data_inicio": {"type": "string", "description": "Nova data e hora de início no formato ISO 8601: YYYY-MM-DDTHH:MM:SS"},
+                "data_fim": {"type": "string", "description": "Nova data e hora de fim no formato ISO 8601: YYYY-MM-DDTHH:MM:SS"},
                 "sobreaviso": {"type": "boolean"},
             },
         },
@@ -148,7 +146,7 @@ def _tool_listar_plantoes(db: Session, usuario_id: int) -> str:
         return "Nenhum plantão agendado."
     linhas = ["Plantões agendados:"]
     for p in plantoes:
-        data_str = p.horario_inicio.strftime("%d/%m/%Y")
+        data_str = p.data_inicio.strftime("%d/%m/%Y")
         inicio_str = p.horario_inicio.strftime("%H:%M")
         fim_str = p.horario_fim.strftime("%H:%M")
         executado = "✓ executado" if p.executado else "pendente"
@@ -166,11 +164,10 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
         return "Local não encontrado ou não pertence ao usuário."
 
     try:
-        data = inputs["data"]
-        inicio_dt = datetime.strptime(f"{data}T{inputs['horario_inicio']}:00", "%Y-%m-%dT%H:%M:%S")
-        fim_dt = datetime.strptime(f"{data}T{inputs['horario_fim']}:00", "%Y-%m-%dT%H:%M:%S")
+        inicio_dt = datetime.fromisoformat(inputs["data_inicio"])
+        fim_dt = datetime.fromisoformat(inputs["data_fim"])
     except ValueError:
-        return "Formato de data ou horário inválido. Use YYYY-MM-DD para data e HH:MM para horário."
+        return "Formato de data/hora inválido. Use ISO 8601: YYYY-MM-DDTHH:MM:SS"
 
     fim_dt = ajustar_fim_intervalo(inicio_dt, fim_dt)
 
@@ -181,7 +178,7 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
     acao = inputs.get("acao_conflito")
 
     if conflito and acao is None:
-        conf_inicio = conflito.horario_inicio.strftime("%d/%m/%Y %H:%M")
+        conf_inicio = datetime.combine(conflito.data_inicio, conflito.horario_inicio).strftime("%d/%m/%Y %H:%M")
         conf_fim = conflito.horario_fim.strftime("%H:%M")
         return (
             f"Conflito detectado com o plantão ID {conflito.id} ({conf_inicio}-{conf_fim}). "
@@ -192,7 +189,7 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
         return "Criação de plantão cancelada conforme solicitado."
 
     if acao == "ajustar" and conflito:
-        PlantaoRepository.update(db, conflito.id, horario_fim=inicio_dt)
+        PlantaoRepository.update(db, conflito.id, horario_fim=inicio_dt.time())
 
     recorrencia = inputs.get("recorrencia")
     pagamento_plantao = None
@@ -209,13 +206,13 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
         usuario_id=usuario_id,
         local_id=inputs["local_id"],
         valor=inputs["valor"],
-        horario_inicio=inicio_dt,
-        horario_fim=fim_dt,
+        data_inicio=inicio_dt.date(),
+        horario_inicio=inicio_dt.time(),
+        horario_fim=fim_dt.time(),
         sobreaviso=inputs.get("sobreaviso", False),
         recorrencia=recorrencia,
         notificacao_ativa=True,
         notificacao_antecedencia_minutos=60,
-        acao_conflito=None,
         executado=False,
         pagamento_recebido=False,
         pagamento_plantao=pagamento_plantao,
@@ -223,7 +220,7 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
     )
 
     plantao = PlantaoRepository.create(db, payload)
-    data_fmt = plantao.horario_inicio.strftime("%d/%m/%Y")
+    data_fmt = plantao.data_inicio.strftime("%d/%m/%Y")
     inicio_fmt = plantao.horario_inicio.strftime("%H:%M")
     fim_fmt = plantao.horario_fim.strftime("%H:%M")
     return f"Plantão criado com sucesso! ID {plantao.id} — {data_fmt} {inicio_fmt}-{fim_fmt} | R${float(plantao.valor):.2f}"
@@ -240,21 +237,23 @@ def _tool_atualizar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
     plantao_id = inputs.pop("plantao_id")
     kwargs = {}
 
-    if "data" in inputs or "horario_inicio" in inputs or "horario_fim" in inputs:
+    if "data_inicio" in inputs or "data_fim" in inputs:
         plantao = PlantaoRepository.get_by_id_and_user(db, plantao_id, usuario_id)
         if plantao is None:
             return f"Plantão ID {plantao_id} não encontrado."
 
-        data_str = inputs.get("data") or plantao.horario_inicio.strftime("%Y-%m-%d")
-        h_inicio = inputs.get("horario_inicio") or plantao.horario_inicio.strftime("%H:%M")
-        h_fim = inputs.get("horario_fim") or plantao.horario_fim.strftime("%H:%M")
-
         try:
-            kwargs["horario_inicio"] = datetime.strptime(f"{data_str}T{h_inicio}:00", "%Y-%m-%dT%H:%M:%S")
-            kwargs["horario_fim"] = datetime.strptime(f"{data_str}T{h_fim}:00", "%Y-%m-%dT%H:%M:%S")
-            kwargs["horario_fim"] = ajustar_fim_intervalo(kwargs["horario_inicio"], kwargs["horario_fim"])
+            if "data_inicio" in inputs:
+                inicio_dt = datetime.fromisoformat(inputs["data_inicio"])
+                kwargs["data_inicio"] = inicio_dt.date()
+                kwargs["horario_inicio"] = inicio_dt.time()
+            if "data_fim" in inputs:
+                fim_dt = datetime.fromisoformat(inputs["data_fim"])
+                inicio_ref = datetime.fromisoformat(inputs["data_inicio"]) if "data_inicio" in inputs else datetime.combine(plantao.data_inicio, plantao.horario_inicio)
+                fim_dt = ajustar_fim_intervalo(inicio_ref, fim_dt)
+                kwargs["horario_fim"] = fim_dt.time()
         except ValueError:
-            return "Formato de data ou horário inválido."
+            return "Formato de data/hora inválido. Use ISO 8601: YYYY-MM-DDTHH:MM:SS"
 
     if "valor" in inputs:
         kwargs["valor"] = inputs["valor"]
