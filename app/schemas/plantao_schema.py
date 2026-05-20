@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Generic, Literal, Optional, TypeVar
 
@@ -17,6 +17,46 @@ def validar_formato_data(value: date | datetime | str | None):
         raise ValueError("Envie datas no formato YYYY-MM-DD, sem horário/fuso.")
 
     return value
+
+
+def _coerce_horario_datetime(value):
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, time):
+        return value
+    if isinstance(value, str):
+        parsed = None
+        for parser in (datetime.fromisoformat, time.fromisoformat):
+            try:
+                parsed = parser(value)
+                break
+            except ValueError:
+                continue
+        return parsed if parsed is not None else value
+    return value
+
+
+def _montar_datetime_plantao(payload: dict):
+    if not isinstance(payload, dict):
+        return payload
+
+    data_inicio = payload.get("data_inicio")
+    data_fim = payload.get("data_fim")
+
+    horario_inicio = _coerce_horario_datetime(payload.get("horario_inicio"))
+    horario_fim = _coerce_horario_datetime(payload.get("horario_fim"))
+
+    if isinstance(data_inicio, str):
+        data_inicio = date.fromisoformat(data_inicio)
+    if isinstance(data_fim, str):
+        data_fim = date.fromisoformat(data_fim)
+
+    if isinstance(horario_inicio, time) and isinstance(data_inicio, date):
+        payload["horario_inicio"] = datetime.combine(data_inicio, horario_inicio)
+    if isinstance(horario_fim, time) and isinstance(data_fim, date):
+        payload["horario_fim"] = datetime.combine(data_fim, horario_fim)
+
+    return payload
 
 
 class APIResponse(GenericModel, Generic[DataT]):
@@ -162,6 +202,11 @@ class PlantaoBase(BaseModel):
 
 
 class PlantaoCreate(PlantaoBase):
+    @model_validator(mode="before")
+    @classmethod
+    def montar_horarios(cls, values):
+        return _montar_datetime_plantao(values)
+
     local_id: int = Field(example=1, description="ID do local ao qual o plantão pertence.")
     notificacao_ativa: bool = Field(default=True, example=True)
     notificacao_antecedencia_minutos: int = Field(
@@ -200,6 +245,11 @@ class PlantaoCreateWithUsuario(PlantaoCreate):
 
 
 class PlantaoUpdate(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def montar_horarios(cls, values):
+        return _montar_datetime_plantao(values)
+
     valor: Decimal | None = Field(default=None, gt=0)
     horario_inicio: datetime | None = None
     horario_fim: datetime | None = None
