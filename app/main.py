@@ -587,10 +587,16 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    logger.warning("Validação falhou: %s", exc.errors())
+    errors = []
+    for err in exc.errors():
+        sanitized = {k: v for k, v in err.items() if k not in ("ctx", "url")}
+        if "ctx" in err:
+            sanitized["ctx"] = {k: str(v) for k, v in err["ctx"].items()}
+        errors.append(sanitized)
+    logger.warning("Validação falhou: %s", errors)
     return JSONResponse(
         status_code=422,
-        content={"success": False, "message": "Dados de entrada inválidos.", "data": exc.errors()},
+        content={"success": False, "message": "Dados de entrada inválidos.", "data": errors},
     )
 
 
