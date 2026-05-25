@@ -162,6 +162,50 @@ def _normalizar_recorrencia(value: str | None) -> str | None:
     return mapped
 
 
+def _combinar_data_horarios(values: dict) -> dict:
+    """Suporta formato alternativo com campos separados.
+
+    Aceita qualquer combinação:
+      - data_inicio/data_fim como datetime completo (formato novo, preferido)
+      - data_inicio/data_fim como string só-data + horario_inicio/horario_fim como "HH:MM"
+      - data (string YYYY-MM-DD) + horario_inicio/horario_fim como "HH:MM"
+    """
+    data_val = values.get("data")
+    h_ini = values.get("horario_inicio")
+    h_fim = values.get("horario_fim")
+    data_inicio = values.get("data_inicio")
+    data_fim = values.get("data_fim")
+
+    def _ref_date_str(dt_val) -> str | None:
+        if dt_val is not None:
+            s = str(dt_val)[:10]
+            return s if len(s) == 10 else None
+        return None
+
+    ref_date = _ref_date_str(data_val) or (
+        _ref_date_str(data_inicio)
+        if isinstance(data_inicio, str) and "T" not in data_inicio
+        else None
+    )
+
+    if h_ini and isinstance(h_ini, str) and ref_date:
+        t = h_ini.strip()[:5]
+        if data_inicio is None or (isinstance(data_inicio, str) and "T" not in data_inicio):
+            values["data_inicio"] = f"{ref_date}T{t}:00"
+
+    if h_fim and isinstance(h_fim, str):
+        t = h_fim.strip()[:5]
+        fim_ref = ref_date or (
+            _ref_date_str(values.get("data_inicio"))
+            if isinstance(values.get("data_inicio"), str) and "T" in values.get("data_inicio", "")
+            else None
+        )
+        if fim_ref and (data_fim is None or (isinstance(data_fim, str) and "T" not in data_fim)):
+            values["data_fim"] = f"{fim_ref}T{t}:00"
+
+    return values
+
+
 class PlantaoBase(BaseModel):
     valor: Decimal = Field(
         gt=0,
@@ -204,6 +248,13 @@ class PlantaoCreate(PlantaoBase):
         description="Ação a tomar quando houver conflito de horário: manter (não fazer nada), ajustar (ajustar horários) ou cancelar (cancelar plantão)."
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def aceitar_formato_alternativo(cls, values):
+        if isinstance(values, dict):
+            _combinar_data_horarios(values)
+        return values
+
     @model_validator(mode="after")
     def validar_duracao(cls, values):
         inicio = values.data_inicio
@@ -211,9 +262,9 @@ class PlantaoCreate(PlantaoBase):
 
         if fim <= inicio:
             fim += timedelta(days=1)
+            values.data_fim = fim
 
-        max_duration = timedelta(hours=48)
-        if fim - inicio > max_duration:
+        if fim - inicio > timedelta(hours=48):
             raise ValueError("A duração do plantão não pode ser maior que 48 horas.")
 
         return values
@@ -249,6 +300,13 @@ class PlantaoUpdate(BaseModel):
         default="somente_este",
         description="Define se a alteração será aplicada somente neste plantão ou no plantão selecionado e nos futuros recorrentes.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def aceitar_formato_alternativo(cls, values):
+        if isinstance(values, dict):
+            _combinar_data_horarios(values)
+        return values
 
     @field_validator("recorrencia", mode="before")
     @classmethod
