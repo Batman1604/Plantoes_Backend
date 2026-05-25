@@ -275,6 +275,7 @@ class PlantaoCreateWithUsuario(BaseModel):
     local_id: int
     valor: Decimal
     data_inicio: date
+    data_fim: date
     horario_inicio: time
     horario_fim: time
     recorrencia: Optional[str] = None
@@ -339,9 +340,7 @@ class PlantaoResponse(BaseModel):
     def from_orm_model(cls, obj):
         if hasattr(obj, "horario_inicio"):
             inicio_dt = datetime.combine(obj.data_inicio, obj.horario_inicio)
-            fim_dt = datetime.combine(obj.data_inicio, obj.horario_fim)
-            if fim_dt <= inicio_dt:
-                fim_dt += timedelta(days=1)
+            fim_dt = datetime.combine(obj.data_fim, obj.horario_fim)
             return {
                 "id": obj.id,
                 "usuario_id": obj.usuario_id,

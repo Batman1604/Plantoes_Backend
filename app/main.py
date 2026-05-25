@@ -367,6 +367,15 @@ def ensure_indexes() -> None:
             connection.execute(text(
                 "DROP INDEX IF EXISTS ix_plantoes_usuario_local_data"
             ))
+            cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
+            col_names = {c[1] for c in cols}
+            if "data_fim" not in col_names:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN data_fim DATE"))
+                connection.execute(text(
+                    "UPDATE plantoes SET data_fim = "
+                    "CASE WHEN horario_fim < horario_inicio THEN date(data_inicio, '+1 day') "
+                    "ELSE data_inicio END"
+                ))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_locais_usuario_id ON locais (usuario_id)"
             ))
@@ -397,6 +406,18 @@ def ensure_indexes() -> None:
             ))
             connection.execute(text(
                 "DROP INDEX IF EXISTS ix_plantoes_usuario_local_data"
+            ))
+            connection.execute(text(
+                "ALTER TABLE plantoes ADD COLUMN IF NOT EXISTS data_fim DATE"
+            ))
+            connection.execute(text(
+                "UPDATE plantoes SET data_fim = "
+                "CASE WHEN horario_fim < horario_inicio THEN data_inicio + INTERVAL '1 day' "
+                "ELSE data_inicio END "
+                "WHERE data_fim IS NULL"
+            ))
+            connection.execute(text(
+                "ALTER TABLE plantoes ALTER COLUMN data_fim SET NOT NULL"
             ))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_locais_usuario_id ON locais (usuario_id)"

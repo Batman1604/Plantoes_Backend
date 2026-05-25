@@ -567,9 +567,10 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
                 usuario_id=current_user.id,
                 local_id=payload.local_id,
                 valor=payload.valor,
-                data_inicio=payload.data_inicio.date(),
-                horario_inicio=payload.data_inicio.time(),
-                horario_fim=payload.data_fim.time(),
+                data_inicio=inicio_dt.date(),
+                data_fim=fim_dt.date(),
+                horario_inicio=inicio_dt.time(),
+                horario_fim=fim_dt.time(),
                 recorrencia=recorrencia,
                 sobreaviso=payload.sobreaviso,
                 notificacao_ativa=payload.notificacao_ativa,
@@ -634,11 +635,17 @@ def atualizar_plantao(
         raise HTTPException(status_code=404, detail="Local não encontrado")
 
     inicio_dt_atual = datetime.combine(plantao_atual.data_inicio, plantao_atual.horario_inicio)
-    fim_dt_atual = ajustar_fim_intervalo(inicio_dt_atual, datetime.combine(plantao_atual.data_inicio, plantao_atual.horario_fim))
+    fim_dt_atual = datetime.combine(plantao_atual.data_fim, plantao_atual.horario_fim)
 
     inicio_dt = dados_atualizacao["data_inicio"] if "data_inicio" in dados_atualizacao else inicio_dt_atual
     fim_dt = dados_atualizacao["data_fim"] if "data_fim" in dados_atualizacao else fim_dt_atual
     fim_dt = ajustar_fim_intervalo(inicio_dt, fim_dt)
+
+    # Persist adjusted values so _decompor_datetimes sees the correct dates
+    if "data_inicio" in dados_atualizacao:
+        dados_atualizacao["data_inicio"] = inicio_dt
+    if "data_fim" in dados_atualizacao:
+        dados_atualizacao["data_fim"] = fim_dt
 
     if (fim_dt - inicio_dt).total_seconds() > 48 * 3600:
         raise HTTPException(status_code=400, detail="A duração do plantão não pode ser maior que 48 horas.")
@@ -683,6 +690,7 @@ def atualizar_plantao(
             result["data_inicio"] = dados["data_inicio"].date()
             result["horario_inicio"] = dados["data_inicio"].time()
         if "data_fim" in dados and dados["data_fim"] is not None:
+            result["data_fim"] = dados["data_fim"].date()
             result["horario_fim"] = dados["data_fim"].time()
         return result
 
@@ -710,10 +718,18 @@ def atualizar_plantao(
                         continue
                     if hasattr(plantao_item, chave):
                         setattr(plantao_item, chave, valor)
-                new_date = data_referencia + delta_data if delta_data is not None else data_referencia
+                new_date_inicio = data_referencia + delta_data if delta_data is not None else data_referencia
                 new_time_inicio = dados_atualizacao["data_inicio"].time() if "data_inicio" in dados_atualizacao else plantao_item.horario_inicio
-                new_time_fim = dados_atualizacao["data_fim"].time() if "data_fim" in dados_atualizacao else plantao_item.horario_fim
-                plantao_item.data_inicio = new_date
+                if "data_fim" in dados_atualizacao:
+                    new_fim_dt = dados_atualizacao["data_fim"]
+                    ref_ini = dados_atualizacao.get("data_inicio", datetime.combine(plantao_item.data_inicio, plantao_item.horario_inicio))
+                    overnight = (new_fim_dt.date() - ref_ini.date()).days
+                    new_time_fim = new_fim_dt.time()
+                else:
+                    overnight = (plantao_item.data_fim - plantao_item.data_inicio).days
+                    new_time_fim = plantao_item.horario_fim
+                plantao_item.data_inicio = new_date_inicio
+                plantao_item.data_fim = new_date_inicio + timedelta(days=overnight)
                 plantao_item.horario_inicio = new_time_inicio
                 plantao_item.horario_fim = new_time_fim
                 if forcar_recorrencia is not None:
@@ -747,6 +763,9 @@ def atualizar_plantao(
                 for p in plantoes_futuros:
                     _aplicar_updates(p, p.data_inicio, forcar_recorrencia="Semanal")
 
+                overnight_offset = (plantao_atual.data_fim - plantao_atual.data_inicio).days
+                if "data_fim" in dados_atualizacao and "data_inicio" in dados_atualizacao:
+                    overnight_offset = (dados_atualizacao["data_fim"].date() - dados_atualizacao["data_inicio"].date()).days
                 proxima_data = data_ancora + timedelta(days=7)
                 while proxima_data <= data_limite:
                     if proxima_data not in plantoes_por_data:
@@ -760,6 +779,7 @@ def atualizar_plantao(
                             local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
                             valor=novo_valor,
                             data_inicio=proxima_data,
+                            data_fim=proxima_data + timedelta(days=overnight_offset),
                             horario_inicio=novo_time_inicio,
                             horario_fim=novo_time_fim,
                             recorrencia="Semanal",
@@ -788,6 +808,9 @@ def atualizar_plantao(
 
                 _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio, forcar_recorrencia=nova_recorrencia)
 
+                overnight_offset2 = (plantao_atual.data_fim - plantao_atual.data_inicio).days
+                if "data_fim" in dados_atualizacao and "data_inicio" in dados_atualizacao:
+                    overnight_offset2 = (dados_atualizacao["data_fim"].date() - dados_atualizacao["data_inicio"].date()).days
                 proxima_data = plantao_selecionado.data_inicio + timedelta(days=intervalo_dias)
                 while proxima_data <= data_limite:
                     novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
@@ -800,6 +823,7 @@ def atualizar_plantao(
                         local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
                         valor=novo_valor,
                         data_inicio=proxima_data,
+                        data_fim=proxima_data + timedelta(days=overnight_offset2),
                         horario_inicio=novo_time_inicio,
                         horario_fim=novo_time_fim,
                         recorrencia=nova_recorrencia,
@@ -1018,9 +1042,12 @@ def transferir_plantao(
     local = LocalRepository.get_by_id(db, plantao.local_id)
     nome_local = local.nome_local if local else "local não informado"
 
+    data_str = plantao.data_inicio.strftime('%d/%m/%Y')
+    if plantao.data_fim != plantao.data_inicio:
+        data_str += f" até {plantao.data_fim.strftime('%d/%m/%Y')}"
     mensagem = (
         f"Olá {payload.destinatario_nome}! {current_user.nome} transferiu um plantão para você.\n"
-        f"Data: {plantao.data_inicio.strftime('%d/%m/%Y')}\n"
+        f"Data: {data_str}\n"
         f"Local: {nome_local}\n"
         f"Horário: {plantao.horario_inicio.strftime('%H:%M')} às {plantao.horario_fim.strftime('%H:%M')}\n"
         f"Valor: R$ {float(plantao.valor):.2f}"

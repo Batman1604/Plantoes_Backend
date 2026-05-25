@@ -207,6 +207,7 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
         local_id=inputs["local_id"],
         valor=inputs["valor"],
         data_inicio=inicio_dt.date(),
+        data_fim=fim_dt.date(),
         horario_inicio=inicio_dt.time(),
         horario_fim=fim_dt.time(),
         sobreaviso=inputs.get("sobreaviso", False),

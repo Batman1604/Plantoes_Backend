@@ -52,6 +52,7 @@ class Plantao(Base):
     local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     data_inicio: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    data_fim: Mapped[date] = mapped_column(Date, nullable=False)
     horario_inicio: Mapped[time] = Column(Time, nullable=False)
     horario_fim: Mapped[time] = Column(Time, nullable=False)
     recorrencia: Mapped[str | None] = mapped_column(String(50), nullable=True)
