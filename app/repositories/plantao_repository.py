@@ -276,6 +276,7 @@ class TransferenciaRepository:
         destinatario_usuario_id: int | None,
         destinatario_nome: str,
         destinatario_telefone: str,
+        status: str = "enviado",
         sms_enviado: bool = False,
     ) -> Transferencia:
         transferencia = Transferencia(
@@ -284,6 +285,7 @@ class TransferenciaRepository:
             destinatario_usuario_id=destinatario_usuario_id,
             destinatario_nome=destinatario_nome,
             destinatario_telefone=destinatario_telefone,
+            status=status,
             sms_enviado=sms_enviado,
         )
         db.add(transferencia)
@@ -296,6 +298,28 @@ class TransferenciaRepository:
         return db.scalar(select(Transferencia).where(Transferencia.plantao_id == plantao_id))
 
     @staticmethod
+    def get_by_id_and_destinatario(db: Session, transferencia_id: int, destinatario_usuario_id: int) -> Transferencia | None:
+        return db.scalar(
+            select(Transferencia).where(
+                Transferencia.id == transferencia_id,
+                Transferencia.destinatario_usuario_id == destinatario_usuario_id,
+                Transferencia.status == "pendente",
+            )
+        )
+
+    @staticmethod
+    def list_recebidas_por_usuario(db: Session, usuario_id: int) -> list[Transferencia]:
+        stmt = (
+            select(Transferencia)
+            .where(
+                Transferencia.destinatario_usuario_id == usuario_id,
+                Transferencia.status == "pendente",
+            )
+            .order_by(Transferencia.criado_em.desc())
+        )
+        return db.scalars(stmt).all()
+
+    @staticmethod
     def list_enviadas_por_usuario(db: Session, usuario_id: int) -> list[Transferencia]:
         stmt = (
             select(Transferencia)
@@ -303,6 +327,13 @@ class TransferenciaRepository:
             .order_by(Transferencia.criado_em.desc())
         )
         return db.scalars(stmt).all()
+
+    @staticmethod
+    def atualizar_status(db: Session, transferencia_id: int, novo_status: str) -> None:
+        transferencia = db.scalar(select(Transferencia).where(Transferencia.id == transferencia_id))
+        if transferencia:
+            transferencia.status = novo_status
+            db.commit()
 
     @staticmethod
     def marcar_sms_enviado(db: Session, transferencia_id: int) -> None:

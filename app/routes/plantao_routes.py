@@ -44,6 +44,7 @@ from app.schemas.plantao_schema import (
     PlantaoUpdate,
     SenhaResetConfirmar,
     SenhaResetRequest,
+    TransferenciaAceitar,
     TransferenciaCreate,
     TransferenciaResponse,
     UserCreate,
@@ -1017,9 +1018,9 @@ def obter_total_financeiro_mensal_por_local(
     summary="Transferir plantão",
     description=(
         "Transfere um plantão para outra pessoa informando nome e telefone. "
-        "Uma mensagem é enviada ao destinatário e o plantão deixa de aparecer na lista do remetente. "
-        "Se o telefone corresponder a um usuário cadastrado, o vínculo é registrado automaticamente "
-        "(base para a futura funcionalidade de lista de amigos)."
+        "O plantão sai imediatamente da lista do remetente. "
+        "Se o destinatário for um usuário cadastrado, a transferência fica pendente até ele aceitar ou recusar. "
+        "Caso contrário, apenas um SMS é enviado e a transferência é concluída."
     ),
 )
 def transferir_plantao(
@@ -1032,7 +1033,6 @@ def transferir_plantao(
     if plantao is None:
         raise HTTPException(status_code=404, detail="Plantão não encontrado")
 
-    # Verifica se o destinatário já tem conta (pelo telefone) para vincular o registro
     destinatario_usuario = UserRepository.get_by_phone(db, payload.destinatario_telefone)
     destinatario_usuario_id = destinatario_usuario.id if destinatario_usuario else None
 
@@ -1053,6 +1053,10 @@ def transferir_plantao(
         f"Valor: R$ {float(plantao.valor):.2f}"
     )
 
+    # Destinatário cadastrado → pendente (aguarda aceitar/recusar)
+    # Destinatário externo → enviado (apenas SMS, sem confirmação)
+    status_inicial = "pendente" if destinatario_usuario_id else "enviado"
+
     try:
         plantao.transferido = True
         db.add(plantao)
@@ -1063,6 +1067,7 @@ def transferir_plantao(
             destinatario_usuario_id=destinatario_usuario_id,
             destinatario_nome=payload.destinatario_nome,
             destinatario_telefone=payload.destinatario_telefone,
+            status=status_inicial,
         )
     except Exception as exc:
         db.rollback()
@@ -1074,16 +1079,20 @@ def transferir_plantao(
         TransferenciaRepository.marcar_sms_enviado(db, transferencia.id)
         transferencia.sms_enviado = True
 
-    mensagem_retorno = "Plantão transferido com sucesso."
+    if destinatario_usuario_id:
+        mensagem_retorno = "Plantão transferido. O destinatário precisa aceitar no aplicativo para confirmar."
+    else:
+        mensagem_retorno = "Plantão transferido com sucesso."
     if not sms_enviado:
         mensagem_retorno += " A notificação por mensagem não pôde ser enviada, mas a transferência foi registrada."
 
     logger.info(
-        "Plantão %s transferido por %s para %s (%s). SMS enviado: %s",
+        "Plantão %s transferido por %s para %s (%s). Status: %s. SMS enviado: %s",
         plantao_id,
         current_user.email,
         payload.destinatario_nome,
         payload.destinatario_telefone,
+        status_inicial,
         sms_enviado,
     )
 
@@ -1092,3 +1101,142 @@ def transferir_plantao(
         message=mensagem_retorno,
         data=TransferenciaResponse.model_validate(transferencia),
     )
+
+
+@router.get(
+    "/transferencias/recebidas",
+    response_model=APIResponse[list[TransferenciaResponse]],
+    status_code=status.HTTP_200_OK,
+    summary="Listar transferências recebidas pendentes",
+    description="Lista os plantões transferidos por outros usuários para o usuário autenticado que ainda aguardam aceitar ou recusar.",
+)
+def listar_transferencias_recebidas(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    transferencias = TransferenciaRepository.list_recebidas_por_usuario(db, current_user.id)
+    return APIResponse(
+        success=True,
+        message="Transferências recebidas listadas com sucesso.",
+        data=[TransferenciaResponse.model_validate(t) for t in transferencias],
+    )
+
+
+@router.post(
+    "/transferencias/{transferencia_id}/aceitar",
+    response_model=APIResponse[PlantaoResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Aceitar transferência de plantão",
+    description=(
+        "O destinatário aceita o plantão transferido. "
+        "Um novo plantão é criado na conta do destinatário e passa a somar no saldo mensal. "
+        "É necessário informar um local_id da própria conta do destinatário."
+    ),
+)
+def aceitar_transferencia(
+    transferencia_id: int,
+    payload: TransferenciaAceitar,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    transferencia = TransferenciaRepository.get_by_id_and_destinatario(db, transferencia_id, current_user.id)
+    if transferencia is None:
+        raise HTTPException(status_code=404, detail="Transferência não encontrada ou não está pendente")
+
+    local = LocalRepository.get_by_id(db, payload.local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado ou não pertence ao usuário")
+
+    plantao_original = transferencia.plantao
+    if plantao_original is None:
+        raise HTTPException(status_code=404, detail="Plantão original não encontrado")
+
+    pagamento_plantao = None
+    if local.dia_pagamento is not None:
+        pagamento_plantao = PagamentoService.calcular_data_pagamento_plantao(
+            data_plantao=plantao_original.data_inicio,
+            indice_dia_pagamento=local.dia_pagamento,
+            data_inicio_ciclo=local.data_inicio,
+            data_final_ciclo=local.data_final,
+            util_corrido=local.util_corrido,
+        )
+
+    try:
+        novo_plantao = Plantao(
+            usuario_id=current_user.id,
+            local_id=payload.local_id,
+            valor=plantao_original.valor,
+            data_inicio=plantao_original.data_inicio,
+            data_fim=plantao_original.data_fim,
+            horario_inicio=plantao_original.horario_inicio,
+            horario_fim=plantao_original.horario_fim,
+            recorrencia=None,
+            sobreaviso=plantao_original.sobreaviso,
+            notificacao_ativa=True,
+            notificacao_antecedencia_minutos=60,
+            executado=False,
+            pagamento_plantao=pagamento_plantao,
+            pagamento_recebido=False,
+            transferido=False,
+        )
+        db.add(novo_plantao)
+        TransferenciaRepository.atualizar_status(db, transferencia_id, "aceito")
+        db.commit()
+        db.refresh(novo_plantao)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Erro ao aceitar transferência") from exc
+
+    logger.info(
+        "Transferência %s aceita por %s. Novo plantão %s criado.",
+        transferencia_id,
+        current_user.email,
+        novo_plantao.id,
+    )
+
+    return APIResponse(
+        success=True,
+        message="Transferência aceita. O plantão foi adicionado à sua agenda.",
+        data=PlantaoResponse.model_validate(novo_plantao),
+    )
+
+
+@router.post(
+    "/transferencias/{transferencia_id}/recusar",
+    response_model=APIResponse[None],
+    status_code=status.HTTP_200_OK,
+    summary="Recusar transferência de plantão",
+    description=(
+        "O destinatário recusa o plantão transferido. "
+        "O plantão volta a aparecer na agenda do remetente."
+    ),
+)
+def recusar_transferencia(
+    transferencia_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    transferencia = TransferenciaRepository.get_by_id_and_destinatario(db, transferencia_id, current_user.id)
+    if transferencia is None:
+        raise HTTPException(status_code=404, detail="Transferência não encontrada ou não está pendente")
+
+    plantao_original = transferencia.plantao
+
+    try:
+        if plantao_original is not None:
+            plantao_original.transferido = False
+            db.add(plantao_original)
+        TransferenciaRepository.atualizar_status(db, transferencia_id, "recusado")
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Erro ao recusar transferência") from exc
+
+    logger.info(
+        "Transferência %s recusada por %s. Plantão %s revertido.",
+        transferencia_id,
+        current_user.email,
+        transferencia.plantao_id,
+    )
+
+    return APIResponse(success=True, message="Transferência recusada. O plantão foi devolvido ao remetente.", data=None)

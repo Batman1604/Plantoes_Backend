@@ -371,6 +371,10 @@ class TransferenciaCreate(BaseModel):
     )
 
 
+class TransferenciaAceitar(BaseModel):
+    local_id: int = Field(description="ID do local na conta do destinatário ao qual o plantão será vinculado.")
+
+
 class TransferenciaResponse(BaseModel):
     id: int
     plantao_id: int
