@@ -12,6 +12,7 @@ from app.services.pagamento_service import PagamentoService, ajustar_fim_interva
 
 logger = logging.getLogger(__name__)
 
+# Prompt de sistema enviado para o modelo Claude. Define o papel do assistente e as regras de negócio de plantões.
 SYSTEM_PROMPT = """Você é o assistente do aplicativo Plantões, que ajuda médicos e profissionais de saúde a gerenciar seus plantões de trabalho.
 
 Você pode ajudar o usuário a:
@@ -108,6 +109,7 @@ TOOLS = [
 
 
 def _executar_tool(db: Session, usuario_id: int, nome: str, inputs: dict) -> str:
+    """Roteia chamadas de ferramenta do Claude para a implementação interna correspondente."""
     try:
         if nome == "listar_locais":
             return _tool_listar_locais(db, usuario_id)
@@ -128,6 +130,7 @@ def _executar_tool(db: Session, usuario_id: int, nome: str, inputs: dict) -> str
 
 
 def _tool_listar_locais(db: Session, usuario_id: int) -> str:
+    """Retorna uma lista de locais/hospitais do usuário em formato de texto para o assistente."""
     locais = LocalRepository.list_by_user(db, usuario_id)
     if not locais:
         return "Nenhum local cadastrado. O usuário precisa criar um local no aplicativo antes de agendar plantões."
@@ -141,6 +144,7 @@ def _tool_listar_locais(db: Session, usuario_id: int) -> str:
 
 
 def _tool_listar_plantoes(db: Session, usuario_id: int) -> str:
+    """Retorna os plantões agendados do usuário em texto legível, incluindo status."""
     plantoes = PlantaoRepository.list_by_user(db, usuario_id)
     if not plantoes:
         return "Nenhum plantão agendado."
@@ -159,6 +163,7 @@ def _tool_listar_plantoes(db: Session, usuario_id: int) -> str:
 
 
 def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
+    """Cria um novo plantão a partir dos parâmetros recebidos pela tool do assistente."""
     local = LocalRepository.get_by_id(db, inputs["local_id"])
     if local is None or local.usuario_id != usuario_id:
         return "Local não encontrado ou não pertence ao usuário."
@@ -228,6 +233,7 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
 
 
 def _tool_remover_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
+    """Remove um plantão pelo ID garantindo que pertença ao usuário."""
     deletado = PlantaoRepository.delete_by_user(db, inputs["plantao_id"], usuario_id)
     if not deletado:
         return f"Plantão ID {inputs['plantao_id']} não encontrado."
@@ -235,6 +241,7 @@ def _tool_remover_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
 
 
 def _tool_atualizar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
+    """Atualiza um plantão existente com os dados enviados pelo assistente."""
     plantao_id = inputs.pop("plantao_id")
     kwargs = {}
 
@@ -271,6 +278,7 @@ def _tool_atualizar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
 
 
 def _tool_marcar_executado(db: Session, usuario_id: int, inputs: dict) -> str:
+    """Marca ou desmarca um plantão como executado para o usuário."""
     resultado = PlantaoRepository.update_executado(db, inputs["plantao_id"], usuario_id, inputs["executado"])
     if resultado is None:
         return f"Plantão ID {inputs['plantao_id']} não encontrado."
@@ -281,7 +289,7 @@ def _tool_marcar_executado(db: Session, usuario_id: int, inputs: dict) -> str:
 def processar_mensagem(db: Session, usuario_id: int, historico_json: str, mensagem_nova: str) -> tuple[str, str]:
     """
     Processa uma mensagem do usuário via Claude com tool use.
-    Retorna (resposta_texto, historico_atualizado_json).
+    Retorna uma tupla com a resposta final do assistente e o histórico atualizado em JSON.
     """
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 

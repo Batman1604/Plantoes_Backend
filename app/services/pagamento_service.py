@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 class PagamentoService:
     @staticmethod
     def _ajustar_ano_mes(ano: int, mes: int, deslocamento_meses: int) -> tuple[int, int]:
+        """Calcula ano e mês resultantes após deslocamento de meses."""
         indice_mes = (ano * 12 + (mes - 1)) + deslocamento_meses
         novo_ano = indice_mes // 12
         novo_mes = (indice_mes % 12) + 1
@@ -12,16 +13,19 @@ class PagamentoService:
 
     @staticmethod
     def _data_com_dia_do_mes(ano: int, mes: int, dia: int) -> date:
+        """Retorna a data do dia solicitado no mês especificado, ajustando para o último dia válido."""
         ultimo_dia = monthrange(ano, mes)[1]
         return date(ano, mes, min(dia, ultimo_dia))
 
     @staticmethod
     def _dia_do_ciclo_no_mes(ano: int, mes: int, dia_referencia: int) -> int:
+        """Calcula o dia do ciclo de pagamento dentro do mês, respeitando o último dia do mês."""
         ultimo_dia = monthrange(ano, mes)[1]
         return min(dia_referencia, ultimo_dia)
 
     @staticmethod
     def calcular_data_dia_util_do_mes(ano: int, mes: int, indice_dia_util: int) -> date:
+        """Retorna o N-ésimo dia útil de um mês, ou o último dia útil se não houver dias suficientes."""
         if indice_dia_util < 1:
             raise ValueError("O índice do dia útil deve ser maior ou igual a 1")
 
@@ -50,6 +54,7 @@ class PagamentoService:
         data_final_ciclo: date,
         util_corrido: bool = True,
     ) -> date:
+        """Calcula a data de pagamento do plantão com base no ciclo de fechamento do local."""
         dia_inicio = data_inicio_ciclo.day
         dia_final = data_final_ciclo.day
         ciclo_cruza_mes = dia_inicio > dia_final
@@ -116,6 +121,7 @@ class PagamentoService:
 
     @staticmethod
     def calcular_data_pagamento_por_dia_mes(data_plantao: date, dia_pagamento: int, util_corrido: bool = True) -> date:
+        """Calcula a data de pagamento no mês seguinte ao plantão, ajustando para dia útil quando necessário."""
         if dia_pagamento < 1:
             raise ValueError("O dia de pagamento deve ser maior ou igual a 1")
 
@@ -134,6 +140,7 @@ class PagamentoService:
 
 
 def ajustar_fim_intervalo(inicio: datetime, fim: datetime) -> datetime:
+    """Garante que o horário de fim seja posterior ao início, ajustando para o dia seguinte quando necessário."""
     if fim <= inicio:
         return fim + timedelta(days=1)
     return fim

@@ -1,6 +1,8 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Configurações da aplicação lidas de variáveis de ambiente ou do arquivo .env.
+# Use esta classe para centralizar valores que mudam entre ambientes (desenvolvimento, testes e produção).
 class Settings(BaseSettings):
     app_name: str = "Plantões Backend"
     environment: str = "development"
@@ -24,4 +26,5 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
+# Instância única das configurações usadas em toda a aplicação.
 settings = Settings()

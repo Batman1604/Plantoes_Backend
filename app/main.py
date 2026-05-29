@@ -34,6 +34,8 @@ if "DeusAbutre" in settings.database_url:
 Base.metadata.create_all(bind=engine)
 
 
+# Funções de migração leve para criar colunas, índices e constraints conforme necessário
+# em diferentes dialects de banco de dados.
 def ensure_foreign_keys() -> None:
     if engine.dialect.name != "postgresql":
         return
@@ -554,6 +556,7 @@ _notificacao_thread: threading.Thread | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Context manager que inicializa o worker de notificações quando o app sobe."""
     global _notificacao_thread
     _notificacao_thread = threading.Thread(target=notificacao_worker, daemon=True, name="notificacao-worker")
     _notificacao_thread.start()
@@ -631,6 +634,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 
 def notificacao_worker() -> None:
+    """Loop contínuo que processa notificações e limpa tokens revogados expirados."""
     cleanup_counter = 0
     while True:
         try:
@@ -655,6 +659,7 @@ def notificacao_worker() -> None:
 
 @app.get("/health", tags=["health"])
 def health_check():
+    """Endpoint de saúde que verifica se o aplicativo e o worker de notificações estão ativos."""
     worker_alive = _notificacao_thread is not None and _notificacao_thread.is_alive()
     if not worker_alive:
         logger.error("Worker de notificações não está em execução")

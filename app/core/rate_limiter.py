@@ -11,6 +11,7 @@ _lock = Lock()
 
 
 def _check(key: str, max_requests: int, window_seconds: int) -> bool:
+    """Verifica e atualiza o contador de requisições para a chave fornecida."""
     now = time.monotonic()
     with _lock:
         ts = _buckets[key]
@@ -26,6 +27,7 @@ def _check(key: str, max_requests: int, window_seconds: int) -> bool:
 
 
 def rate_limit(max_requests: int = 10, window_seconds: int = 60):
+    """Cria dependência FastAPI que limita chamadas por IP e rota em produção."""
     def dependency(request: Request) -> None:
         if settings.environment != "production":
             return

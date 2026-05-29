@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def _enviar_email(*, para: str, assunto: str, corpo: str) -> bool:
+    """Função interna para enviar email usando SMTP configurado nas variáveis de ambiente."""
     if not settings.smtp_username or not settings.smtp_password:
         logger.warning("Email não enviado (SMTP não configurado): %s -> %s", assunto, para)
         return False
@@ -30,6 +31,7 @@ def _enviar_email(*, para: str, assunto: str, corpo: str) -> bool:
 class EmailService:
     @staticmethod
     def enviar_verificacao(email: str, token: str) -> bool:
+        """Envia email de verificação de conta para o usuário."""
         corpo = (
             "Olá!\n\n"
             "Para verificar seu email no Plantões App, use o token abaixo:\n\n"
@@ -45,6 +47,7 @@ class EmailService:
 
     @staticmethod
     def enviar_codigo_whatsapp(email: str, codigo: str) -> bool:
+        """Envia o código de autenticação para acesso via WhatsApp."""
         corpo = (
             "Olá!\n\n"
             "Seu código de verificação para acesso via WhatsApp ao Plantões App é:\n\n"
@@ -60,6 +63,7 @@ class EmailService:
 
     @staticmethod
     def enviar_reset_senha(email: str, token: str) -> bool:
+        """Envia token de redefinição de senha por email."""
         corpo = (
             "Olá!\n\n"
             "Recebemos uma solicitação de redefinição de senha para sua conta.\n\n"

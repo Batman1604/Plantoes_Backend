@@ -9,6 +9,7 @@ from app.models import Plantao
 class FinanceiroService:
     @staticmethod
     def calcular_total_mensal(db: Session, usuario_id: int, mes: int, ano: int) -> dict:
+        """Calcula o total e a quantidade de plantões de um mês específico."""
         stmt = select(
             func.coalesce(func.sum(Plantao.valor), 0).label("total"),
             func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),
@@ -26,6 +27,7 @@ class FinanceiroService:
 
     @staticmethod
     def calcular_total_anual(db: Session, usuario_id: int, ano: int) -> dict:
+        """Calcula o total e a quantidade de plantões no ano especificado."""
         stmt = select(
             func.coalesce(func.sum(Plantao.valor), 0).label("total"),
             func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),
@@ -42,6 +44,7 @@ class FinanceiroService:
 
     @staticmethod
     def calcular_total_mensal_por_local(db: Session, usuario_id: int, local_id: int, mes: int, ano: int) -> dict:
+        """Calcula o total e a quantidade de plantões para um local específico em um mês."""
         stmt = select(
             func.coalesce(func.sum(Plantao.valor), 0).label("total"),
             func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),

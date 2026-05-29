@@ -1,12 +1,16 @@
 from datetime import UTC, date, datetime, time
 
 from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time
+
+# Definição dos modelos de domínio persistidos no banco de dados.
+# Cada classe corresponde a uma tabela e usa SQLAlchemy ORM para mapeamento.
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
 
 class User(Base):
+    """Representa um usuário cadastrado no sistema."""
     __tablename__ = "usuarios"
     __table_args__ = (
         CheckConstraint("plano IN ('free', 'premium')", name="ck_usuarios_plano"),
@@ -27,6 +31,7 @@ class User(Base):
 
 
 class Local(Base):
+    """Representa um local/hospital onde plantões podem ser agendados."""
     __tablename__ = "locais"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

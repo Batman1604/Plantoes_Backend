@@ -10,6 +10,7 @@ DataT = TypeVar("DataT")
 
 
 def validar_formato_data(value: date | datetime | str | None):
+    """Valida que a data fornecida está no formato de data sem horário ou timezone."""
     if isinstance(value, datetime):
         raise ValueError("Envie datas no formato YYYY-MM-DD, sem horário/fuso.")
 
@@ -152,6 +153,7 @@ _RECORRENCIA_MAP = {
 
 
 def _normalizar_recorrencia(value: str | None) -> str | None:
+    """Normaliza valores de recorrência para os rótulos internos aceitos pelo sistema."""
     if value is None:
         return None
     mapped = _RECORRENCIA_MAP.get(value.lower())

@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 class FeedbackService:
     @staticmethod
     def enviar_feedback(usuario: User, mensagem: str) -> None:
+        """Envia o feedback do usuário para o email configurado da equipe de desenvolvimento."""
         if not settings.smtp_username or not settings.smtp_password:
             raise RuntimeError("Configuração SMTP ausente. Defina SMTP_USERNAME e SMTP_PASSWORD.")
 

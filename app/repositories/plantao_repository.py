@@ -11,6 +11,7 @@ from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, U
 class UserRepository:
     @staticmethod
     def create(db: Session, payload: UserCreate) -> User:
+        """Cria um novo usuário e armazena a senha com hash seguro."""
         user_data = payload.model_dump(exclude={"senha"})
         user = User(**user_data, senha_hash=hash_password(payload.senha))
         db.add(user)
@@ -20,6 +21,7 @@ class UserRepository:
 
     @staticmethod
     def authenticate(db: Session, payload: UserLogin) -> User | None:
+        """Autentica usuário por email e senha, retornando o objeto de usuário quando válido."""
         user = db.scalar(select(User).where(func.lower(User.email) == payload.email.lower()))
         if user is None or not user.senha_hash:
             return None
@@ -78,6 +80,7 @@ class UserRepository:
 class LocalRepository:
     @staticmethod
     def create(db: Session, payload: LocalCreate) -> Local:
+        """Cria um local/hospital no banco de dados para um usuário."""
         local = Local(**payload.model_dump())
         db.add(local)
         db.commit()
@@ -136,6 +139,7 @@ class PlantaoRepository:
         fim: datetime,
         excluir_id: int | None = None,
     ) -> Plantao | None:
+        """Verifica se há plantão conflitante no mesmo intervalo de tempo."""
         data_min = inicio.date() - timedelta(days=1)
         data_max = fim.date() + timedelta(days=1)
         stmt = select(Plantao).where(
@@ -184,6 +188,7 @@ class PlantaoRepository:
 
     @staticmethod
     def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:
+        """Retorna todos os plantões pertencentes a um usuário, excluindo transferidos."""
         stmt = (
             select(Plantao)
             .where(Plantao.usuario_id == usuario_id, Plantao.transferido.is_(False))

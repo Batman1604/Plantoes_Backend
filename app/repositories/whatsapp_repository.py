@@ -9,10 +9,12 @@ from app.models import WhatsappSessao
 class WhatsappRepository:
     @staticmethod
     def get_by_telefone(db: Session, telefone: str) -> WhatsappSessao | None:
+        """Recupera uma sessão de WhatsApp existente associada ao telefone."""
         return db.scalar(select(WhatsappSessao).where(WhatsappSessao.telefone == telefone))
 
     @staticmethod
     def criar(db: Session, telefone: str) -> WhatsappSessao:
+        """Cria uma nova sessão de WhatsApp para um usuário que ainda não conversou com o bot."""
         sessao = WhatsappSessao(telefone=telefone)
         db.add(sessao)
         db.commit()

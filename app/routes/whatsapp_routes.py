@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["whatsapp"])
 
+# Mensagens de sistema usadas na conversa do WhatsApp para guiar a autenticação e interação.
 MSG_BOAS_VINDAS = (
     "Olá! Bem-vindo ao assistente do Plantões App. 👋\n\n"
     "Para começar, envie o *e-mail* da sua conta cadastrada no aplicativo."
@@ -57,6 +58,7 @@ MSG_APENAS_TEXTO = (
 
 
 def _gerar_codigo() -> str:
+    """Gera um código de 6 dígitos para autenticação via WhatsApp."""
     return str(random.randint(100000, 999999))
 
 
@@ -84,6 +86,7 @@ def _extrair_mensagem(payload: dict) -> tuple[str, str] | None:
 
 
 def _responder(telefone: str, mensagem: str) -> None:
+    """Envio seguro de resposta para o usuário via WhatsApp. Falhas são apenas logadas."""
     try:
         SmsService.enviar(telefone, mensagem, canal="whatsapp")
     except Exception:

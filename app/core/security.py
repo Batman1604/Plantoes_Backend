@@ -12,12 +12,14 @@ _ITERATIONS = 100_000
 
 
 def hash_password(password: str) -> str:
+    """Gera hash seguro para senha usando PBKDF2-HMAC-SHA256 e salt aleatório."""
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), _ITERATIONS)
     return f"{_ITERATIONS}${salt}${digest.hex()}"
 
 
 def verify_password(password: str, password_hash: str) -> bool:
+    """Verifica se a senha fornecida corresponde ao hash armazenado."""
     try:
         iterations_str, salt, expected_hash = password_hash.split("$", 2)
         iterations = int(iterations_str)
@@ -29,6 +31,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def create_purpose_token(email: str, purpose: str, expire_minutes: int) -> str:
+    """Gera token JWT usado para propósitos específicos como verificação de email ou reset de senha."""
     expires_at = datetime.now(UTC) + timedelta(minutes=expire_minutes)
     payload = {
         "sub": email,
@@ -40,6 +43,7 @@ def create_purpose_token(email: str, purpose: str, expire_minutes: int) -> str:
 
 
 def decode_purpose_token(token: str, purpose: str) -> str | None:
+    """Valida um token de propósito e retorna o email se o propósito for compatível."""
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
         if payload.get("purpose") != purpose:
@@ -51,6 +55,7 @@ def decode_purpose_token(token: str, purpose: str) -> str | None:
 
 
 def create_access_token(user_id: int) -> str:
+    """Gera token de acesso JWT que identifica o usuário e vence após tempo configurado."""
     expires_at = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
     payload = {
         "sub": str(user_id),
@@ -61,6 +66,7 @@ def create_access_token(user_id: int) -> str:
 
 
 def decode_access_token(token: str) -> dict[str, str | int | datetime] | None:
+    """Decodifica um token de acesso JWT e retorna os dados do usuário se válido."""
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
         subject = payload.get("sub")

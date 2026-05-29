@@ -29,6 +29,7 @@ class SmsService:
 
     @staticmethod
     def _enviar_sms(telefone: str, mensagem: str) -> bool:
+        """Stub de envio de SMS atual que apenas registra a mensagem no log."""
         # TODO: substituir pelo envio real via Twilio quando as credenciais estiverem configuradas.
         # Exemplo de integração:
         #   from app.core.config import settings

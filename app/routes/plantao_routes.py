@@ -72,6 +72,7 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
 ):
+    """Dependência que valida o JWT e retorna o usuário autenticado."""
     if credentials is None:
         raise unauthorized_exception()
 
@@ -99,6 +100,7 @@ def get_current_user(
     description="Cria um novo usuário para acessar o sistema.",
 )
 def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
+    """Endpoint para registrar um novo usuário e enviar email de verificação."""
     try:
         user = UserRepository.create(db, payload)
         logger.info("Usuário criado: %s", user.email)
@@ -122,6 +124,7 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(
     description="Autentica o usuário e retorna um token de acesso JWT.",
 )
 def autenticar_usuario(payload: UserLogin, db: Session = Depends(get_db), _=Depends(rate_limit(10, 60))):
+    """Endpoint de login que retorna um JWT válido para o usuário."""
     user = UserRepository.authenticate(db, payload)
     if user is None:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
@@ -332,6 +335,7 @@ def registrar_device_token(
     description="Envia um feedback do usuário autenticado por e-mail para a equipe de desenvolvimento.",
 )
 def enviar_feedback(payload: FeedbackCreate, current_user=Depends(get_current_user)):
+    """Endpoint que envia feedback do usuário autenticado por email para o time."""
     try:
         FeedbackService.enviar_feedback(current_user, payload.mensagem)
     except RuntimeError as exc:
@@ -1029,6 +1033,7 @@ def transferir_plantao(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    """Endpoint para transferir um plantão para outro usuário ou telefone via SMS."""
     plantao = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
     if plantao is None:
         raise HTTPException(status_code=404, detail="Plantão não encontrado")
