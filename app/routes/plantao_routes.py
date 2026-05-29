@@ -578,6 +578,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
                 horario_fim=fim_dt.time(),
                 recorrencia=recorrencia,
                 sobreaviso=payload.sobreaviso,
+                descricao=payload.descricao,
                 notificacao_ativa=payload.notificacao_ativa,
                 notificacao_antecedencia_minutos=payload.notificacao_antecedencia_minutos,
                 executado=False,

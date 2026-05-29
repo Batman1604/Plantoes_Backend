@@ -69,6 +69,7 @@ class Plantao(Base):
     pagamento_recebido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sobreaviso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     transferido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     local: Mapped[Local] = relationship(back_populates="plantoes")
     transferencia: Mapped["Transferencia | None"] = relationship(

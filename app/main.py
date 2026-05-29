@@ -378,6 +378,8 @@ def ensure_indexes() -> None:
                     "CASE WHEN horario_fim < horario_inicio THEN date(data_inicio, '+1 day') "
                     "ELSE data_inicio END"
                 ))
+            if "descricao" not in col_names:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN descricao TEXT"))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_locais_usuario_id ON locais (usuario_id)"
             ))
@@ -420,6 +422,9 @@ def ensure_indexes() -> None:
             ))
             connection.execute(text(
                 "ALTER TABLE plantoes ALTER COLUMN data_fim SET NOT NULL"
+            ))
+            connection.execute(text(
+                "ALTER TABLE plantoes ADD COLUMN IF NOT EXISTS descricao TEXT"
             ))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_locais_usuario_id ON locais (usuario_id)"

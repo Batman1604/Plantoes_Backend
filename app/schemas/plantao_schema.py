@@ -228,6 +228,7 @@ class PlantaoBase(BaseModel):
         description="Recorrência opcional do plantão. Aceita português ou inglês (weekly, biweekly, single)."
     )
     sobreaviso: bool = Field(default=False, example=False, description="Indica se o plantão é de sobreaviso.")
+    descricao: Optional[str] = Field(default=None, max_length=2000, description="Descrição ou anotações livres sobre o plantão.")
 
     @field_validator("recorrencia", mode="before")
     @classmethod
@@ -282,6 +283,7 @@ class PlantaoCreateWithUsuario(BaseModel):
     horario_fim: time
     recorrencia: Optional[str] = None
     sobreaviso: bool = False
+    descricao: Optional[str] = None
     notificacao_ativa: bool = True
     notificacao_antecedencia_minutos: int = 60
     executado: bool = False
@@ -296,6 +298,7 @@ class PlantaoUpdate(BaseModel):
     data_fim: datetime | None = None
     recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(default=None)
     sobreaviso: bool | None = None
+    descricao: Optional[str] = Field(default=None, max_length=2000)
     local_id: int | None = None
     notificacao_ativa: bool | None = None
     notificacao_antecedencia_minutos: int | None = Field(default=None, ge=0, le=2880)
@@ -333,6 +336,7 @@ class PlantaoResponse(BaseModel):
     pagamento_plantao: Optional[date] = None
     pagamento_recebido: bool
     transferido: bool = False
+    descricao: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -359,6 +363,7 @@ class PlantaoResponse(BaseModel):
                 "pagamento_plantao": obj.pagamento_plantao,
                 "pagamento_recebido": obj.pagamento_recebido,
                 "transferido": obj.transferido,
+                "descricao": obj.descricao,
             }
         return obj
 
