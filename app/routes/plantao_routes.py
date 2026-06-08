@@ -1,4 +1,5 @@
 import logging
+import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -23,6 +24,7 @@ from app.repositories.plantao_repository import (
     TokenRevogadoRepository,
     TransferenciaRepository,
     UserRepository,
+    VerificacaoTelefoneRepository,
 )
 from app.schemas.plantao_schema import (
     APIResponse,
@@ -50,6 +52,7 @@ from app.schemas.plantao_schema import (
     UserCreate,
     UserLogin,
     UserResponse,
+    VerificarTelefoneRequest,
 )
 from app.services.email_service import EmailService
 from app.services.feedback_service import FeedbackService
@@ -114,7 +117,21 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(
     except Exception:
         logger.warning("Falha ao enviar email de verificação para %s", user.email)
 
+    if user.telefone:
+        _disparar_verificacao_telefone(db, user.id, user.telefone)
+
     return APIResponse(success=True, message="Usuário criado com sucesso.", data=UserResponse.model_validate(user))
+
+
+def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) -> None:
+    try:
+        codigo = f"{secrets.randbelow(1_000_000):06d}"
+        expira_em = datetime.now(UTC) + timedelta(minutes=15)
+        VerificacaoTelefoneRepository.upsert(db, usuario_id, codigo, expira_em)
+        SmsService.enviar_codigo_verificacao(telefone, codigo)
+        logger.info("Código de verificação enviado para %s", telefone)
+    except Exception:
+        logger.warning("Falha ao enviar código de verificação para %s", telefone)
 
 
 @router.post(
@@ -232,6 +249,55 @@ def reenviar_verificacao(current_user=Depends(get_current_user)):
     except Exception:
         logger.warning("Falha ao reenviar verificação para %s", current_user.email)
     return APIResponse(success=True, message="Email de verificação enviado.", data=None)
+
+
+@router.post(
+    "/auth/verificar-telefone",
+    response_model=APIResponse[None],
+    summary="Verificar número de telefone",
+    description="Confirma o código de 6 dígitos recebido via WhatsApp e marca o telefone como verificado.",
+)
+def verificar_telefone(
+    payload: VerificarTelefoneRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if current_user.telefone_verificado:
+        raise HTTPException(status_code=400, detail="Telefone já verificado.")
+    if not current_user.telefone:
+        raise HTTPException(status_code=400, detail="Nenhum telefone cadastrado nesta conta.")
+
+    verificacao = VerificacaoTelefoneRepository.get_valido(db, current_user.id, payload.codigo)
+    if verificacao is None:
+        raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
+
+    current_user.telefone_verificado = True
+    db.add(current_user)
+    VerificacaoTelefoneRepository.delete_by_user(db, current_user.id)
+    db.commit()
+
+    logger.info("Telefone verificado para usuário %s", current_user.email)
+    return APIResponse(success=True, message="Telefone verificado com sucesso.", data=None)
+
+
+@router.post(
+    "/auth/reenviar-verificacao-telefone",
+    response_model=APIResponse[None],
+    summary="Reenviar código de verificação de telefone",
+    description="Gera e envia um novo código de 6 dígitos via WhatsApp para o telefone cadastrado.",
+)
+def reenviar_verificacao_telefone(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    _=Depends(rate_limit(3, 60)),
+):
+    if current_user.telefone_verificado:
+        raise HTTPException(status_code=400, detail="Telefone já verificado.")
+    if not current_user.telefone:
+        raise HTTPException(status_code=400, detail="Nenhum telefone cadastrado nesta conta.")
+
+    _disparar_verificacao_telefone(db, current_user.id, current_user.telefone)
+    return APIResponse(success=True, message="Código reenviado para o seu WhatsApp.", data=None)
 
 
 @router.post(

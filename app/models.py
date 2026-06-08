@@ -25,6 +25,7 @@ class User(Base):
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     pagamento_realizado: Mapped[date | None] = mapped_column(Date, nullable=True)
     email_verificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    telefone_verificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     device_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     locais: Mapped[list["Local"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
@@ -142,3 +143,14 @@ class WhatsappSessao(Base):
     atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     usuario: Mapped["User | None"] = relationship(foreign_keys=[usuario_id])
+
+
+class VerificacaoTelefone(Base):
+    __tablename__ = "verificacoes_telefone"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    codigo: Mapped[str] = mapped_column(String(6), nullable=False)
+    expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])

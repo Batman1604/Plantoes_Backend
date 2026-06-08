@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
-from app.models import Local, Plantao, TokenRevogado, Transferencia, User
+from app.models import Local, Plantao, TokenRevogado, Transferencia, User, VerificacaoTelefone
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
 
 
@@ -346,6 +346,38 @@ class TransferenciaRepository:
         if transferencia:
             transferencia.sms_enviado = True
             db.commit()
+
+
+class VerificacaoTelefoneRepository:
+    @staticmethod
+    def upsert(db: Session, usuario_id: int, codigo: str, expira_em: datetime) -> VerificacaoTelefone:
+        existente = db.scalar(select(VerificacaoTelefone).where(VerificacaoTelefone.usuario_id == usuario_id))
+        if existente:
+            existente.codigo = codigo
+            existente.expira_em = expira_em
+            db.commit()
+            db.refresh(existente)
+            return existente
+        verificacao = VerificacaoTelefone(usuario_id=usuario_id, codigo=codigo, expira_em=expira_em)
+        db.add(verificacao)
+        db.commit()
+        db.refresh(verificacao)
+        return verificacao
+
+    @staticmethod
+    def get_valido(db: Session, usuario_id: int, codigo: str) -> VerificacaoTelefone | None:
+        return db.scalar(
+            select(VerificacaoTelefone).where(
+                VerificacaoTelefone.usuario_id == usuario_id,
+                VerificacaoTelefone.codigo == codigo,
+                VerificacaoTelefone.expira_em > datetime.now(UTC),
+            )
+        )
+
+    @staticmethod
+    def delete_by_user(db: Session, usuario_id: int) -> None:
+        db.execute(delete(VerificacaoTelefone).where(VerificacaoTelefone.usuario_id == usuario_id))
+        db.commit()
 
 
 class TokenRevogadoRepository:

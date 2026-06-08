@@ -48,6 +48,7 @@ class UserResponse(UserBase):
     criado_em: datetime
     pagamento_realizado: Optional[date] = None
     email_verificado: bool = False
+    telefone_verificado: bool = False
 
     class Config:
         from_attributes = True
@@ -63,6 +64,10 @@ class AuthResponse(BaseModel):
 class AuthStatusResponse(BaseModel):
     autenticado: bool
     usuario: Optional[UserResponse] = None
+
+
+class VerificarTelefoneRequest(BaseModel):
+    codigo: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido via WhatsApp.")
 
 
 class SenhaResetRequest(BaseModel):

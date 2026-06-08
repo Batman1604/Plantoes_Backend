@@ -43,6 +43,18 @@ class SmsService:
         return True
 
     @staticmethod
+    def enviar_codigo_verificacao(telefone: str, codigo: str) -> bool:
+        mensagem = (
+            f"Seu código de verificação do app Plantões é: *{codigo}*\n"
+            f"Válido por 15 minutos. Não compartilhe com ninguém."
+        )
+        enviado = SmsService._enviar_whatsapp(telefone, mensagem)
+        if not enviado:
+            logger.warning("[VERIFICACAO] WhatsApp indisponível, tentando SMS para %s", telefone)
+            enviado = SmsService._enviar_sms(telefone, mensagem)
+        return enviado
+
+    @staticmethod
     def _enviar_whatsapp(telefone: str, mensagem: str) -> bool:
         from app.core.config import settings
         import httpx

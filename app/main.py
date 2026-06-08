@@ -556,6 +556,60 @@ def ensure_transferido_column() -> None:
 
 ensure_transferido_column()
 
+
+def ensure_telefone_verificado_e_verificacoes_table() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
+            col_names = {c[1] for c in cols}
+            if "telefone_verificado" not in col_names:
+                connection.execute(
+                    text("ALTER TABLE usuarios ADD COLUMN telefone_verificado BOOLEAN NOT NULL DEFAULT 0")
+                )
+            table_exists = connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='verificacoes_telefone'")
+            ).fetchone()
+            if not table_exists:
+                connection.execute(text(
+                    "CREATE TABLE verificacoes_telefone ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "usuario_id INTEGER NOT NULL UNIQUE REFERENCES usuarios(id) ON DELETE CASCADE, "
+                    "codigo VARCHAR(6) NOT NULL, "
+                    "expira_em DATETIME NOT NULL"
+                    ")"
+                ))
+                connection.execute(text("CREATE INDEX ix_verificacoes_telefone_usuario_id ON verificacoes_telefone (usuario_id)"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            tv_exists = connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'usuarios' AND column_name = 'telefone_verificado'"
+                )
+            ).scalar() is not None
+            if not tv_exists:
+                connection.execute(
+                    text("ALTER TABLE usuarios ADD COLUMN telefone_verificado BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+            connection.execute(text(
+                "CREATE TABLE IF NOT EXISTS verificacoes_telefone ("
+                "id SERIAL PRIMARY KEY, "
+                "usuario_id INTEGER NOT NULL UNIQUE REFERENCES usuarios(id) ON DELETE CASCADE, "
+                "codigo VARCHAR(6) NOT NULL, "
+                "expira_em TIMESTAMPTZ NOT NULL"
+                ")"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_verificacoes_telefone_usuario_id ON verificacoes_telefone (usuario_id)"
+            ))
+        return
+
+
+ensure_telefone_verificado_e_verificacoes_table()
+
+
 _notificacao_thread: threading.Thread | None = None
 
 
