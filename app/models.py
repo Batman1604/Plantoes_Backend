@@ -67,7 +67,6 @@ class Plantao(Base):
     notificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     executado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     pagamento_plantao: Mapped[date | None] = mapped_column(Date, nullable=True)
-    pagamento_recebido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sobreaviso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     transferido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     descricao: Mapped[str | None] = mapped_column(Text, nullable=True)

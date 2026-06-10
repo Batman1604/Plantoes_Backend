@@ -41,7 +41,6 @@ from app.schemas.plantao_schema import (
     PlantaoCreate,
     PlantaoCreateWithUsuario,
     PlantaoExecutadoUpdate,
-    PlantaoPagamentoRecebidoUpdate,
     PlantaoResponse,
     PlantaoUpdate,
     SenhaResetConfirmar,
@@ -649,7 +648,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
                 notificacao_antecedencia_minutos=payload.notificacao_antecedencia_minutos,
                 executado=False,
                 pagamento_plantao=pagamento_plantao,
-                pagamento_recebido=False,
+
                 transferido=False,
             ),
         )
@@ -736,10 +735,10 @@ def atualizar_plantao(
     nova_data_pagamento = _calcular_data_pagamento(inicio_dt.date())
     dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
     if nova_data_pagamento != plantao_atual.pagamento_plantao:
-        dados_atualizacao["pagamento_recebido"] = False
+
 
     if local.dia_pagamento is None:
-        dados_atualizacao["pagamento_recebido"] = False
+
 
     conflito_relevante = any(k in dados_atualizacao for k in ("data_inicio", "data_fim"))
     if conflito_relevante and aplicar_em == "somente_este":
@@ -807,7 +806,6 @@ def atualizar_plantao(
                 if forcar_recorrencia is not None:
                     plantao_item.recorrencia = forcar_recorrencia
                 plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.data_inicio)
-                plantao_item.pagamento_recebido = False
 
             if "recorrencia" in dados_atualizacao and nova_recorrencia is None:
                 for p in plantoes_futuros[1:]:
@@ -864,7 +862,7 @@ def atualizar_plantao(
                             notificado=False,
                             executado=False,
                             pagamento_plantao=_calcular_data_pagamento(proxima_data),
-                            pagamento_recebido=False,
+            
                         )
                         db.add(novo_plantao)
                     proxima_data += timedelta(days=7)
@@ -908,7 +906,7 @@ def atualizar_plantao(
                         notificado=False,
                         executado=False,
                         pagamento_plantao=_calcular_data_pagamento(proxima_data),
-                        pagamento_recebido=False,
+        
                     )
                     db.add(novo_plantao)
                     proxima_data += timedelta(days=intervalo_dias)
@@ -960,47 +958,6 @@ def atualizar_executado_plantao(
     return APIResponse(
         success=True,
         message="Status executado atualizado com sucesso.",
-        data=PlantaoResponse.model_validate(plantao),
-    )
-
-
-@router.patch(
-    "/plantoes/{plantao_id}/pagamento-recebido",
-    response_model=APIResponse[PlantaoResponse],
-    summary="Atualizar status de recebimento do pagamento",
-    description="Atualiza se o pagamento do dia do plantão foi recebido.",
-)
-def atualizar_pagamento_recebido_plantao(
-    plantao_id: int,
-    payload: PlantaoPagamentoRecebidoUpdate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    plantao = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
-    if plantao is None:
-        raise HTTPException(status_code=404, detail="Plantão não encontrado")
-
-    if plantao.pagamento_plantao is None:
-        raise HTTPException(status_code=400, detail="Este plantão não possui dia de pagamento vinculado")
-
-    plantao = PlantaoRepository.update_by_user(
-        db,
-        plantao_id,
-        current_user.id,
-        pagamento_recebido=payload.pagamento_recebido,
-    )
-    if plantao is None:
-        raise HTTPException(status_code=404, detail="Plantão não encontrado")
-
-    logger.info(
-        "Status de pagamento recebido do plantão %s atualizado para %s por %s",
-        plantao_id,
-        payload.pagamento_recebido,
-        current_user.email,
-    )
-    return APIResponse(
-        success=True,
-        message="Status de pagamento recebido atualizado com sucesso.",
         data=PlantaoResponse.model_validate(plantao),
     )
 
@@ -1248,7 +1205,6 @@ def aceitar_transferencia(
             notificacao_antecedencia_minutos=60,
             executado=False,
             pagamento_plantao=pagamento_plantao,
-            pagamento_recebido=False,
             transferido=False,
         )
         db.add(novo_plantao)

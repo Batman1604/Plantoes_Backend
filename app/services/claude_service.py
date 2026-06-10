@@ -220,7 +220,6 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
         notificacao_ativa=True,
         notificacao_antecedencia_minutos=60,
         executado=False,
-        pagamento_recebido=False,
         pagamento_plantao=pagamento_plantao,
         transferido=False,
     )

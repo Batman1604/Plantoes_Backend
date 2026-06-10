@@ -128,11 +128,6 @@ def ensure_novas_colunas() -> None:
             plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
             if not any(column[1] == "pagamento_plantao" for column in plantoes_cols):
                 connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
-            plantoes_cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
-            if not any(column[1] == "pagamento_recebido" for column in plantoes_cols):
-                connection.execute(
-                    text("ALTER TABLE plantoes ADD COLUMN pagamento_recebido BOOLEAN NOT NULL DEFAULT 0")
-                )
         return
 
     if engine.dialect.name == "postgresql":
@@ -172,16 +167,6 @@ def ensure_novas_colunas() -> None:
             if not pagamento_exists:
                 connection.execute(text("ALTER TABLE plantoes ADD COLUMN pagamento_plantao DATE NULL"))
 
-            pagamento_recebido_exists = connection.execute(
-                text(
-                    "SELECT 1 FROM information_schema.columns "
-                    "WHERE table_name = 'plantoes' AND column_name = 'pagamento_recebido'"
-                )
-            ).scalar() is not None
-            if not pagamento_recebido_exists:
-                connection.execute(
-                    text("ALTER TABLE plantoes ADD COLUMN pagamento_recebido BOOLEAN NOT NULL DEFAULT FALSE")
-                )
         return
 
 

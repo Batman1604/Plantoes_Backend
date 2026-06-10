@@ -293,7 +293,6 @@ class PlantaoCreateWithUsuario(BaseModel):
     notificacao_antecedencia_minutos: int = 60
     executado: bool = False
     pagamento_plantao: Optional[date] = None
-    pagamento_recebido: bool = False
     transferido: bool = False
 
 
@@ -339,7 +338,6 @@ class PlantaoResponse(BaseModel):
     notificado: bool
     executado: bool
     pagamento_plantao: Optional[date] = None
-    pagamento_recebido: bool
     transferido: bool = False
     descricao: Optional[str] = None
 
@@ -366,7 +364,6 @@ class PlantaoResponse(BaseModel):
                 "notificado": obj.notificado,
                 "executado": obj.executado,
                 "pagamento_plantao": obj.pagamento_plantao,
-                "pagamento_recebido": obj.pagamento_recebido,
                 "transferido": obj.transferido,
                 "descricao": obj.descricao,
             }
@@ -407,14 +404,6 @@ class PlantaoExecutadoUpdate(BaseModel):
     executado: bool = Field(
         ...,
         description="Indica se o plantão foi executado.",
-        example=True,
-    )
-
-
-class PlantaoPagamentoRecebidoUpdate(BaseModel):
-    pagamento_recebido: bool = Field(
-        ...,
-        description="Indica se o pagamento desse dia foi recebido.",
         example=True,
     )
 
