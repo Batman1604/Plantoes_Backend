@@ -734,11 +734,6 @@ def atualizar_plantao(
 
     nova_data_pagamento = _calcular_data_pagamento(inicio_dt.date())
     dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
-    if nova_data_pagamento != plantao_atual.pagamento_plantao:
-
-
-    if local.dia_pagamento is None:
-
 
     conflito_relevante = any(k in dados_atualizacao for k in ("data_inicio", "data_fim"))
     if conflito_relevante and aplicar_em == "somente_este":
