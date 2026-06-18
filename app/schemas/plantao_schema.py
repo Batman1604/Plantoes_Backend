@@ -331,6 +331,8 @@ class PlantaoResponse(BaseModel):
     valor: Decimal
     data_inicio: datetime
     data_fim: datetime
+    horario_inicio: time
+    horario_fim: time
     recorrencia: Optional[str] = None
     sobreaviso: bool
     notificacao_ativa: bool
@@ -357,6 +359,8 @@ class PlantaoResponse(BaseModel):
                 "valor": obj.valor,
                 "data_inicio": inicio_dt,
                 "data_fim": fim_dt,
+                "horario_inicio": obj.horario_inicio,
+                "horario_fim": obj.horario_fim,
                 "recorrencia": obj.recorrencia,
                 "sobreaviso": obj.sobreaviso,
                 "notificacao_ativa": obj.notificacao_ativa,
