@@ -97,13 +97,12 @@ def get_current_user(
 
 @router.post(
     "/usuarios",
-    response_model=APIResponse[UserResponse],
+    response_model=APIResponse[AuthResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Criar usuário",
-    description="Cria um novo usuário para acessar o sistema.",
+    description="Cria um novo usuário e retorna o token de acesso para uso imediato.",
 )
 def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
-    """Endpoint para registrar um novo usuário e enviar email de verificação."""
     try:
         user = UserRepository.create(db, payload)
         logger.info("Usuário criado: %s", user.email)
@@ -120,13 +119,18 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(
     if user.telefone:
         _disparar_verificacao_telefone(db, user.id, user.telefone)
 
-    return APIResponse(success=True, message="Usuário criado com sucesso.", data=UserResponse.model_validate(user))
+    access_token = create_access_token(user.id)
+    return APIResponse(
+        success=True,
+        message="Usuário criado com sucesso.",
+        data=AuthResponse(autenticado=True, access_token=access_token, usuario=UserResponse.model_validate(user)),
+    )
 
 
 def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) -> None:
     try:
         codigo = f"{secrets.randbelow(1_000_000):06d}"
-        expira_em = datetime.now(UTC) + timedelta(minutes=15)
+        expira_em = datetime.now(UTC) + timedelta(minutes=2)
         VerificacaoTelefoneRepository.upsert(db, usuario_id, codigo, expira_em)
         SmsService.enviar_codigo_verificacao(telefone, codigo)
         logger.info("Código de verificação enviado para %s", telefone)
