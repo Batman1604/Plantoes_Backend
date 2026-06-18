@@ -155,3 +155,16 @@ class VerificacaoTelefone(Base):
     expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
+
+
+class Troca(Base):
+    __tablename__ = "trocas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
+    nome_transferir: Mapped[str] = mapped_column(String(120), nullable=False)
+    nome_receber: Mapped[str] = mapped_column(String(120), nullable=False)
+    telefone_transferir: Mapped[str] = mapped_column(String(30), nullable=False)
+    telefone_receber: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    local: Mapped[Local] = relationship()

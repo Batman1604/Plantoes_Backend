@@ -605,6 +605,49 @@ def ensure_telefone_verificado_e_verificacoes_table() -> None:
 ensure_telefone_verificado_e_verificacoes_table()
 
 
+def ensure_trocas_table() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            table_exists = connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='trocas'")
+            ).fetchone()
+            if not table_exists:
+                connection.execute(text(
+                    "CREATE TABLE trocas ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE, "
+                    "nome_transferir VARCHAR(120) NOT NULL, "
+                    "nome_receber VARCHAR(120) NOT NULL, "
+                    "telefone_transferir VARCHAR(30) NOT NULL, "
+                    "telefone_receber VARCHAR(30) NOT NULL"
+                    ")"
+                ))
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_trocas_local_id ON trocas (local_id)"
+                ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS trocas (
+                    id SERIAL PRIMARY KEY,
+                    local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE,
+                    nome_transferir VARCHAR(120) NOT NULL,
+                    nome_receber VARCHAR(120) NOT NULL,
+                    telefone_transferir VARCHAR(30) NOT NULL,
+                    telefone_receber VARCHAR(30) NOT NULL
+                )
+            """))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_trocas_local_id ON trocas (local_id)"
+            ))
+        return
+
+
+ensure_trocas_table()
+
+
 _notificacao_thread: threading.Thread | None = None
 
 
