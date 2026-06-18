@@ -29,6 +29,7 @@ from app.repositories.plantao_repository import (
 from app.schemas.plantao_schema import (
     APIResponse,
     AlterarSenhaRequest,
+    PerfilUpdate,
     AuthResponse,
     AuthStatusResponse,
     DeviceTokenUpdate,
@@ -391,6 +392,24 @@ def registrar_device_token(
 ):
     UserRepository.update_device_token(db, current_user.id, payload.device_token)
     return APIResponse(success=True, message="Device token registrado.", data=None)
+
+
+@router.patch(
+    "/usuarios/perfil",
+    response_model=APIResponse[UserResponse],
+    summary="Atualizar perfil do usuário",
+    description="Atualiza avatar e/ou profissão do usuário autenticado.",
+)
+def atualizar_perfil(
+    payload: PerfilUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dados = payload.model_dump(exclude_unset=True)
+    if not dados:
+        return APIResponse(success=True, message="Nenhum campo para atualizar.", data=UserResponse.model_validate(current_user))
+    user = UserRepository.update_perfil(db, current_user.id, **dados)
+    return APIResponse(success=True, message="Perfil atualizado com sucesso.", data=UserResponse.model_validate(user))
 
 
 @router.post(

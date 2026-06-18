@@ -26,6 +26,8 @@ class User(Base):
     pagamento_realizado: Mapped[date | None] = mapped_column(Date, nullable=True)
     email_verificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     telefone_verificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    avatar: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    profissao: Mapped[str | None] = mapped_column(String(255), nullable=True)
     device_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     locais: Mapped[list["Local"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")

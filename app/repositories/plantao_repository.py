@@ -76,6 +76,18 @@ class UserRepository:
             user.device_token = device_token
             db.commit()
 
+    @staticmethod
+    def update_perfil(db: Session, user_id: int, **kwargs) -> User | None:
+        user = db.scalar(select(User).where(User.id == user_id))
+        if user is None:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(user, key):
+                setattr(user, key, value)
+        db.commit()
+        db.refresh(user)
+        return user
+
 
 class LocalRepository:
     @staticmethod

@@ -49,9 +49,16 @@ class UserResponse(UserBase):
     pagamento_realizado: Optional[date] = None
     email_verificado: bool = False
     telefone_verificado: bool = False
+    avatar: Optional[str] = None
+    profissao: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class PerfilUpdate(BaseModel):
+    avatar: Optional[str] = Field(default=None, max_length=255)
+    profissao: Optional[str] = Field(default=None, max_length=255)
 
 
 class AuthResponse(BaseModel):
@@ -329,8 +336,8 @@ class PlantaoResponse(BaseModel):
     usuario_id: int
     local_id: int
     valor: Decimal
-    data_inicio: datetime
-    data_fim: datetime
+    data_inicio: date
+    data_fim: date
     horario_inicio: time
     horario_fim: time
     recorrencia: Optional[str] = None
@@ -350,15 +357,13 @@ class PlantaoResponse(BaseModel):
     @classmethod
     def from_orm_model(cls, obj):
         if hasattr(obj, "horario_inicio"):
-            inicio_dt = datetime.combine(obj.data_inicio, obj.horario_inicio)
-            fim_dt = datetime.combine(obj.data_fim, obj.horario_fim)
             return {
                 "id": obj.id,
                 "usuario_id": obj.usuario_id,
                 "local_id": obj.local_id,
                 "valor": obj.valor,
-                "data_inicio": inicio_dt,
-                "data_fim": fim_dt,
+                "data_inicio": obj.data_inicio,
+                "data_fim": obj.data_fim,
                 "horario_inicio": obj.horario_inicio,
                 "horario_fim": obj.horario_fim,
                 "recorrencia": obj.recorrencia,

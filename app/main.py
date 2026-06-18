@@ -448,6 +448,10 @@ def ensure_email_verificado_e_device_token_columns() -> None:
                 connection.execute(
                     text("ALTER TABLE usuarios ADD COLUMN device_token VARCHAR(255) NULL")
                 )
+            if "avatar" not in col_names:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN avatar VARCHAR(255) NULL"))
+            if "profissao" not in col_names:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN profissao VARCHAR(255) NULL"))
         return
 
     if engine.dialect.name == "postgresql":
@@ -472,6 +476,12 @@ def ensure_email_verificado_e_device_token_columns() -> None:
                 connection.execute(
                     text("ALTER TABLE usuarios ADD COLUMN device_token VARCHAR(255) NULL")
                 )
+            connection.execute(text(
+                "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS avatar VARCHAR(255) NULL"
+            ))
+            connection.execute(text(
+                "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS profissao VARCHAR(255) NULL"
+            ))
         return
 
 
