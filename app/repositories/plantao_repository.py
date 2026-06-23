@@ -294,6 +294,7 @@ class TransferenciaRepository:
         destinatario_nome: str,
         destinatario_telefone: str,
         status: str = "enviado",
+        canal: str = "whatsapp",
         sms_enviado: bool = False,
     ) -> Transferencia:
         transferencia = Transferencia(
@@ -303,6 +304,7 @@ class TransferenciaRepository:
             destinatario_nome=destinatario_nome,
             destinatario_telefone=destinatario_telefone,
             status=status,
+            canal=canal,
             sms_enviado=sms_enviado,
         )
         db.add(transferencia)

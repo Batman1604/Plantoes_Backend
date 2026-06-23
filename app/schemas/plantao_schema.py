@@ -387,6 +387,7 @@ class TransferenciaCreate(BaseModel):
         example="+5511999999999",
         description="Telefone do destinatário com DDI e DDD. Ex: +5511999999999",
     )
+    canal: Literal["sms", "whatsapp"] = Field(default="whatsapp", description="Canal de envio da notificação.")
 
 
 class TransferenciaAceitar(BaseModel):

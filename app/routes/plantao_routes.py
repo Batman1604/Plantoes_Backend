@@ -463,7 +463,7 @@ def upgrade_usuario(db: Session = Depends(get_db), current_user=Depends(get_curr
 
 @router.post(
     "/locais",
-    response_model=LocalResponse,
+    response_model=APIResponse[LocalResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Criar local",
     description="Cria um local para o usuário autenticado. O usuário não pode ser informado no corpo da requisição.",
@@ -473,12 +473,12 @@ def criar_local(payload: LocalCreate, db: Session = Depends(get_db), current_use
     local_data["usuario_id"] = current_user.id
     local = LocalRepository.create(db, LocalCreateWithUsuario.model_validate(local_data))
     logger.info("Local criado para usuário %s: %s", current_user.email, local.nome_local)
-    return local
+    return APIResponse(success=True, message="Local criado com sucesso.", data=LocalResponse.model_validate(local))
 
 
 @router.get(
     "/locais",
-    response_model=list[LocalResponse],
+    response_model=APIResponse[list[LocalResponse]],
     summary="Listar locais",
     description="Retorna os locais cadastrados pelo usuário autenticado.",
 )
@@ -486,7 +486,8 @@ def listar_locais(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return LocalRepository.list_by_user(db, current_user.id)
+    locais = LocalRepository.list_by_user(db, current_user.id)
+    return APIResponse(success=True, message="Locais listados com sucesso.", data=[LocalResponse.model_validate(l) for l in locais])
 
 
 @router.patch(
@@ -688,7 +689,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
 
 @router.get(
     "/plantoes",
-    response_model=list[PlantaoResponse],
+    response_model=APIResponse[list[PlantaoResponse]],
     summary="Listar plantões",
     description="Retorna os plantões do usuário autenticado.",
 )
@@ -696,7 +697,12 @@ def listar_plantoes(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    return PlantaoRepository.list_by_user(db, current_user.id)
+    plantoes = PlantaoRepository.list_by_user(db, current_user.id)
+    return APIResponse(
+        success=True,
+        message="Plantões listados com sucesso.",
+        data=[PlantaoResponse.model_validate(p) for p in plantoes],
+    )
 
 
 @router.patch(
@@ -1115,13 +1121,14 @@ def transferir_plantao(
             destinatario_nome=payload.destinatario_nome,
             destinatario_telefone=payload.destinatario_telefone,
             status=status_inicial,
+            canal=payload.canal,
         )
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail="Erro ao registrar transferência") from exc
 
     # Envio de mensagem não reverte a transferência em caso de falha
-    sms_enviado = SmsService.enviar(payload.destinatario_telefone, mensagem)
+    sms_enviado = SmsService.enviar(payload.destinatario_telefone, mensagem, canal=payload.canal)
     if sms_enviado:
         TransferenciaRepository.marcar_sms_enviado(db, transferencia.id)
         transferencia.sms_enviado = True
