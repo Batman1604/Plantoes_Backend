@@ -648,6 +648,43 @@ def ensure_trocas_table() -> None:
 ensure_trocas_table()
 
 
+def ensure_bonificacoes_table() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            table_exists = connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='bonificacoes'")
+            ).fetchone()
+            if not table_exists:
+                connection.execute(text(
+                    "CREATE TABLE bonificacoes ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE, "
+                    "valor NUMERIC(10,2) NOT NULL"
+                    ")"
+                ))
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_bonificacoes_local_id ON bonificacoes (local_id)"
+                ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS bonificacoes (
+                    id SERIAL PRIMARY KEY,
+                    local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE,
+                    valor NUMERIC(10,2) NOT NULL
+                )
+            """))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_bonificacoes_local_id ON bonificacoes (local_id)"
+            ))
+        return
+
+
+ensure_bonificacoes_table()
+
+
 _notificacao_thread: threading.Thread | None = None
 
 

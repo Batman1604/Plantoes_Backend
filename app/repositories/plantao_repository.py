@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
-from app.models import Local, Plantao, TokenRevogado, Transferencia, User, VerificacaoTelefone
+from app.models import Bonificacao, Local, Plantao, TokenRevogado, Transferencia, Troca, User, VerificacaoTelefone
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
 
 
@@ -392,6 +392,60 @@ class VerificacaoTelefoneRepository:
     def delete_by_user(db: Session, usuario_id: int) -> None:
         db.execute(delete(VerificacaoTelefone).where(VerificacaoTelefone.usuario_id == usuario_id))
         db.commit()
+
+
+class BonificacaoRepository:
+    @staticmethod
+    def create(db: Session, payload) -> Bonificacao:
+        bonificacao = Bonificacao(**payload.model_dump())
+        db.add(bonificacao)
+        db.commit()
+        db.refresh(bonificacao)
+        return bonificacao
+
+    @staticmethod
+    def list_by_local(db: Session, local_id: int) -> list[Bonificacao]:
+        return list(db.scalars(select(Bonificacao).where(Bonificacao.local_id == local_id)).all())
+
+    @staticmethod
+    def get_by_id(db: Session, bonificacao_id: int) -> Bonificacao | None:
+        return db.scalar(select(Bonificacao).where(Bonificacao.id == bonificacao_id))
+
+    @staticmethod
+    def delete(db: Session, bonificacao_id: int) -> bool:
+        bonificacao = db.scalar(select(Bonificacao).where(Bonificacao.id == bonificacao_id))
+        if bonificacao is None:
+            return False
+        db.delete(bonificacao)
+        db.commit()
+        return True
+
+
+class TrocaRepository:
+    @staticmethod
+    def create(db: Session, payload) -> Troca:
+        troca = Troca(**payload.model_dump())
+        db.add(troca)
+        db.commit()
+        db.refresh(troca)
+        return troca
+
+    @staticmethod
+    def list_by_local(db: Session, local_id: int) -> list[Troca]:
+        return list(db.scalars(select(Troca).where(Troca.local_id == local_id)).all())
+
+    @staticmethod
+    def get_by_id(db: Session, troca_id: int) -> Troca | None:
+        return db.scalar(select(Troca).where(Troca.id == troca_id))
+
+    @staticmethod
+    def delete(db: Session, troca_id: int) -> bool:
+        troca = db.scalar(select(Troca).where(Troca.id == troca_id))
+        if troca is None:
+            return False
+        db.delete(troca)
+        db.commit()
+        return True
 
 
 class TokenRevogadoRepository:

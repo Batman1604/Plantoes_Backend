@@ -410,6 +410,40 @@ class TransferenciaResponse(BaseModel):
         from_attributes = True
 
 
+class BonificacaoCreate(BaseModel):
+    local_id: int = Field(description="ID do local ao qual a bonificação pertence.")
+    valor: Decimal = Field(gt=0, description="Valor da bonificação em reais.")
+
+
+class BonificacaoResponse(BaseModel):
+    id: int
+    local_id: int
+    valor: Decimal
+
+    class Config:
+        from_attributes = True
+
+
+class TrocaCreate(BaseModel):
+    local_id: int = Field(description="ID do local vinculado à troca.")
+    nome_transferir: str = Field(min_length=2, max_length=120)
+    nome_receber: str = Field(min_length=2, max_length=120)
+    telefone_transferir: str = Field(min_length=8, max_length=30)
+    telefone_receber: str = Field(min_length=8, max_length=30)
+
+
+class TrocaResponse(BaseModel):
+    id: int
+    local_id: int
+    nome_transferir: str
+    nome_receber: str
+    telefone_transferir: str
+    telefone_receber: str
+
+    class Config:
+        from_attributes = True
+
+
 class PlantaoExecutadoUpdate(BaseModel):
     executado: bool = Field(
         ...,

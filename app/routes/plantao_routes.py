@@ -22,7 +22,9 @@ from app.repositories.plantao_repository import (
     LocalRepository,
     PlantaoRepository,
     TokenRevogadoRepository,
+    BonificacaoRepository,
     TransferenciaRepository,
+    TrocaRepository,
     UserRepository,
     VerificacaoTelefoneRepository,
 )
@@ -49,6 +51,10 @@ from app.schemas.plantao_schema import (
     TransferenciaAceitar,
     TransferenciaCreate,
     TransferenciaResponse,
+    BonificacaoCreate,
+    BonificacaoResponse,
+    TrocaCreate,
+    TrocaResponse,
     UserCreate,
     UserLogin,
     UserResponse,
@@ -414,6 +420,122 @@ def atualizar_perfil(
         return APIResponse(success=True, message="Nenhum campo para atualizar.", data=UserResponse.model_validate(current_user))
     user = UserRepository.update_perfil(db, current_user.id, **dados)
     return APIResponse(success=True, message="Perfil atualizado com sucesso.", data=UserResponse.model_validate(user))
+
+
+@router.post(
+    "/bonificacoes",
+    response_model=APIResponse[BonificacaoResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Criar bonificação",
+    description="Registra uma bonificação vinculada a um local do usuário autenticado.",
+)
+def criar_bonificacao(
+    payload: BonificacaoCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    local = LocalRepository.get_by_id(db, payload.local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado.")
+    bonificacao = BonificacaoRepository.create(db, payload)
+    return APIResponse(success=True, message="Bonificação criada com sucesso.", data=BonificacaoResponse.model_validate(bonificacao))
+
+
+@router.get(
+    "/bonificacoes",
+    response_model=APIResponse[list[BonificacaoResponse]],
+    summary="Listar bonificações por local",
+    description="Retorna as bonificações registradas para um local do usuário autenticado.",
+)
+def listar_bonificacoes(
+    local_id: int = Query(..., description="ID do local."),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    local = LocalRepository.get_by_id(db, local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado.")
+    bonificacoes = BonificacaoRepository.list_by_local(db, local_id)
+    return APIResponse(success=True, message="Bonificações listadas com sucesso.", data=[BonificacaoResponse.model_validate(b) for b in bonificacoes])
+
+
+@router.delete(
+    "/bonificacoes/{bonificacao_id}",
+    response_model=APIResponse[None],
+    summary="Deletar bonificação",
+    description="Remove uma bonificação registrada.",
+)
+def deletar_bonificacao(
+    bonificacao_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    bonificacao = BonificacaoRepository.get_by_id(db, bonificacao_id)
+    if bonificacao is None:
+        raise HTTPException(status_code=404, detail="Bonificação não encontrada.")
+    local = LocalRepository.get_by_id(db, bonificacao.local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Sem permissão para deletar esta bonificação.")
+    BonificacaoRepository.delete(db, bonificacao_id)
+    return APIResponse(success=True, message="Bonificação deletada com sucesso.", data=None)
+
+
+@router.post(
+    "/trocas",
+    response_model=APIResponse[TrocaResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Registrar troca",
+    description="Registra uma troca de plantão entre dois profissionais vinculada a um local.",
+)
+def criar_troca(
+    payload: TrocaCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    local = LocalRepository.get_by_id(db, payload.local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado.")
+    troca = TrocaRepository.create(db, payload)
+    return APIResponse(success=True, message="Troca registrada com sucesso.", data=TrocaResponse.model_validate(troca))
+
+
+@router.get(
+    "/trocas",
+    response_model=APIResponse[list[TrocaResponse]],
+    summary="Listar trocas por local",
+    description="Retorna as trocas registradas para um local do usuário autenticado.",
+)
+def listar_trocas(
+    local_id: int = Query(..., description="ID do local."),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    local = LocalRepository.get_by_id(db, local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado.")
+    trocas = TrocaRepository.list_by_local(db, local_id)
+    return APIResponse(success=True, message="Trocas listadas com sucesso.", data=[TrocaResponse.model_validate(t) for t in trocas])
+
+
+@router.delete(
+    "/trocas/{troca_id}",
+    response_model=APIResponse[None],
+    summary="Deletar troca",
+    description="Remove uma troca registrada.",
+)
+def deletar_troca(
+    troca_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    troca = TrocaRepository.get_by_id(db, troca_id)
+    if troca is None:
+        raise HTTPException(status_code=404, detail="Troca não encontrada.")
+    local = LocalRepository.get_by_id(db, troca.local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Sem permissão para deletar esta troca.")
+    TrocaRepository.delete(db, troca_id)
+    return APIResponse(success=True, message="Troca deletada com sucesso.", data=None)
 
 
 @router.post(
