@@ -427,16 +427,16 @@ def atualizar_perfil(
     response_model=APIResponse[BonificacaoResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Criar bonificação",
-    description="Registra uma bonificação vinculada a um local do usuário autenticado.",
+    description="Registra uma bonificação vinculada a um plantão do usuário autenticado.",
 )
 def criar_bonificacao(
     payload: BonificacaoCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    local = LocalRepository.get_by_id(db, payload.local_id)
-    if local is None or local.usuario_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Local não encontrado.")
+    plantao = PlantaoRepository.get_by_id_and_user(db, payload.plantao_id, current_user.id)
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado.")
     bonificacao = BonificacaoRepository.create(db, payload)
     return APIResponse(success=True, message="Bonificação criada com sucesso.", data=BonificacaoResponse.model_validate(bonificacao))
 
@@ -444,18 +444,18 @@ def criar_bonificacao(
 @router.get(
     "/bonificacoes",
     response_model=APIResponse[list[BonificacaoResponse]],
-    summary="Listar bonificações por local",
-    description="Retorna as bonificações registradas para um local do usuário autenticado.",
+    summary="Listar bonificações por plantão",
+    description="Retorna as bonificações registradas para um plantão do usuário autenticado.",
 )
 def listar_bonificacoes(
-    local_id: int = Query(..., description="ID do local."),
+    plantao_id: int = Query(..., description="ID do plantão."),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    local = LocalRepository.get_by_id(db, local_id)
-    if local is None or local.usuario_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Local não encontrado.")
-    bonificacoes = BonificacaoRepository.list_by_local(db, local_id)
+    plantao = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão não encontrado.")
+    bonificacoes = BonificacaoRepository.list_by_plantao(db, plantao_id)
     return APIResponse(success=True, message="Bonificações listadas com sucesso.", data=[BonificacaoResponse.model_validate(b) for b in bonificacoes])
 
 
@@ -473,8 +473,8 @@ def deletar_bonificacao(
     bonificacao = BonificacaoRepository.get_by_id(db, bonificacao_id)
     if bonificacao is None:
         raise HTTPException(status_code=404, detail="Bonificação não encontrada.")
-    local = LocalRepository.get_by_id(db, bonificacao.local_id)
-    if local is None or local.usuario_id != current_user.id:
+    plantao = PlantaoRepository.get_by_id_and_user(db, bonificacao.plantao_id, current_user.id)
+    if plantao is None:
         raise HTTPException(status_code=403, detail="Sem permissão para deletar esta bonificação.")
     BonificacaoRepository.delete(db, bonificacao_id)
     return APIResponse(success=True, message="Bonificação deletada com sucesso.", data=None)

@@ -651,33 +651,42 @@ ensure_trocas_table()
 def ensure_bonificacoes_table() -> None:
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
-            table_exists = connection.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='bonificacoes'")
-            ).fetchone()
-            if not table_exists:
+            cols = connection.execute(text("PRAGMA table_info(bonificacoes)")).all()
+            col_names = {c[1] for c in cols}
+            # Recriar se existir com schema antigo (local_id)
+            if "local_id" in col_names:
+                connection.execute(text("DROP TABLE bonificacoes"))
+                col_names = set()
+            if not col_names:
                 connection.execute(text(
                     "CREATE TABLE bonificacoes ("
                     "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                    "local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE, "
+                    "plantao_id INTEGER NOT NULL REFERENCES plantoes(id) ON DELETE CASCADE, "
                     "valor NUMERIC(10,2) NOT NULL"
                     ")"
                 ))
                 connection.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_bonificacoes_local_id ON bonificacoes (local_id)"
+                    "CREATE INDEX IF NOT EXISTS ix_bonificacoes_plantao_id ON bonificacoes (plantao_id)"
                 ))
         return
 
     if engine.dialect.name == "postgresql":
         with engine.begin() as connection:
+            old_col = connection.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'bonificacoes' AND column_name = 'local_id'"
+            )).scalar()
+            if old_col:
+                connection.execute(text("DROP TABLE bonificacoes"))
             connection.execute(text("""
                 CREATE TABLE IF NOT EXISTS bonificacoes (
                     id SERIAL PRIMARY KEY,
-                    local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE,
+                    plantao_id INTEGER NOT NULL REFERENCES plantoes(id) ON DELETE CASCADE,
                     valor NUMERIC(10,2) NOT NULL
                 )
             """))
             connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_bonificacoes_local_id ON bonificacoes (local_id)"
+                "CREATE INDEX IF NOT EXISTS ix_bonificacoes_plantao_id ON bonificacoes (plantao_id)"
             ))
         return
 

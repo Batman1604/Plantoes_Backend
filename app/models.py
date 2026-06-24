@@ -161,10 +161,10 @@ class Bonificacao(Base):
     __tablename__ = "bonificacoes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
+    plantao_id: Mapped[int] = mapped_column(ForeignKey("plantoes.id", ondelete="CASCADE"), nullable=False, index=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
 
-    local: Mapped[Local] = relationship()
+    plantao: Mapped["Plantao"] = relationship()
 
 
 class Troca(Base):

@@ -404,8 +404,8 @@ class BonificacaoRepository:
         return bonificacao
 
     @staticmethod
-    def list_by_local(db: Session, local_id: int) -> list[Bonificacao]:
-        return list(db.scalars(select(Bonificacao).where(Bonificacao.local_id == local_id)).all())
+    def list_by_plantao(db: Session, plantao_id: int) -> list[Bonificacao]:
+        return list(db.scalars(select(Bonificacao).where(Bonificacao.plantao_id == plantao_id)).all())
 
     @staticmethod
     def get_by_id(db: Session, bonificacao_id: int) -> Bonificacao | None:

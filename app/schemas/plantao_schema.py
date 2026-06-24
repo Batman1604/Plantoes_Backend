@@ -411,13 +411,13 @@ class TransferenciaResponse(BaseModel):
 
 
 class BonificacaoCreate(BaseModel):
-    local_id: int = Field(description="ID do local ao qual a bonificação pertence.")
+    plantao_id: int = Field(description="ID do plantão ao qual a bonificação pertence.")
     valor: Decimal = Field(gt=0, description="Valor da bonificação em reais.")
 
 
 class BonificacaoResponse(BaseModel):
     id: int
-    local_id: int
+    plantao_id: int
     valor: Decimal
 
     class Config:
