@@ -23,6 +23,7 @@ from app.repositories.plantao_repository import (
     PlantaoRepository,
     TokenRevogadoRepository,
     BonificacaoRepository,
+    PagamentoStatusRepository,
     TransferenciaRepository,
     TrocaRepository,
     UserRepository,
@@ -31,12 +32,15 @@ from app.repositories.plantao_repository import (
 from app.schemas.plantao_schema import (
     APIResponse,
     AlterarSenhaRequest,
+    PagamentoStatusResponse,
+    PagamentoStatusUpdate,
     PerfilUpdate,
     AuthResponse,
     AuthStatusResponse,
     DeviceTokenUpdate,
     FeedbackCreate,
     FinanceiroData,
+    GraficoMensalItem,
     LocalCreate,
     LocalCreateWithUsuario,
     LocalResponse,
@@ -46,6 +50,7 @@ from app.schemas.plantao_schema import (
     PlantaoExecutadoUpdate,
     PlantaoResponse,
     PlantaoUpdate,
+    ResetPasswordRequest,
     SenhaResetConfirmar,
     SenhaResetRequest,
     TransferenciaAceitar,
@@ -109,12 +114,21 @@ def get_current_user(
     description="Cria um novo usuário e retorna o token de acesso para uso imediato.",
 )
 def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
+    conflitos = []
+    if UserRepository.get_by_email(db, payload.email):
+        conflitos.append("Email")
+    if payload.telefone and UserRepository.get_by_phone(db, payload.telefone):
+        conflitos.append("Telefone")
+    if conflitos:
+        detalhe = " e ".join(conflitos) + (" já cadastrado" if len(conflitos) == 1 else " já cadastrados")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detalhe)
+
     try:
         user = UserRepository.create(db, payload)
         logger.info("Usuário criado: %s", user.email)
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=400, detail="Email já cadastrado") from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email já cadastrado") from exc
 
     try:
         token_verificacao = create_purpose_token(user.email, "email_verification", expire_minutes=24 * 60)
@@ -340,6 +354,40 @@ def redefinir_senha(payload: SenhaResetConfirmar, db: Session = Depends(get_db))
     if not user:
         raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
     UserRepository.update_senha(db, user.id, payload.nova_senha)
+    logger.info("Senha redefinida via token para %s", email)
+    return APIResponse(success=True, message="Senha redefinida com sucesso.", data=None)
+
+
+@router.post(
+    "/auth/forgot-password",
+    response_model=APIResponse[None],
+    summary="Solicitar redefinição de senha (EN)",
+    description="Envia um email com link para redefinição de senha. Sempre retorna 200 por segurança.",
+)
+def forgot_password(payload: SenhaResetRequest, db: Session = Depends(get_db), _=Depends(rate_limit(3, 60))):
+    user = UserRepository.get_by_email(db, payload.email)
+    if user:
+        try:
+            token = create_purpose_token(user.email, "password_reset", expire_minutes=60)
+            EmailService.enviar_reset_senha(user.email, token)
+        except Exception:
+            logger.warning("Falha ao enviar email de reset para %s", payload.email)
+    return APIResponse(success=True, message="Se o email existir, as instruções foram enviadas.", data=None)
+
+
+@router.post(
+    "/auth/reset-password",
+    response_model=APIResponse[None],
+    summary="Redefinir senha com token (EN)",
+)
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    email = decode_purpose_token(payload.token, "password_reset")
+    if not email:
+        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
+    user = UserRepository.get_by_email(db, email)
+    if not user:
+        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
+    UserRepository.update_senha(db, user.id, payload.newPassword)
     logger.info("Senha redefinida via token para %s", email)
     return APIResponse(success=True, message="Senha redefinida com sucesso.", data=None)
 
@@ -695,6 +743,46 @@ def deletar_local(
     )
 
 
+@router.patch(
+    "/locais/{local_id}/pagamento-status",
+    response_model=APIResponse[PagamentoStatusResponse],
+    summary="Atualizar status de pagamento por mês",
+    description="Marca ou desmarca o pagamento de um local como em atraso para o mês/ano informado. Sincroniza entre dispositivos.",
+)
+def atualizar_pagamento_status(
+    local_id: int,
+    payload: PagamentoStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    local = LocalRepository.get_by_id(db, local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado.")
+    status = PagamentoStatusRepository.upsert(db, local_id, payload.mes, payload.ano, payload.em_atraso)
+    return APIResponse(success=True, message="Status de pagamento atualizado.", data=PagamentoStatusResponse.model_validate(status))
+
+
+@router.get(
+    "/locais/{local_id}/pagamento-status",
+    response_model=APIResponse[PagamentoStatusResponse],
+    summary="Consultar status de pagamento por mês",
+    description="Retorna se o pagamento do local está em atraso para o mês/ano informado.",
+)
+def obter_pagamento_status(
+    local_id: int,
+    mes: int = Query(..., ge=1, le=12),
+    ano: int = Query(..., ge=2000),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    local = LocalRepository.get_by_id(db, local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Local não encontrado.")
+    status = PagamentoStatusRepository.get(db, local_id, mes, ano)
+    em_atraso = status.em_atraso if status else False
+    return APIResponse(success=True, message="Status de pagamento consultado.", data=PagamentoStatusResponse(em_atraso=em_atraso))
+
+
 @router.post(
     "/plantoes",
     response_model=APIResponse[PlantaoResponse],
@@ -766,8 +854,9 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
 
     # Criar plantão (acao_conflito == "manter" ou "ajustar" com ajuste realizado)
     recorrencia = payload.recorrencia if payload.recorrencia != "Unico" else None
-    pagamento_plantao = None
-    if local.dia_pagamento is not None:
+    if payload.pagamento_plantao is not None:
+        pagamento_plantao = payload.pagamento_plantao
+    elif local.dia_pagamento is not None:
         pagamento_plantao = PagamentoService.calcular_data_pagamento_plantao(
             data_plantao=payload.data_inicio.date(),
             indice_dia_pagamento=local.dia_pagamento,
@@ -775,6 +864,8 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
             data_final_ciclo=local.data_final,
             util_corrido=local.util_corrido,
         )
+    else:
+        pagamento_plantao = None
 
     try:
         plantao = PlantaoRepository.create(
@@ -782,7 +873,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
             PlantaoCreateWithUsuario(
                 usuario_id=current_user.id,
                 local_id=payload.local_id,
-                valor=payload.valor,
+                valor=payload.valor if payload.valor is not None else Decimal("0"),
                 data_inicio=inicio_dt.date(),
                 data_fim=fim_dt.date(),
                 horario_inicio=inicio_dt.time(),
@@ -883,7 +974,10 @@ def atualizar_plantao(
             )
         return None
 
-    nova_data_pagamento = _calcular_data_pagamento(inicio_dt.date())
+    if payload.pagamento_plantao is not None:
+        nova_data_pagamento = payload.pagamento_plantao
+    else:
+        nova_data_pagamento = _calcular_data_pagamento(inicio_dt.date())
     dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
 
     conflito_relevante = any(k in dados_atualizacao for k in ("data_inicio", "data_fim"))
@@ -1165,6 +1259,26 @@ def obter_total_financeiro_anual(
 
 
 @router.get(
+    "/financeiro/grafico-anual",
+    response_model=APIResponse[list[GraficoMensalItem]],
+    summary="Gráfico financeiro anual (12 meses)",
+    description="Retorna o total e quantidade de plantões mês a mês (jan-dez), incluindo meses futuros com agendamentos já criados.",
+)
+def obter_grafico_anual(
+    ano: int = Query(..., ge=1, description="Ano do relatório."),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    PlanoService.exigir_premium(current_user)
+    meses = FinanceiroService.calcular_grafico_anual(db, current_user.id, ano)
+    return APIResponse(
+        success=True,
+        message="Gráfico anual gerado com sucesso.",
+        data=[GraficoMensalItem.model_validate(m) for m in meses],
+    )
+
+
+@router.get(
     "/financeiro/mensal/local",
     response_model=APIResponse[FinanceiroData],
     summary="Resumo financeiro mensal por local",
@@ -1353,6 +1467,7 @@ def aceitar_transferencia(
             executado=False,
             pagamento_plantao=pagamento_plantao,
             transferido=False,
+            recebido_via_transferencia=True,
         )
         db.add(novo_plantao)
         TransferenciaRepository.atualizar_status(db, transferencia_id, "aceito")

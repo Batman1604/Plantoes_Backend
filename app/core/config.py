@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = "plantoes_whatsapp_verify"
+    reset_password_url: str = "https://app.plantoesapp.com.br/reset-password"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

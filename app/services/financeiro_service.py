@@ -16,6 +16,7 @@ class FinanceiroService:
         ).where(
             Plantao.usuario_id == usuario_id,
             Plantao.transferido.is_(False),
+            Plantao.recebido_via_transferencia.is_(False),
             extract("month", Plantao.data_inicio) == mes,
             extract("year", Plantao.data_inicio) == ano,
         )
@@ -34,6 +35,7 @@ class FinanceiroService:
         ).where(
             Plantao.usuario_id == usuario_id,
             Plantao.transferido.is_(False),
+            Plantao.recebido_via_transferencia.is_(False),
             extract("year", Plantao.data_inicio) == ano,
         )
         resultado = db.execute(stmt).one()
@@ -41,6 +43,31 @@ class FinanceiroService:
             "total": resultado.total if resultado.total is not None else Decimal("0"),
             "quantidade_plantoes": int(resultado.quantidade_plantoes),
         }
+
+    @staticmethod
+    def calcular_grafico_anual(db: Session, usuario_id: int, ano: int) -> list[dict]:
+        """Retorna o total e quantidade de plantões por mês (jan-dez) do ano especificado."""
+        stmt = select(
+            extract("month", Plantao.data_inicio).label("mes"),
+            func.coalesce(func.sum(Plantao.valor), 0).label("total"),
+            func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),
+        ).where(
+            Plantao.usuario_id == usuario_id,
+            Plantao.transferido.is_(False),
+            Plantao.recebido_via_transferencia.is_(False),
+            extract("year", Plantao.data_inicio) == ano,
+        ).group_by(extract("month", Plantao.data_inicio))
+
+        rows = {int(r.mes): r for r in db.execute(stmt).all()}
+
+        return [
+            {
+                "mes": mes,
+                "total": Decimal(str(rows[mes].total)) if mes in rows else Decimal("0"),
+                "quantidade_plantoes": int(rows[mes].quantidade_plantoes) if mes in rows else 0,
+            }
+            for mes in range(1, 13)
+        ]
 
     @staticmethod
     def calcular_total_mensal_por_local(db: Session, usuario_id: int, local_id: int, mes: int, ano: int) -> dict:
@@ -52,6 +79,7 @@ class FinanceiroService:
             Plantao.usuario_id == usuario_id,
             Plantao.local_id == local_id,
             Plantao.transferido.is_(False),
+            Plantao.recebido_via_transferencia.is_(False),
             extract("month", Plantao.data_inicio) == mes,
             extract("year", Plantao.data_inicio) == ano,
         )

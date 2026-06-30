@@ -86,6 +86,11 @@ class SenhaResetConfirmar(BaseModel):
     nova_senha: str = Field(min_length=8, max_length=128, example="NovaSenhaForte123")
 
 
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1)
+    newPassword: str = Field(min_length=8, max_length=128, example="NovaSenhaForte123")
+
+
 class AlterarSenhaRequest(BaseModel):
     senha_atual: str = Field(min_length=8, max_length=128)
     nova_senha: str = Field(min_length=8, max_length=128)
@@ -101,7 +106,7 @@ class FeedbackCreate(BaseModel):
 
 class LocalBase(BaseModel):
     nome_local: str = Field(min_length=2, max_length=120)
-    data_inicio: date
+    data_inicio: Optional[date] = Field(default=None, description="Data de abertura do ciclo. Calculada automaticamente se não informada.")
     data_final: date
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
     util_corrido: bool = Field(default=True, description="True = dia útil, False = dia corrido")
@@ -111,10 +116,20 @@ class LocalBase(BaseModel):
     @field_validator("data_inicio", "data_final", mode="before")
     @classmethod
     def validar_campos_data(cls, value):
+        if value is None:
+            return value
         return validar_formato_data(value)
 
     @model_validator(mode="after")
     def validar_intervalo_datas(self):
+        from calendar import monthrange
+        if self.data_inicio is None and self.data_final is not None:
+            # Calcula abertura como: mesmo dia do fechamento, no mês anterior + 1 dia
+            # Ex.: fechamento dia 5 → abertura dia 6 do mês anterior
+            month = self.data_final.month - 1 or 12
+            year = self.data_final.year if self.data_final.month > 1 else self.data_final.year - 1
+            day = min(self.data_final.day, monthrange(year, month)[1])
+            self.data_inicio = date(year, month, day) + timedelta(days=1)
         if self.data_inicio is not None and self.data_final is not None:
             if self.data_inicio > self.data_final:
                 raise ValueError("data_inicio deve ser menor ou igual a data_final")
@@ -221,10 +236,11 @@ def _combinar_data_horarios(values: dict) -> dict:
 
 
 class PlantaoBase(BaseModel):
-    valor: Decimal = Field(
-        gt=0,
+    valor: Optional[Decimal] = Field(
+        default=None,
+        ge=0,
         example="180.00",
-        description="Valor do plantão em reais. Deve ser maior que zero."
+        description="Valor do plantão em reais. Deixe em branco para definir depois.",
     )
     data_inicio: datetime = Field(
         example="2026-04-10T08:00:00",
@@ -250,6 +266,7 @@ class PlantaoBase(BaseModel):
 
 class PlantaoCreate(PlantaoBase):
     local_id: int = Field(example=1, description="ID do local ao qual o plantão pertence.")
+    pagamento_plantao: Optional[date] = Field(default=None, description="Data de pagamento manual. Se não informada, calculada automaticamente pelo local.")
     notificacao_ativa: bool = Field(default=True, example=True)
     notificacao_antecedencia_minutos: int = Field(
         default=60,
@@ -288,7 +305,7 @@ class PlantaoCreate(PlantaoBase):
 class PlantaoCreateWithUsuario(BaseModel):
     usuario_id: int
     local_id: int
-    valor: Decimal
+    valor: Decimal = Decimal("0")
     data_inicio: date
     data_fim: date
     horario_inicio: time
@@ -304,7 +321,7 @@ class PlantaoCreateWithUsuario(BaseModel):
 
 
 class PlantaoUpdate(BaseModel):
-    valor: Decimal | None = Field(default=None, gt=0)
+    valor: Decimal | None = Field(default=None, ge=0)
     data_inicio: datetime | None = None
     data_fim: datetime | None = None
     recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(default=None)
@@ -313,6 +330,7 @@ class PlantaoUpdate(BaseModel):
     local_id: int | None = None
     notificacao_ativa: bool | None = None
     notificacao_antecedencia_minutos: int | None = Field(default=None, ge=0, le=2880)
+    pagamento_plantao: Optional[date] = Field(default=None, description="Sobrescreve a data de pagamento calculada automaticamente.")
     aplicar_em: Literal["somente_este", "este_e_futuros"] = Field(
         default="somente_este",
         description="Define se a alteração será aplicada somente neste plantão ou no plantão selecionado e nos futuros recorrentes.",
@@ -335,7 +353,7 @@ class PlantaoResponse(BaseModel):
     id: int
     usuario_id: int
     local_id: int
-    valor: Decimal
+    valor: Decimal = Decimal("0")
     data_inicio: date
     data_fim: date
     horario_inicio: time
@@ -348,6 +366,7 @@ class PlantaoResponse(BaseModel):
     executado: bool
     pagamento_plantao: Optional[date] = None
     transferido: bool = False
+    recebido_via_transferencia: bool = False
     descricao: Optional[str] = None
 
     class Config:
@@ -374,6 +393,7 @@ class PlantaoResponse(BaseModel):
                 "executado": obj.executado,
                 "pagamento_plantao": obj.pagamento_plantao,
                 "transferido": obj.transferido,
+                "recebido_via_transferencia": getattr(obj, "recebido_via_transferencia", False),
                 "descricao": obj.descricao,
             }
         return obj
@@ -405,6 +425,19 @@ class TransferenciaResponse(BaseModel):
     canal: str
     sms_enviado: bool
     criado_em: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PagamentoStatusUpdate(BaseModel):
+    mes: int = Field(ge=1, le=12)
+    ano: int = Field(ge=2000)
+    em_atraso: bool
+
+
+class PagamentoStatusResponse(BaseModel):
+    em_atraso: bool
 
     class Config:
         from_attributes = True
@@ -459,3 +492,9 @@ class FinanceiroData(BaseModel):
 
 class FinanceiroResponse(APIResponse[FinanceiroData]):
     pass
+
+
+class GraficoMensalItem(BaseModel):
+    mes: int
+    total: Decimal
+    quantidade_plantoes: int

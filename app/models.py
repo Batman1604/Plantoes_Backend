@@ -71,6 +71,7 @@ class Plantao(Base):
     pagamento_plantao: Mapped[date | None] = mapped_column(Date, nullable=True)
     sobreaviso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     transferido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    recebido_via_transferencia: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     local: Mapped[Local] = relationship(back_populates="plantoes")
@@ -155,6 +156,21 @@ class VerificacaoTelefone(Base):
     expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
+
+
+class PagamentoStatus(Base):
+    __tablename__ = "pagamento_status"
+    __table_args__ = (
+        CheckConstraint("mes >= 1 AND mes <= 12", name="ck_pagamento_status_mes"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
+    mes: Mapped[int] = mapped_column(Integer, nullable=False)
+    ano: Mapped[int] = mapped_column(Integer, nullable=False)
+    em_atraso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    local: Mapped[Local] = relationship()
 
 
 class Bonificacao(Base):

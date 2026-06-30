@@ -532,8 +532,11 @@ def ensure_transferido_column() -> None:
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
             cols = connection.execute(text("PRAGMA table_info(plantoes)")).all()
-            if not any(c[1] == "transferido" for c in cols):
+            col_names = {c[1] for c in cols}
+            if "transferido" not in col_names:
                 connection.execute(text("ALTER TABLE plantoes ADD COLUMN transferido BOOLEAN NOT NULL DEFAULT 0"))
+            if "recebido_via_transferencia" not in col_names:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN recebido_via_transferencia BOOLEAN NOT NULL DEFAULT 0"))
         return
 
     if engine.dialect.name == "postgresql":
@@ -546,6 +549,9 @@ def ensure_transferido_column() -> None:
             ).scalar() is not None
             if not exists:
                 connection.execute(text("ALTER TABLE plantoes ADD COLUMN transferido BOOLEAN NOT NULL DEFAULT FALSE"))
+            connection.execute(text(
+                "ALTER TABLE plantoes ADD COLUMN IF NOT EXISTS recebido_via_transferencia BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
         return
 
 
@@ -692,6 +698,49 @@ def ensure_bonificacoes_table() -> None:
 
 
 ensure_bonificacoes_table()
+
+
+def ensure_pagamento_status_table() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            table_exists = connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='pagamento_status'")
+            ).fetchone()
+            if not table_exists:
+                connection.execute(text(
+                    "CREATE TABLE pagamento_status ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE, "
+                    "mes INTEGER NOT NULL CHECK(mes >= 1 AND mes <= 12), "
+                    "ano INTEGER NOT NULL, "
+                    "em_atraso BOOLEAN NOT NULL DEFAULT 0, "
+                    "UNIQUE(local_id, mes, ano)"
+                    ")"
+                ))
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_pagamento_status_local_id ON pagamento_status (local_id)"
+                ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS pagamento_status (
+                    id SERIAL PRIMARY KEY,
+                    local_id INTEGER NOT NULL REFERENCES locais(id) ON DELETE CASCADE,
+                    mes INTEGER NOT NULL CHECK(mes >= 1 AND mes <= 12),
+                    ano INTEGER NOT NULL,
+                    em_atraso BOOLEAN NOT NULL DEFAULT FALSE,
+                    UNIQUE(local_id, mes, ano)
+                )
+            """))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_pagamento_status_local_id ON pagamento_status (local_id)"
+            ))
+        return
+
+
+ensure_pagamento_status_table()
 
 
 _notificacao_thread: threading.Thread | None = None

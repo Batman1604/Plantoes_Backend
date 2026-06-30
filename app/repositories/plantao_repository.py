@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
-from app.models import Bonificacao, Local, Plantao, TokenRevogado, Transferencia, Troca, User, VerificacaoTelefone
+from app.models import Bonificacao, Local, PagamentoStatus, Plantao, TokenRevogado, Transferencia, Troca, User, VerificacaoTelefone
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
 
 
@@ -39,7 +39,7 @@ class UserRepository:
 
     @staticmethod
     def get_by_email(db: Session, email: str) -> User | None:
-        return db.scalar(select(User).where(func.lower(User.email) == email.lower()))
+        return db.scalar(select(User).where(User.email == email.lower()))
 
     @staticmethod
     def get_by_phone(db: Session, telefone: str) -> User | None:
@@ -392,6 +392,38 @@ class VerificacaoTelefoneRepository:
     def delete_by_user(db: Session, usuario_id: int) -> None:
         db.execute(delete(VerificacaoTelefone).where(VerificacaoTelefone.usuario_id == usuario_id))
         db.commit()
+
+
+class PagamentoStatusRepository:
+    @staticmethod
+    def upsert(db: Session, local_id: int, mes: int, ano: int, em_atraso: bool) -> PagamentoStatus:
+        existente = db.scalar(
+            select(PagamentoStatus).where(
+                PagamentoStatus.local_id == local_id,
+                PagamentoStatus.mes == mes,
+                PagamentoStatus.ano == ano,
+            )
+        )
+        if existente:
+            existente.em_atraso = em_atraso
+            db.commit()
+            db.refresh(existente)
+            return existente
+        novo = PagamentoStatus(local_id=local_id, mes=mes, ano=ano, em_atraso=em_atraso)
+        db.add(novo)
+        db.commit()
+        db.refresh(novo)
+        return novo
+
+    @staticmethod
+    def get(db: Session, local_id: int, mes: int, ano: int) -> PagamentoStatus | None:
+        return db.scalar(
+            select(PagamentoStatus).where(
+                PagamentoStatus.local_id == local_id,
+                PagamentoStatus.mes == mes,
+                PagamentoStatus.ano == ano,
+            )
+        )
 
 
 class BonificacaoRepository:

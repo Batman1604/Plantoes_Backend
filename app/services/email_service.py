@@ -63,12 +63,13 @@ class EmailService:
 
     @staticmethod
     def enviar_reset_senha(email: str, token: str) -> bool:
-        """Envia token de redefinição de senha por email."""
+        """Envia link de redefinição de senha por email."""
+        link = f"{settings.reset_password_url}?token={token}"
         corpo = (
             "Olá!\n\n"
             "Recebemos uma solicitação de redefinição de senha para sua conta.\n\n"
-            "Use o token abaixo para redefinir sua senha (válido por 1 hora):\n\n"
-            f"  {token}\n\n"
+            "Clique no link abaixo para redefinir sua senha (válido por 1 hora):\n\n"
+            f"  {link}\n\n"
             "Se você não solicitou a redefinição, ignore este email."
         )
         return _enviar_email(
