@@ -3,7 +3,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from app.core.rate_limiter import rate_limit
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -41,6 +41,7 @@ from app.schemas.plantao_schema import (
     FeedbackCreate,
     FinanceiroData,
     GraficoMensalItem,
+    UpgradeWebhookRequest,
     LocalCreate,
     LocalCreateWithUsuario,
     LocalResponse,
@@ -68,6 +69,7 @@ from app.schemas.plantao_schema import (
 from app.services.email_service import EmailService
 from app.services.feedback_service import FeedbackService
 from app.services.financeiro_service import FinanceiroService
+from app.core.config import settings
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 from app.services.plano_service import PlanoService
 from app.services.sms_service import SmsService
@@ -285,6 +287,7 @@ def verificar_telefone(
     payload: VerificarTelefoneRequest,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    _=Depends(rate_limit(5, 120)),
 ):
     if current_user.telefone_verificado:
         raise HTTPException(status_code=400, detail="Telefone já verificado.")
@@ -346,7 +349,7 @@ def esqueci_senha(payload: SenhaResetRequest, db: Session = Depends(get_db), _=D
     response_model=APIResponse[None],
     summary="Redefinir senha com token",
 )
-def redefinir_senha(payload: SenhaResetConfirmar, db: Session = Depends(get_db)):
+def redefinir_senha(payload: SenhaResetConfirmar, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
     email = decode_purpose_token(payload.token, "password_reset")
     if not email:
         raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
@@ -380,7 +383,7 @@ def forgot_password(payload: SenhaResetRequest, db: Session = Depends(get_db), _
     response_model=APIResponse[None],
     summary="Redefinir senha com token (EN)",
 )
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
     email = decode_purpose_token(payload.token, "password_reset")
     if not email:
         raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
@@ -614,20 +617,36 @@ def listar_usuarios(current_user=Depends(get_current_user)):
 @router.post(
     "/usuarios/upgrade",
     response_model=APIResponse[UserResponse],
-    summary="Upgrade para premium",
-    description="Atualiza o plano do usuário autenticado para premium.",
+    summary="Upgrade para premium (webhook de pagamento)",
+    description=(
+        "Endpoint chamado pelo gateway de pagamento após confirmação. "
+        "Requer o header X-Upgrade-Secret configurado em UPGRADE_WEBHOOK_SECRET no .env."
+    ),
 )
-def upgrade_usuario(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    atualizado = PlanoService.upgrade_para_premium(current_user)
-    db.add(current_user)
-    db.commit()
-    db.refresh(current_user)
+def upgrade_usuario(
+    payload: UpgradeWebhookRequest,
+    db: Session = Depends(get_db),
+    x_upgrade_secret: str = Header(default="", alias="X-Upgrade-Secret"),
+):
+    if not settings.upgrade_webhook_secret:
+        raise HTTPException(status_code=503, detail="Gateway de pagamento não configurado.")
+    if x_upgrade_secret != settings.upgrade_webhook_secret:
+        raise HTTPException(status_code=401, detail="Secret inválido.")
 
-    logger.info("Plano atualizado para %s: %s", current_user.plano, current_user.email)
+    user = UserRepository.get_by_id(db, payload.usuario_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+
+    atualizado = PlanoService.upgrade_para_premium(user)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    logger.info("Plano atualizado para premium: %s (id=%s)", user.email, user.id)
     return APIResponse(
         success=True,
         message="Usuário atualizado para premium" if atualizado else "Usuário já possui plano premium",
-        data=UserResponse.model_validate(current_user),
+        data=UserResponse.model_validate(user),
     )
 
 
@@ -1101,8 +1120,9 @@ def atualizar_plantao(
                             ),
                             notificado=False,
                             executado=False,
+                            transferido=False,
+                            recebido_via_transferencia=False,
                             pagamento_plantao=_calcular_data_pagamento(proxima_data),
-            
                         )
                         db.add(novo_plantao)
                     proxima_data += timedelta(days=7)
@@ -1145,8 +1165,9 @@ def atualizar_plantao(
                         ),
                         notificado=False,
                         executado=False,
+                        transferido=False,
+                        recebido_via_transferencia=False,
                         pagamento_plantao=_calcular_data_pagamento(proxima_data),
-        
                     )
                     db.add(novo_plantao)
                     proxima_data += timedelta(days=intervalo_dias)

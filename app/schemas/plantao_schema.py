@@ -498,3 +498,7 @@ class GraficoMensalItem(BaseModel):
     mes: int
     total: Decimal
     quantidade_plantoes: int
+
+
+class UpgradeWebhookRequest(BaseModel):
+    usuario_id: int
