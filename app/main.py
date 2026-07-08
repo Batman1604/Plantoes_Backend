@@ -2,11 +2,13 @@ import logging
 import threading
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -757,6 +759,9 @@ async def lifespan(app: FastAPI):
 
 _cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 
+_uploads_dir = Path("uploads/avatars")
+_uploads_dir.mkdir(parents=True, exist_ok=True)
+
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
@@ -765,6 +770,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.include_router(router)
 app.include_router(politicas_router)
 app.include_router(whatsapp_router)

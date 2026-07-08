@@ -2,10 +2,13 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from io import BytesIO
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 from app.core.rate_limiter import rate_limit
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from PIL import Image
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -471,6 +474,68 @@ def atualizar_perfil(
         return APIResponse(success=True, message="Nenhum campo para atualizar.", data=UserResponse.model_validate(current_user))
     user = UserRepository.update_perfil(db, current_user.id, **dados)
     return APIResponse(success=True, message="Perfil atualizado com sucesso.", data=UserResponse.model_validate(user))
+
+
+_AVATAR_DIR = Path("uploads/avatars")
+_TIPOS_PERMITIDOS = {"image/jpeg", "image/png", "image/webp"}
+_TAMANHO_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+@router.post(
+    "/usuarios/avatar",
+    response_model=APIResponse[UserResponse],
+    summary="Upload de foto de perfil",
+    description="Recebe uma imagem da galeria (JPG/PNG/WebP, máx 5 MB), redimensiona para 400×400 e salva como foto de perfil.",
+)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if file.content_type not in _TIPOS_PERMITIDOS:
+        raise HTTPException(status_code=400, detail="Formato inválido. Envie JPG, PNG ou WebP.")
+
+    contents = await file.read()
+    if len(contents) > _TAMANHO_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Imagem muito grande. Máximo permitido: 5 MB.")
+
+    try:
+        img = Image.open(BytesIO(contents)).convert("RGB")
+        w, h = img.size
+        size = min(w, h)
+        img = img.crop(((w - size) // 2, (h - size) // 2, (w + size) // 2, (h + size) // 2))
+        img = img.resize((400, 400), Image.LANCZOS)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Arquivo de imagem inválido ou corrompido.")
+
+    _AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+    dest = _AVATAR_DIR / f"{current_user.id}.webp"
+    buf = BytesIO()
+    img.save(buf, format="WEBP", quality=85)
+    dest.write_bytes(buf.getvalue())
+
+    avatar_url = f"/uploads/avatars/{current_user.id}.webp"
+    user = UserRepository.update_perfil(db, current_user.id, avatar=avatar_url)
+    logger.info("Avatar atualizado para usuário %s", current_user.email)
+    return APIResponse(success=True, message="Foto de perfil atualizada com sucesso.", data=UserResponse.model_validate(user))
+
+
+@router.delete(
+    "/usuarios/avatar",
+    response_model=APIResponse[UserResponse],
+    summary="Remover foto de perfil",
+    description="Remove a foto de perfil do usuário autenticado.",
+)
+def remover_avatar(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dest = _AVATAR_DIR / f"{current_user.id}.webp"
+    if dest.exists():
+        dest.unlink()
+    user = UserRepository.update_perfil(db, current_user.id, avatar=None)
+    logger.info("Avatar removido para usuário %s", current_user.email)
+    return APIResponse(success=True, message="Foto de perfil removida.", data=UserResponse.model_validate(user))
 
 
 @router.post(
