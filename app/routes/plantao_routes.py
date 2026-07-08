@@ -62,6 +62,7 @@ from app.schemas.plantao_schema import (
     TransferenciaResponse,
     BonificacaoCreate,
     BonificacaoResponse,
+    BonificacaoUpdate,
     TrocaCreate,
     TrocaResponse,
     UserCreate,
@@ -594,6 +595,31 @@ def deletar_bonificacao(
         raise HTTPException(status_code=403, detail="Sem permissão para deletar esta bonificação.")
     BonificacaoRepository.delete(db, bonificacao_id)
     return APIResponse(success=True, message="Bonificação deletada com sucesso.", data=None)
+
+
+@router.patch(
+    "/bonificacoes/{bonificacao_id}",
+    response_model=APIResponse[BonificacaoResponse],
+    summary="Atualizar bonificação",
+    description="Atualiza valor e/ou descrição de uma bonificação do usuário autenticado.",
+)
+def atualizar_bonificacao(
+    bonificacao_id: int,
+    payload: BonificacaoUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    bonificacao = BonificacaoRepository.get_by_id(db, bonificacao_id)
+    if bonificacao is None:
+        raise HTTPException(status_code=404, detail="Bonificação não encontrada.")
+    plantao = PlantaoRepository.get_by_id_and_user(db, bonificacao.plantao_id, current_user.id)
+    if plantao is None:
+        raise HTTPException(status_code=403, detail="Sem permissão para editar esta bonificação.")
+    dados = payload.model_dump(exclude_unset=True)
+    if not dados:
+        raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
+    bonificacao = BonificacaoRepository.update(db, bonificacao_id, **dados)
+    return APIResponse(success=True, message="Bonificação atualizada com sucesso.", data=BonificacaoResponse.model_validate(bonificacao))
 
 
 @router.post(

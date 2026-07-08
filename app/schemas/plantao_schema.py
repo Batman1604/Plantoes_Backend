@@ -368,6 +368,7 @@ class PlantaoResponse(BaseModel):
     transferido: bool = False
     recebido_via_transferencia: bool = False
     descricao: Optional[str] = None
+    bonificacoes: list["BonificacaoResponse"] = []
 
     class Config:
         from_attributes = True
@@ -376,6 +377,7 @@ class PlantaoResponse(BaseModel):
     @classmethod
     def from_orm_model(cls, obj):
         if hasattr(obj, "horario_inicio"):
+            bons = getattr(obj, "bonificacoes", None) or []
             return {
                 "id": obj.id,
                 "usuario_id": obj.usuario_id,
@@ -395,6 +397,10 @@ class PlantaoResponse(BaseModel):
                 "transferido": obj.transferido,
                 "recebido_via_transferencia": getattr(obj, "recebido_via_transferencia", False),
                 "descricao": obj.descricao,
+                "bonificacoes": [
+                    {"id": b.id, "plantao_id": b.plantao_id, "local_id": b.local_id, "valor": b.valor, "descricao": b.descricao}
+                    for b in bons
+                ],
             }
         return obj
 
@@ -445,13 +451,22 @@ class PagamentoStatusResponse(BaseModel):
 
 class BonificacaoCreate(BaseModel):
     plantao_id: int = Field(description="ID do plantão ao qual a bonificação pertence.")
+    local_id: Optional[int] = Field(default=None, description="ID do local (informativo, armazenado para facilitar listagem).")
     valor: Decimal = Field(gt=0, description="Valor da bonificação em reais.")
+    descricao: Optional[str] = Field(default=None, max_length=500, description="Motivo ou descrição da bonificação.")
+
+
+class BonificacaoUpdate(BaseModel):
+    valor: Optional[Decimal] = Field(default=None, gt=0, description="Novo valor da bonificação.")
+    descricao: Optional[str] = Field(default=None, max_length=500, description="Nova descrição da bonificação.")
 
 
 class BonificacaoResponse(BaseModel):
     id: int
     plantao_id: int
+    local_id: Optional[int] = None
     valor: Decimal
+    descricao: Optional[str] = None
 
     class Config:
         from_attributes = True

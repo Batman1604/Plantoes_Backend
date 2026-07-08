@@ -661,8 +661,8 @@ def ensure_bonificacoes_table() -> None:
         with engine.begin() as connection:
             cols = connection.execute(text("PRAGMA table_info(bonificacoes)")).all()
             col_names = {c[1] for c in cols}
-            # Recriar se existir com schema antigo (local_id)
-            if "local_id" in col_names:
+            # Schema antigo = tem local_id mas NÃO tem plantao_id
+            if "local_id" in col_names and "plantao_id" not in col_names:
                 connection.execute(text("DROP TABLE bonificacoes"))
                 col_names = set()
             if not col_names:
@@ -670,31 +670,50 @@ def ensure_bonificacoes_table() -> None:
                     "CREATE TABLE bonificacoes ("
                     "id INTEGER PRIMARY KEY AUTOINCREMENT, "
                     "plantao_id INTEGER NOT NULL REFERENCES plantoes(id) ON DELETE CASCADE, "
-                    "valor NUMERIC(10,2) NOT NULL"
+                    "local_id INTEGER NULL REFERENCES locais(id) ON DELETE SET NULL, "
+                    "valor NUMERIC(10,2) NOT NULL, "
+                    "descricao TEXT NULL"
                     ")"
                 ))
                 connection.execute(text(
                     "CREATE INDEX IF NOT EXISTS ix_bonificacoes_plantao_id ON bonificacoes (plantao_id)"
                 ))
+            else:
+                if "descricao" not in col_names:
+                    connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN descricao TEXT NULL"))
+                if "local_id" not in col_names:
+                    connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN local_id INTEGER NULL REFERENCES locais(id) ON DELETE SET NULL"))
         return
 
     if engine.dialect.name == "postgresql":
         with engine.begin() as connection:
-            old_col = connection.execute(text(
+            # Schema antigo = tem local_id mas NÃO tem plantao_id
+            old_schema = connection.execute(text(
                 "SELECT 1 FROM information_schema.columns "
                 "WHERE table_name = 'bonificacoes' AND column_name = 'local_id'"
+            )).scalar() and not connection.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'bonificacoes' AND column_name = 'plantao_id'"
             )).scalar()
-            if old_col:
+            if old_schema:
                 connection.execute(text("DROP TABLE bonificacoes"))
             connection.execute(text("""
                 CREATE TABLE IF NOT EXISTS bonificacoes (
                     id SERIAL PRIMARY KEY,
                     plantao_id INTEGER NOT NULL REFERENCES plantoes(id) ON DELETE CASCADE,
-                    valor NUMERIC(10,2) NOT NULL
+                    local_id INTEGER NULL REFERENCES locais(id) ON DELETE SET NULL,
+                    valor NUMERIC(10,2) NOT NULL,
+                    descricao TEXT NULL
                 )
             """))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_bonificacoes_plantao_id ON bonificacoes (plantao_id)"
+            ))
+            connection.execute(text(
+                "ALTER TABLE bonificacoes ADD COLUMN IF NOT EXISTS descricao TEXT NULL"
+            ))
+            connection.execute(text(
+                "ALTER TABLE bonificacoes ADD COLUMN IF NOT EXISTS local_id INTEGER NULL REFERENCES locais(id) ON DELETE SET NULL"
             ))
         return
 

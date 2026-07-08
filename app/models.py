@@ -80,6 +80,10 @@ class Plantao(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    bonificacoes: Mapped[list["Bonificacao"]] = relationship(
+        back_populates="plantao",
+        cascade="all, delete-orphan",
+    )
 
 
 class Transferencia(Base):
@@ -178,9 +182,11 @@ class Bonificacao(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     plantao_id: Mapped[int] = mapped_column(ForeignKey("plantoes.id", ondelete="CASCADE"), nullable=False, index=True)
+    local_id: Mapped[int | None] = mapped_column(ForeignKey("locais.id", ondelete="SET NULL"), nullable=True, index=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    plantao: Mapped["Plantao"] = relationship()
+    plantao: Mapped["Plantao"] = relationship(back_populates="bonificacoes")
 
 
 class Troca(Base):

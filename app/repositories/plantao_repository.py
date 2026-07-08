@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import hash_password, verify_password
 from app.models import Bonificacao, Local, PagamentoStatus, Plantao, TokenRevogado, Transferencia, Troca, User, VerificacaoTelefone
@@ -204,6 +204,7 @@ class PlantaoRepository:
         stmt = (
             select(Plantao)
             .where(Plantao.usuario_id == usuario_id, Plantao.transferido.is_(False))
+            .options(selectinload(Plantao.bonificacoes))
             .order_by(Plantao.id.desc())
         )
         return db.scalars(stmt).all()
@@ -442,6 +443,18 @@ class BonificacaoRepository:
     @staticmethod
     def get_by_id(db: Session, bonificacao_id: int) -> Bonificacao | None:
         return db.scalar(select(Bonificacao).where(Bonificacao.id == bonificacao_id))
+
+    @staticmethod
+    def update(db: Session, bonificacao_id: int, **kwargs) -> Bonificacao | None:
+        bonificacao = db.scalar(select(Bonificacao).where(Bonificacao.id == bonificacao_id))
+        if bonificacao is None:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(bonificacao, key):
+                setattr(bonificacao, key, value)
+        db.commit()
+        db.refresh(bonificacao)
+        return bonificacao
 
     @staticmethod
     def delete(db: Session, bonificacao_id: int) -> bool:
