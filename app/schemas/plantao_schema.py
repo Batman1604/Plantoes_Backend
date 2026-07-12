@@ -503,6 +503,8 @@ class PlantaoExecutadoUpdate(BaseModel):
 class FinanceiroData(BaseModel):
     total: Decimal
     quantidade_plantoes: int
+    total_bonificacoes: Decimal = Decimal("0")
+    total_com_bonificacoes: Decimal = Decimal("0")
 
 
 class FinanceiroResponse(APIResponse[FinanceiroData]):
@@ -513,6 +515,8 @@ class GraficoMensalItem(BaseModel):
     mes: int
     total: Decimal
     quantidade_plantoes: int
+    total_bonificacoes: Decimal = Decimal("0")
+    total_com_bonificacoes: Decimal = Decimal("0")
 
 
 class UpgradeWebhookRequest(BaseModel):
