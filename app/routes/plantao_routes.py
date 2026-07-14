@@ -634,9 +634,10 @@ def criar_troca(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    local = LocalRepository.get_by_id(db, payload.local_id)
-    if local is None or local.usuario_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Local não encontrado.")
+    if payload.local_id is not None:
+        local = LocalRepository.get_by_id(db, payload.local_id)
+        if local is None or local.usuario_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Local não encontrado.")
     troca = TrocaRepository.create(db, payload)
     return APIResponse(success=True, message="Troca registrada com sucesso.", data=TrocaResponse.model_validate(troca))
 

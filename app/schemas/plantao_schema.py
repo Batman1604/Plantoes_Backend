@@ -473,20 +473,30 @@ class BonificacaoResponse(BaseModel):
 
 
 class TrocaCreate(BaseModel):
-    local_id: int = Field(description="ID do local vinculado à troca.")
-    nome_transferir: str = Field(min_length=2, max_length=120)
-    nome_receber: str = Field(min_length=2, max_length=120)
-    telefone_transferir: str = Field(min_length=8, max_length=30)
-    telefone_receber: str = Field(min_length=8, max_length=30)
+    local_id: Optional[int] = Field(default=None, description="ID do local cadastrado (opcional).")
+    nome_transferir: Optional[str] = Field(default=None, max_length=120)
+    nome_receber: Optional[str] = Field(default=None, max_length=120)
+    telefone_transferir: Optional[str] = Field(default=None, max_length=30)
+    telefone_receber: Optional[str] = Field(default=None, max_length=30)
+    local: Optional[str] = Field(default=None, max_length=120, description="Nome do local (texto livre).")
+    data_inicio: Optional[date] = Field(default=None)
+    data_fim: Optional[date] = Field(default=None)
+    horario_inicio: Optional[time] = Field(default=None)
+    horario_fim: Optional[time] = Field(default=None)
 
 
 class TrocaResponse(BaseModel):
     id: int
-    local_id: int
-    nome_transferir: str
-    nome_receber: str
-    telefone_transferir: str
-    telefone_receber: str
+    local_id: Optional[int] = None
+    nome_transferir: Optional[str] = None
+    nome_receber: Optional[str] = None
+    telefone_transferir: Optional[str] = None
+    telefone_receber: Optional[str] = None
+    local: Optional[str] = None
+    data_inicio: Optional[date] = None
+    data_fim: Optional[date] = None
+    horario_inicio: Optional[time] = None
+    horario_fim: Optional[time] = None
 
     class Config:
         from_attributes = True

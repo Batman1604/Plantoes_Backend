@@ -193,10 +193,15 @@ class Troca(Base):
     __tablename__ = "trocas"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
-    nome_transferir: Mapped[str] = mapped_column(String(120), nullable=False)
-    nome_receber: Mapped[str] = mapped_column(String(120), nullable=False)
-    telefone_transferir: Mapped[str] = mapped_column(String(30), nullable=False)
-    telefone_receber: Mapped[str] = mapped_column(String(30), nullable=False)
+    local_id: Mapped[int | None] = mapped_column(ForeignKey("locais.id", ondelete="SET NULL"), nullable=True, index=True)
+    nome_transferir: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    nome_receber: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    telefone_transferir: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    telefone_receber: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    local: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    data_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
+    horario_inicio: Mapped[time | None] = mapped_column(Time, nullable=True)
+    horario_fim: Mapped[time | None] = mapped_column(Time, nullable=True)
 
-    local: Mapped[Local] = relationship()
+    local_rel: Mapped["Local | None"] = relationship(foreign_keys=[local_id])
