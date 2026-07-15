@@ -180,7 +180,10 @@ class Troca(Base):
     __tablename__ = "trocas"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True, index=True)
     local_id: Mapped[int | None] = mapped_column(ForeignKey("locais.id", ondelete="SET NULL"), nullable=True, index=True)
+    plantao_id_transferido: Mapped[int | None] = mapped_column(ForeignKey("plantoes.id", ondelete="SET NULL"), nullable=True, index=True)
+    plantao_id_recebido: Mapped[int | None] = mapped_column(ForeignKey("plantoes.id", ondelete="SET NULL"), nullable=True, index=True)
     nome_transferir: Mapped[str | None] = mapped_column(String(120), nullable=True)
     nome_receber: Mapped[str | None] = mapped_column(String(120), nullable=True)
     telefone_transferir: Mapped[str | None] = mapped_column(String(30), nullable=True)
@@ -192,3 +195,5 @@ class Troca(Base):
     horario_fim: Mapped[time | None] = mapped_column(Time, nullable=True)
 
     local_rel: Mapped["Local | None"] = relationship(foreign_keys=[local_id])
+    plantao_transferido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_transferido])
+    plantao_recebido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_recebido])

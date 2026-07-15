@@ -614,19 +614,22 @@ ensure_telefone_verificado_e_verificacoes_table()
 
 
 def ensure_trocas_table() -> None:
-    _new_cols = ("local", "data_inicio", "data_fim", "horario_inicio", "horario_fim")
+    _required_cols = ("local", "data_inicio", "data_fim", "horario_inicio", "horario_fim",
+                      "usuario_id", "plantao_id_transferido", "plantao_id_recebido")
 
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
             cols = connection.execute(text("PRAGMA table_info(trocas)")).all()
             col_names = {c[1] for c in cols}
-            # Recriar se a tabela não existir ou faltar colunas novas
-            if not col_names or not all(c in col_names for c in _new_cols):
+            if not col_names or not all(c in col_names for c in _required_cols):
                 connection.execute(text("DROP TABLE IF EXISTS trocas"))
                 connection.execute(text(
                     "CREATE TABLE trocas ("
                     "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "usuario_id INTEGER NULL REFERENCES usuarios(id) ON DELETE SET NULL, "
                     "local_id INTEGER NULL REFERENCES locais(id) ON DELETE SET NULL, "
+                    "plantao_id_transferido INTEGER NULL REFERENCES plantoes(id) ON DELETE SET NULL, "
+                    "plantao_id_recebido INTEGER NULL REFERENCES plantoes(id) ON DELETE SET NULL, "
                     "nome_transferir VARCHAR(120) NULL, "
                     "nome_receber VARCHAR(120) NULL, "
                     "telefone_transferir VARCHAR(30) NULL, "
@@ -641,6 +644,9 @@ def ensure_trocas_table() -> None:
                 connection.execute(text(
                     "CREATE INDEX IF NOT EXISTS ix_trocas_local_id ON trocas (local_id)"
                 ))
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_trocas_usuario_id ON trocas (usuario_id)"
+                ))
         return
 
     if engine.dialect.name == "postgresql":
@@ -648,7 +654,10 @@ def ensure_trocas_table() -> None:
             connection.execute(text("""
                 CREATE TABLE IF NOT EXISTS trocas (
                     id SERIAL PRIMARY KEY,
+                    usuario_id INTEGER NULL REFERENCES usuarios(id) ON DELETE SET NULL,
                     local_id INTEGER NULL REFERENCES locais(id) ON DELETE SET NULL,
+                    plantao_id_transferido INTEGER NULL REFERENCES plantoes(id) ON DELETE SET NULL,
+                    plantao_id_recebido INTEGER NULL REFERENCES plantoes(id) ON DELETE SET NULL,
                     nome_transferir VARCHAR(120) NULL,
                     nome_receber VARCHAR(120) NULL,
                     telefone_transferir VARCHAR(30) NULL,
@@ -663,6 +672,9 @@ def ensure_trocas_table() -> None:
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_trocas_local_id ON trocas (local_id)"
             ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_trocas_usuario_id ON trocas (usuario_id)"
+            ))
             # Remover NOT NULL de colunas antigas (caso a tabela já existia)
             for col in ("local_id", "nome_transferir", "nome_receber", "telefone_transferir", "telefone_receber"):
                 try:
@@ -676,8 +688,14 @@ def ensure_trocas_table() -> None:
                 ("data_fim", "DATE"),
                 ("horario_inicio", "TIME"),
                 ("horario_fim", "TIME"),
+                ("usuario_id", "INTEGER REFERENCES usuarios(id) ON DELETE SET NULL"),
+                ("plantao_id_transferido", "INTEGER REFERENCES plantoes(id) ON DELETE SET NULL"),
+                ("plantao_id_recebido", "INTEGER REFERENCES plantoes(id) ON DELETE SET NULL"),
             ):
                 connection.execute(text(f"ALTER TABLE trocas ADD COLUMN IF NOT EXISTS {col} {tipo} NULL"))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_trocas_usuario_id ON trocas (usuario_id)"
+            ))
         return
 
 

@@ -482,7 +482,10 @@ class BonificacaoResponse(BaseModel):
 
 
 class TrocaCreate(BaseModel):
+    usuario_id: Optional[int] = Field(default=None, description="ID do usuário dono da troca.")
     local_id: Optional[int] = Field(default=None, description="ID do local cadastrado (opcional).")
+    plantao_id_transferido: Optional[int] = Field(default=None, description="ID do plantão que está sendo transferido.")
+    plantao_id_recebido: Optional[int] = Field(default=None, description="ID do plantão que está sendo recebido.")
     nome_transferir: Optional[str] = Field(default=None, max_length=120)
     nome_receber: Optional[str] = Field(default=None, max_length=120)
     telefone_transferir: Optional[str] = Field(default=None, max_length=30)
@@ -496,7 +499,10 @@ class TrocaCreate(BaseModel):
 
 class TrocaResponse(BaseModel):
     id: int
+    usuario_id: Optional[int] = None
     local_id: Optional[int] = None
+    plantao_id_transferido: Optional[int] = None
+    plantao_id_recebido: Optional[int] = None
     nome_transferir: Optional[str] = None
     nome_receber: Optional[str] = None
     telefone_transferir: Optional[str] = None
