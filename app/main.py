@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
@@ -767,6 +767,27 @@ def ensure_financeiro_em_atraso_column() -> None:
 
 
 ensure_financeiro_em_atraso_column()
+
+
+def backfill_financeiro() -> None:
+    """Sincroniza financeiro para todos os plantões existentes — chamado uma vez na inicialização."""
+    from app.repositories.plantao_repository import FinanceiroRepository
+
+    with SessionLocal() as db:
+        combos = db.execute(
+            select(
+                models.Plantao.local_id,
+                func.extract("month", models.Plantao.data_inicio).label("mes"),
+                func.extract("year", models.Plantao.data_inicio).label("ano"),
+            ).distinct()
+        ).fetchall()
+
+        for row in combos:
+            FinanceiroRepository.sync_mes(db, row.local_id, int(row.mes), int(row.ano))
+
+
+backfill_financeiro()
+
 
 
 _notificacao_thread: threading.Thread | None = None
