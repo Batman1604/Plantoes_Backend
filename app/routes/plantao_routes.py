@@ -649,19 +649,29 @@ def criar_troca(
 @router.get(
     "/trocas",
     response_model=APIResponse[list[TrocaResponse]],
-    summary="Listar trocas por local",
-    description="Retorna as trocas registradas para um local do usuário autenticado.",
+    summary="Listar trocas",
+    description="Retorna trocas por usuário (usuario_id) ou por local (local_id). Um dos dois deve ser informado.",
 )
 def listar_trocas(
-    local_id: int = Query(..., description="ID do local."),
+    usuario_id: int | None = Query(default=None, description="ID do usuário — retorna todas as trocas dele."),
+    local_id: int | None = Query(default=None, description="ID do local — retorna trocas daquele local."),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    local = LocalRepository.get_by_id(db, local_id)
-    if local is None or local.usuario_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Local não encontrado.")
-    trocas = TrocaRepository.list_by_local(db, local_id)
-    return APIResponse(success=True, message="Trocas listadas com sucesso.", data=[TrocaResponse.model_validate(t) for t in trocas])
+    if usuario_id is not None:
+        if usuario_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Sem permissão para consultar trocas de outro usuário.")
+        trocas = TrocaRepository.list_by_usuario(db, usuario_id)
+        return APIResponse(success=True, message="Trocas listadas com sucesso.", data=[TrocaResponse.model_validate(t) for t in trocas])
+
+    if local_id is not None:
+        local = LocalRepository.get_by_id(db, local_id)
+        if local is None or local.usuario_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Local não encontrado.")
+        trocas = TrocaRepository.list_by_local(db, local_id)
+        return APIResponse(success=True, message="Trocas listadas com sucesso.", data=[TrocaResponse.model_validate(t) for t in trocas])
+
+    raise HTTPException(status_code=400, detail="Informe usuario_id ou local_id como parâmetro.")
 
 
 @router.delete(

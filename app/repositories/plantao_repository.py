@@ -535,6 +535,14 @@ class TrocaRepository:
         return list(db.scalars(select(Troca).where(Troca.local_id == local_id)).all())
 
     @staticmethod
+    def list_by_usuario(db: Session, usuario_id: int) -> list[Troca]:
+        return list(db.scalars(
+            select(Troca)
+            .where(Troca.usuario_id == usuario_id)
+            .order_by(Troca.id.desc())
+        ).all())
+
+    @staticmethod
     def get_by_id(db: Session, troca_id: int) -> Troca | None:
         return db.scalar(select(Troca).where(Troca.id == troca_id))
 
