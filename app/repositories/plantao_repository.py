@@ -397,6 +397,51 @@ class VerificacaoTelefoneRepository:
 
 class FinanceiroRepository:
     @staticmethod
+    def sync_mes(db: Session, local_id: int, mes: int, ano: int) -> None:
+        """Recalcula e persiste o total financeiro de um local/mês a partir dos plantões e bonificações."""
+        total_plantoes = db.scalar(
+            select(func.coalesce(func.sum(Plantao.valor), 0))
+            .where(
+                Plantao.local_id == local_id,
+                func.extract("month", Plantao.data_inicio) == mes,
+                func.extract("year", Plantao.data_inicio) == ano,
+            )
+        ) or 0
+
+        total_bonificacoes = db.scalar(
+            select(func.coalesce(func.sum(Bonificacao.valor), 0))
+            .join(Plantao, Plantao.id == Bonificacao.plantao_id)
+            .where(
+                Plantao.local_id == local_id,
+                func.extract("month", Plantao.data_inicio) == mes,
+                func.extract("year", Plantao.data_inicio) == ano,
+            )
+        ) or 0
+
+        total = float(total_plantoes) + float(total_bonificacoes)
+
+        existente = db.scalar(
+            select(Financeiro).where(
+                Financeiro.local_id == local_id,
+                func.extract("month", Financeiro.data) == mes,
+                func.extract("year", Financeiro.data) == ano,
+            )
+        )
+
+        if total == 0:
+            if existente:
+                db.delete(existente)
+                db.commit()
+            return
+
+        if existente:
+            existente.valor = total
+            db.commit()
+        else:
+            db.add(Financeiro(local_id=local_id, valor=total, data=date(ano, mes, 1), em_atraso=False))
+            db.commit()
+
+    @staticmethod
     def upsert(db: Session, local_id: int, valor: float, data: date, em_atraso: bool) -> Financeiro:
         mes, ano = data.month, data.year
         existente = db.scalar(
