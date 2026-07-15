@@ -22,11 +22,11 @@ from app.core.security import (
     verify_password,
 )
 from app.repositories.plantao_repository import (
+    FinanceiroRepository,
     LocalRepository,
     PlantaoRepository,
     TokenRevogadoRepository,
     BonificacaoRepository,
-    PagamentoStatusRepository,
     TransferenciaRepository,
     TrocaRepository,
     UserRepository,
@@ -35,8 +35,9 @@ from app.repositories.plantao_repository import (
 from app.schemas.plantao_schema import (
     APIResponse,
     AlterarSenhaRequest,
-    PagamentoStatusResponse,
-    PagamentoStatusUpdate,
+    FinanceiroCreate,
+    FinanceiroEmAtrasoUpdate,
+    FinanceiroRecordResponse,
     PerfilUpdate,
     AuthResponse,
     AuthStatusResponse,
@@ -854,44 +855,63 @@ def deletar_local(
     )
 
 
-@router.patch(
-    "/locais/{local_id}/pagamento-status",
-    response_model=APIResponse[PagamentoStatusResponse],
-    summary="Atualizar status de pagamento por mês",
-    description="Marca ou desmarca o pagamento de um local como em atraso para o mês/ano informado. Sincroniza entre dispositivos.",
+@router.post(
+    "/financeiro",
+    response_model=APIResponse[FinanceiroRecordResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Criar ou atualizar registro financeiro",
+    description="Cria ou atualiza o registro financeiro de um local para o mês/ano da data informada (upsert). Armazena valor total e data de pagamento.",
 )
-def atualizar_pagamento_status(
-    local_id: int,
-    payload: PagamentoStatusUpdate,
+def criar_financeiro(
+    payload: FinanceiroCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    local = LocalRepository.get_by_id(db, local_id)
+    local = LocalRepository.get_by_id(db, payload.local_id)
     if local is None or local.usuario_id != current_user.id:
         raise HTTPException(status_code=404, detail="Local não encontrado.")
-    status = PagamentoStatusRepository.upsert(db, local_id, payload.mes, payload.ano, payload.em_atraso)
-    return APIResponse(success=True, message="Status de pagamento atualizado.", data=PagamentoStatusResponse.model_validate(status))
+    registro = FinanceiroRepository.upsert(db, payload.local_id, float(payload.valor), payload.data, payload.em_atraso)
+    return APIResponse(success=True, message="Registro financeiro salvo.", data=FinanceiroRecordResponse.model_validate(registro))
 
 
 @router.get(
-    "/locais/{local_id}/pagamento-status",
-    response_model=APIResponse[PagamentoStatusResponse],
-    summary="Consultar status de pagamento por mês",
-    description="Retorna se o pagamento do local está em atraso para o mês/ano informado.",
+    "/financeiro/local/{local_id}",
+    response_model=APIResponse[list[FinanceiroRecordResponse]],
+    summary="Listar registros financeiros de um local",
+    description="Retorna todos os registros financeiros de um local, ordenados por data decrescente.",
 )
-def obter_pagamento_status(
+def listar_financeiro_por_local(
     local_id: int,
-    mes: int = Query(..., ge=1, le=12),
-    ano: int = Query(..., ge=2000),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     local = LocalRepository.get_by_id(db, local_id)
     if local is None or local.usuario_id != current_user.id:
         raise HTTPException(status_code=404, detail="Local não encontrado.")
-    status = PagamentoStatusRepository.get(db, local_id, mes, ano)
-    em_atraso = status.em_atraso if status else False
-    return APIResponse(success=True, message="Status de pagamento consultado.", data=PagamentoStatusResponse(em_atraso=em_atraso))
+    registros = FinanceiroRepository.list_by_local(db, local_id)
+    return APIResponse(success=True, message="Registros financeiros listados.", data=[FinanceiroRecordResponse.model_validate(r) for r in registros])
+
+
+@router.patch(
+    "/financeiro/{financeiro_id}/em-atraso",
+    response_model=APIResponse[FinanceiroRecordResponse],
+    summary="Atualizar status de atraso",
+    description="Marca ou desmarca um registro financeiro como em atraso.",
+)
+def atualizar_em_atraso(
+    financeiro_id: int,
+    payload: FinanceiroEmAtrasoUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    registro = FinanceiroRepository.get_by_id(db, financeiro_id)
+    if registro is None:
+        raise HTTPException(status_code=404, detail="Registro financeiro não encontrado.")
+    local = LocalRepository.get_by_id(db, registro.local_id)
+    if local is None or local.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Registro financeiro não encontrado.")
+    registro = FinanceiroRepository.update_em_atraso(db, registro, payload.em_atraso)
+    return APIResponse(success=True, message="Status de atraso atualizado.", data=FinanceiroRecordResponse.model_validate(registro))
 
 
 @router.post(

@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import hash_password, verify_password
-from app.models import Bonificacao, Local, PagamentoStatus, Plantao, TokenRevogado, Transferencia, Troca, User, VerificacaoTelefone
+from app.models import Bonificacao, Financeiro, Local, Plantao, TokenRevogado, Transferencia, Troca, User, VerificacaoTelefone
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
 
 
@@ -395,36 +395,46 @@ class VerificacaoTelefoneRepository:
         db.commit()
 
 
-class PagamentoStatusRepository:
+class FinanceiroRepository:
     @staticmethod
-    def upsert(db: Session, local_id: int, mes: int, ano: int, em_atraso: bool) -> PagamentoStatus:
+    def upsert(db: Session, local_id: int, valor: float, data: date, em_atraso: bool) -> Financeiro:
+        mes, ano = data.month, data.year
         existente = db.scalar(
-            select(PagamentoStatus).where(
-                PagamentoStatus.local_id == local_id,
-                PagamentoStatus.mes == mes,
-                PagamentoStatus.ano == ano,
+            select(Financeiro).where(
+                Financeiro.local_id == local_id,
+                func.extract("month", Financeiro.data) == mes,
+                func.extract("year", Financeiro.data) == ano,
             )
         )
         if existente:
+            existente.valor = valor
+            existente.data = data
             existente.em_atraso = em_atraso
             db.commit()
             db.refresh(existente)
             return existente
-        novo = PagamentoStatus(local_id=local_id, mes=mes, ano=ano, em_atraso=em_atraso)
+        novo = Financeiro(local_id=local_id, valor=valor, data=data, em_atraso=em_atraso)
         db.add(novo)
         db.commit()
         db.refresh(novo)
         return novo
 
     @staticmethod
-    def get(db: Session, local_id: int, mes: int, ano: int) -> PagamentoStatus | None:
-        return db.scalar(
-            select(PagamentoStatus).where(
-                PagamentoStatus.local_id == local_id,
-                PagamentoStatus.mes == mes,
-                PagamentoStatus.ano == ano,
-            )
-        )
+    def get_by_id(db: Session, financeiro_id: int) -> Financeiro | None:
+        return db.scalar(select(Financeiro).where(Financeiro.id == financeiro_id))
+
+    @staticmethod
+    def update_em_atraso(db: Session, record: Financeiro, em_atraso: bool) -> Financeiro:
+        record.em_atraso = em_atraso
+        db.commit()
+        db.refresh(record)
+        return record
+
+    @staticmethod
+    def list_by_local(db: Session, local_id: int) -> list[Financeiro]:
+        return list(db.scalars(
+            select(Financeiro).where(Financeiro.local_id == local_id).order_by(Financeiro.data.desc())
+        ))
 
 
 class BonificacaoRepository:

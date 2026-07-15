@@ -122,6 +122,7 @@ class Financeiro(Base):
     local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     data: Mapped[date] = mapped_column(Date, nullable=False)
+    em_atraso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     local: Mapped[Local] = relationship()
 
@@ -161,20 +162,6 @@ class VerificacaoTelefone(Base):
 
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
 
-
-class PagamentoStatus(Base):
-    __tablename__ = "pagamento_status"
-    __table_args__ = (
-        CheckConstraint("mes >= 1 AND mes <= 12", name="ck_pagamento_status_mes"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
-    mes: Mapped[int] = mapped_column(Integer, nullable=False)
-    ano: Mapped[int] = mapped_column(Integer, nullable=False)
-    em_atraso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-    local: Mapped[Local] = relationship()
 
 
 class Bonificacao(Base):

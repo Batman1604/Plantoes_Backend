@@ -436,13 +436,22 @@ class TransferenciaResponse(BaseModel):
         from_attributes = True
 
 
-class PagamentoStatusUpdate(BaseModel):
-    mes: int = Field(ge=1, le=12)
-    ano: int = Field(ge=2000)
+class FinanceiroCreate(BaseModel):
+    local_id: int
+    valor: Decimal = Field(gt=0, description="Valor total do pagamento do mês.")
+    data: date = Field(description="Data de pagamento referente ao local.")
+    em_atraso: bool = False
+
+
+class FinanceiroEmAtrasoUpdate(BaseModel):
     em_atraso: bool
 
 
-class PagamentoStatusResponse(BaseModel):
+class FinanceiroRecordResponse(BaseModel):
+    id: int
+    local_id: int
+    valor: Decimal
+    data: date
     em_atraso: bool
 
     class Config:
