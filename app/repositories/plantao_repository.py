@@ -200,10 +200,10 @@ class PlantaoRepository:
 
     @staticmethod
     def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:
-        """Retorna todos os plantões pertencentes a um usuário, excluindo transferidos."""
+        """Retorna todos os plantões do usuário, incluindo os transferidos para histórico."""
         stmt = (
             select(Plantao)
-            .where(Plantao.usuario_id == usuario_id, Plantao.transferido.is_(False))
+            .where(Plantao.usuario_id == usuario_id)
             .options(selectinload(Plantao.bonificacoes))
             .order_by(Plantao.id.desc())
         )

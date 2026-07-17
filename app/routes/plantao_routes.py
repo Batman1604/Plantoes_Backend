@@ -9,11 +9,12 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Uplo
 from app.core.rate_limiter import rate_limit
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import Plantao
+from app.models import Plantao, Troca
 from app.core.security import (
     create_access_token,
     create_purpose_token,
@@ -65,6 +66,8 @@ from app.schemas.plantao_schema import (
     BonificacaoResponse,
     BonificacaoUpdate,
     TrocaCreate,
+    TrocaOperacaoCreate,
+    TrocaOperacaoData,
     TrocaResponse,
     UserCreate,
     UserLogin,
@@ -111,6 +114,43 @@ def get_current_user(
         raise unauthorized_exception()
 
     return user
+
+
+def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
+    """Serializa o contrato de plantão, incluindo o vínculo de troca quando existir."""
+    result = PlantaoResponse.model_validate(plantao).model_dump()
+    troca = db.scalar(
+        select(Troca).where(
+            or_(
+                Troca.plantao_id_transferido == plantao.id,
+                Troca.plantao_id_recebido == plantao.id,
+            )
+        ).order_by(Troca.id.desc())
+    )
+    if troca is None:
+        return PlantaoResponse.model_validate(result)
+
+    if troca.plantao_id_transferido == plantao.id:
+        result["tipo_troca"] = "transferido"
+        result["troca"] = {
+            "id": troca.id,
+            "papel": "transferido",
+            "contraparte_nome": troca.nome_transferir or "",
+            "contraparte_telefone": troca.telefone_transferir or "",
+            "contraparte_observacao": troca.observacao_transferir,
+            "plantao_relacionado_id": troca.plantao_id_recebido,
+        }
+    else:
+        result["tipo_troca"] = "recebido"
+        result["troca"] = {
+            "id": troca.id,
+            "papel": "recebido",
+            "contraparte_nome": troca.nome_receber or "",
+            "contraparte_telefone": troca.telefone_receber or "",
+            "contraparte_observacao": troca.observacao_receber,
+            "plantao_relacionado_id": troca.plantao_id_transferido,
+        }
+    return PlantaoResponse.model_validate(result)
 
 
 @router.post(
@@ -628,22 +668,89 @@ def atualizar_bonificacao(
 
 @router.post(
     "/trocas",
-    response_model=APIResponse[TrocaResponse],
+    response_model=APIResponse[TrocaOperacaoData],
     status_code=status.HTTP_201_CREATED,
     summary="Registrar troca",
-    description="Registra uma troca de plantão entre dois profissionais vinculada a um local.",
+    description="Transfere um plantão do usuário autenticado e, opcionalmente, cria o plantão recebido na mesma transação.",
 )
 def criar_troca(
-    payload: TrocaCreate,
+    payload: TrocaOperacaoCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    if payload.local_id is not None:
-        local = LocalRepository.get_by_id(db, payload.local_id)
-        if local is None or local.usuario_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Local não encontrado.")
-    troca = TrocaRepository.create(db, payload)
-    return APIResponse(success=True, message="Troca registrada com sucesso.", data=TrocaResponse.model_validate(troca))
+    plantao = db.scalar(select(Plantao).where(Plantao.id == payload.plantao_transferido_id))
+    if plantao is None:
+        raise HTTPException(status_code=404, detail="Plantão transferido não encontrado.")
+    if plantao.usuario_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Plantão não pertence ao usuário autenticado.")
+    if plantao.transferido:
+        raise HTTPException(status_code=400, detail="Este plantão já foi transferido e não pode ser transferido novamente.")
+
+    recebido = None
+    if payload.plantao_recebido is not None:
+        recebido_payload = payload.plantao_recebido
+        local = LocalRepository.get_by_id(db, recebido_payload.local_id)
+        if local is None:
+            raise HTTPException(status_code=404, detail="Local do plantão recebido não encontrado.")
+        if local.usuario_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Local do plantão recebido não pertence ao usuário autenticado.")
+
+    try:
+        # Não chame repositórios que executam commit aqui: as três gravações precisam
+        # confirmar juntas ou serem revertidas juntas.
+        plantao.transferido = True
+        if payload.plantao_recebido is not None:
+            recebido_payload = payload.plantao_recebido
+            recebido = Plantao(
+                usuario_id=current_user.id,
+                local_id=recebido_payload.local_id,
+                valor=recebido_payload.valor,
+                data_inicio=recebido_payload.data_inicio,
+                horario_inicio=recebido_payload.horario_inicio,
+                data_fim=recebido_payload.data_fim,
+                horario_fim=recebido_payload.horario_fim,
+                sobreaviso=recebido_payload.sobreaviso,
+                descricao=recebido_payload.descricao,
+                recorrencia=None,
+                notificacao_ativa=True,
+                notificacao_antecedencia_minutos=60,
+                notificado=False,
+                executado=False,
+                transferido=False,
+                recebido_via_transferencia=True,
+            )
+            db.add(recebido)
+            db.flush()
+
+        troca = Troca(
+            usuario_id=current_user.id,
+            local_id=recebido.local_id if recebido is not None else plantao.local_id,
+            plantao_id_transferido=plantao.id,
+            plantao_id_recebido=recebido.id if recebido is not None else None,
+            nome_transferir=payload.transferido_para.nome,
+            telefone_transferir=payload.transferido_para.telefone,
+            observacao_transferir=payload.transferido_para.observacao,
+            nome_receber=(payload.plantao_recebido.recebido_de.nome if payload.plantao_recebido else None),
+            telefone_receber=(payload.plantao_recebido.recebido_de.telefone if payload.plantao_recebido else None),
+            observacao_receber=(payload.plantao_recebido.recebido_de.observacao if payload.plantao_recebido else None),
+        )
+        db.add(troca)
+        db.flush()
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Falha transacional ao registrar troca")
+        raise HTTPException(status_code=500, detail="Não foi possível registrar a troca; nenhuma alteração foi salva.") from exc
+
+    return APIResponse(
+        success=True,
+        message="Troca registrada com sucesso.",
+        data=TrocaOperacaoData(
+            troca_id=troca.id,
+            plantao_transferido=_plantao_com_troca(db, plantao),
+            plantao_recebido=_plantao_com_troca(db, recebido) if recebido is not None else None,
+        ),
+    )
 
 
 @router.get(
@@ -1059,7 +1166,7 @@ def listar_plantoes(
     return APIResponse(
         success=True,
         message="Plantões listados com sucesso.",
-        data=[PlantaoResponse.model_validate(p) for p in plantoes],
+        data=[_plantao_com_troca(db, p) for p in plantoes],
     )
 
 

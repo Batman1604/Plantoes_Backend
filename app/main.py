@@ -621,8 +621,7 @@ def ensure_trocas_table() -> None:
         with engine.begin() as connection:
             cols = connection.execute(text("PRAGMA table_info(trocas)")).all()
             col_names = {c[1] for c in cols}
-            if not col_names or not all(c in col_names for c in _required_cols):
-                connection.execute(text("DROP TABLE IF EXISTS trocas"))
+            if not col_names:
                 connection.execute(text(
                     "CREATE TABLE trocas ("
                     "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -634,6 +633,8 @@ def ensure_trocas_table() -> None:
                     "nome_receber VARCHAR(120) NULL, "
                     "telefone_transferir VARCHAR(30) NULL, "
                     "telefone_receber VARCHAR(30) NULL, "
+                    "observacao_transferir TEXT NULL, "
+                    "observacao_receber TEXT NULL, "
                     "local VARCHAR(120) NULL, "
                     "data_inicio DATE NULL, "
                     "data_fim DATE NULL, "
@@ -647,6 +648,27 @@ def ensure_trocas_table() -> None:
                 connection.execute(text(
                     "CREATE INDEX IF NOT EXISTS ix_trocas_usuario_id ON trocas (usuario_id)"
                 ))
+            else:
+                # Migração aditiva: preserva os registros históricos já existentes.
+                for column, column_type in (
+                    ("usuario_id", "INTEGER"),
+                    ("local_id", "INTEGER"),
+                    ("plantao_id_transferido", "INTEGER"),
+                    ("plantao_id_recebido", "INTEGER"),
+                    ("nome_transferir", "VARCHAR(120)"),
+                    ("nome_receber", "VARCHAR(120)"),
+                    ("telefone_transferir", "VARCHAR(30)"),
+                    ("telefone_receber", "VARCHAR(30)"),
+                    ("local", "VARCHAR(120)"),
+                    ("data_inicio", "DATE"),
+                    ("data_fim", "DATE"),
+                    ("horario_inicio", "TIME"),
+                    ("horario_fim", "TIME"),
+                    ("observacao_transferir", "TEXT"),
+                    ("observacao_receber", "TEXT"),
+                ):
+                    if column not in col_names:
+                        connection.execute(text(f"ALTER TABLE trocas ADD COLUMN {column} {column_type} NULL"))
         return
 
     if engine.dialect.name == "postgresql":
@@ -662,6 +684,8 @@ def ensure_trocas_table() -> None:
                     nome_receber VARCHAR(120) NULL,
                     telefone_transferir VARCHAR(30) NULL,
                     telefone_receber VARCHAR(30) NULL,
+                    observacao_transferir TEXT NULL,
+                    observacao_receber TEXT NULL,
                     local VARCHAR(120) NULL,
                     data_inicio DATE NULL,
                     data_fim DATE NULL,
@@ -669,20 +693,13 @@ def ensure_trocas_table() -> None:
                     horario_fim TIME NULL
                 )
             """))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_trocas_local_id ON trocas (local_id)"
-            ))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_trocas_usuario_id ON trocas (usuario_id)"
-            ))
-            # Remover NOT NULL de colunas antigas (caso a tabela já existia)
-            for col in ("local_id", "nome_transferir", "nome_receber", "telefone_transferir", "telefone_receber"):
-                try:
-                    connection.execute(text(f"ALTER TABLE trocas ALTER COLUMN {col} DROP NOT NULL"))
-                except Exception:
-                    pass
             # Adicionar colunas novas se não existirem
             for col, tipo in (
+                ("local_id", "INTEGER REFERENCES locais(id) ON DELETE SET NULL"),
+                ("nome_transferir", "VARCHAR(120)"),
+                ("nome_receber", "VARCHAR(120)"),
+                ("telefone_transferir", "VARCHAR(30)"),
+                ("telefone_receber", "VARCHAR(30)"),
                 ("local", "VARCHAR(120)"),
                 ("data_inicio", "DATE"),
                 ("data_fim", "DATE"),
@@ -691,8 +708,17 @@ def ensure_trocas_table() -> None:
                 ("usuario_id", "INTEGER REFERENCES usuarios(id) ON DELETE SET NULL"),
                 ("plantao_id_transferido", "INTEGER REFERENCES plantoes(id) ON DELETE SET NULL"),
                 ("plantao_id_recebido", "INTEGER REFERENCES plantoes(id) ON DELETE SET NULL"),
+                ("observacao_transferir", "TEXT"),
+                ("observacao_receber", "TEXT"),
             ):
                 connection.execute(text(f"ALTER TABLE trocas ADD COLUMN IF NOT EXISTS {col} {tipo} NULL"))
+            # Agora todas as colunas existem. Em PostgreSQL, não capture erros de DDL
+            # dentro da mesma transação: um erro deixaria a transação abortada.
+            for col in ("local_id", "nome_transferir", "nome_receber", "telefone_transferir", "telefone_receber"):
+                connection.execute(text(f"ALTER TABLE trocas ALTER COLUMN {col} DROP NOT NULL"))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_trocas_local_id ON trocas (local_id)"
+            ))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_trocas_usuario_id ON trocas (usuario_id)"
             ))

@@ -368,6 +368,8 @@ class PlantaoResponse(BaseModel):
     transferido: bool = False
     recebido_via_transferencia: bool = False
     descricao: Optional[str] = None
+    tipo_troca: Literal["transferido", "recebido", "trocado"] | None = None
+    troca: "PlantaoTrocaResponse | None" = None
     bonificacoes: list["BonificacaoResponse"] = []
 
     class Config:
@@ -397,12 +399,71 @@ class PlantaoResponse(BaseModel):
                 "transferido": obj.transferido,
                 "recebido_via_transferencia": getattr(obj, "recebido_via_transferencia", False),
                 "descricao": obj.descricao,
+                "tipo_troca": None,
+                "troca": None,
                 "bonificacoes": [
                     {"id": b.id, "plantao_id": b.plantao_id, "local_id": b.local_id, "valor": b.valor, "descricao": b.descricao}
                     for b in bons
                 ],
             }
         return obj
+
+
+class PlantaoTrocaResponse(BaseModel):
+    id: int
+    papel: Literal["transferido", "recebido"]
+    contraparte_nome: str
+    contraparte_telefone: str
+    contraparte_observacao: Optional[str] = None
+    plantao_relacionado_id: Optional[int] = None
+
+
+class PessoaTrocaCreate(BaseModel):
+    nome: str = Field(min_length=1, max_length=120)
+    telefone: str = Field(min_length=1, max_length=30)
+    observacao: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("nome", "telefone")
+    @classmethod
+    def nao_permitir_vazio(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Campo obrigatório.")
+        return value
+
+
+class PlantaoRecebidoTrocaCreate(BaseModel):
+    local_id: int
+    data_inicio: date
+    horario_inicio: time
+    data_fim: date
+    horario_fim: time
+    valor: Decimal = Field(ge=0)
+    sobreaviso: bool = False
+    descricao: Optional[str] = Field(default=None, max_length=2000)
+    recebido_de: PessoaTrocaCreate
+
+    @model_validator(mode="after")
+    def validar_intervalo(self):
+        inicio = datetime.combine(self.data_inicio, self.horario_inicio)
+        fim = datetime.combine(self.data_fim, self.horario_fim)
+        if fim <= inicio:
+            raise ValueError("data_fim e horario_fim devem ser posteriores ao início do plantão.")
+        if fim - inicio > timedelta(hours=48):
+            raise ValueError("A duração do plantão não pode ser maior que 48 horas.")
+        return self
+
+
+class TrocaOperacaoCreate(BaseModel):
+    plantao_transferido_id: int
+    transferido_para: PessoaTrocaCreate
+    plantao_recebido: Optional[PlantaoRecebidoTrocaCreate] = None
+
+
+class TrocaOperacaoData(BaseModel):
+    troca_id: int
+    plantao_transferido: PlantaoResponse
+    plantao_recebido: Optional[PlantaoResponse] = None
 
 
 class TransferenciaCreate(BaseModel):

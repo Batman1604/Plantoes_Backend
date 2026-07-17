@@ -188,6 +188,8 @@ class Troca(Base):
     nome_receber: Mapped[str | None] = mapped_column(String(120), nullable=True)
     telefone_transferir: Mapped[str | None] = mapped_column(String(30), nullable=True)
     telefone_receber: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    observacao_transferir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    observacao_receber: Mapped[str | None] = mapped_column(Text, nullable=True)
     local: Mapped[str | None] = mapped_column(String(120), nullable=True)
     data_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
     data_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
