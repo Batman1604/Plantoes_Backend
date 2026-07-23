@@ -504,7 +504,7 @@ def registrar_device_token(
     "/usuarios/perfil",
     response_model=APIResponse[UserResponse],
     summary="Atualizar perfil do usuário",
-    description="Atualiza avatar e/ou profissão do usuário autenticado.",
+    description="Atualiza avatar, profissão e/ou tema (theme_mode) do usuário autenticado.",
 )
 def atualizar_perfil(
     payload: PerfilUpdate,

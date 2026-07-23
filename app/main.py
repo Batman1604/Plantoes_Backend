@@ -490,6 +490,28 @@ def ensure_email_verificado_e_device_token_columns() -> None:
 ensure_email_verificado_e_device_token_columns()
 
 
+def ensure_theme_mode_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
+            col_names = {c[1] for c in cols}
+            if "theme_mode" not in col_names:
+                connection.execute(
+                    text("ALTER TABLE usuarios ADD COLUMN theme_mode VARCHAR(10) NOT NULL DEFAULT 'light'")
+                )
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS theme_mode VARCHAR(10) NOT NULL DEFAULT 'light'"
+            ))
+        return
+
+
+ensure_theme_mode_column()
+
+
 def ensure_financeiro_table() -> None:
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:

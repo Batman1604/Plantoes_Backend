@@ -51,6 +51,7 @@ class UserResponse(UserBase):
     telefone_verificado: bool = False
     avatar: Optional[str] = None
     profissao: Optional[str] = None
+    theme_mode: Literal["light", "dark"] = "light"
 
     class Config:
         from_attributes = True
@@ -59,6 +60,7 @@ class UserResponse(UserBase):
 class PerfilUpdate(BaseModel):
     avatar: Optional[str] = Field(default=None, max_length=255)
     profissao: Optional[str] = Field(default=None, max_length=255)
+    theme_mode: Optional[Literal["light", "dark"]] = None
 
 
 class AuthResponse(BaseModel):
