@@ -1,10 +1,23 @@
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import hash_password, verify_password
-from app.models import Bonificacao, Financeiro, Local, Plantao, TokenRevogado, Transferencia, Troca, User, VerificacaoTelefone
+from app.models import (
+    Amizade,
+    AmigoConfiguracao,
+    AmigoLocalPermitido,
+    Bonificacao,
+    Financeiro,
+    Local,
+    Plantao,
+    TokenRevogado,
+    Transferencia,
+    Troca,
+    User,
+    VerificacaoTelefone,
+)
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
 
 
@@ -44,6 +57,33 @@ class UserRepository:
     @staticmethod
     def get_by_phone(db: Session, telefone: str) -> User | None:
         return db.scalar(select(User).where(User.telefone == telefone))
+
+    @staticmethod
+    def buscar_por_email_prefixo(db: Session, prefixo: str, excluir_usuario_id: int) -> list[User]:
+        """Busca usuários cujo email começa com o prefixo, excluindo o próprio usuário e
+        qualquer usuário que já tenha amizade pendente ou aceita com ele."""
+        relacoes = db.execute(
+            select(Amizade.solicitante_usuario_id, Amizade.destinatario_usuario_id).where(
+                Amizade.status.in_(("pendente", "aceito")),
+                or_(
+                    Amizade.solicitante_usuario_id == excluir_usuario_id,
+                    Amizade.destinatario_usuario_id == excluir_usuario_id,
+                ),
+            )
+        ).all()
+
+        ids_excluir = {excluir_usuario_id}
+        for solicitante_id, destinatario_id in relacoes:
+            ids_excluir.add(solicitante_id)
+            ids_excluir.add(destinatario_id)
+
+        stmt = (
+            select(User)
+            .where(User.email.ilike(f"{prefixo}%"), User.id.notin_(ids_excluir))
+            .order_by(User.email)
+            .limit(5)
+        )
+        return list(db.scalars(stmt).all())
 
     @staticmethod
     def delete(db: Session, user_id: int) -> bool:
@@ -208,6 +248,26 @@ class PlantaoRepository:
             .order_by(Plantao.id.desc())
         )
         return db.scalars(stmt).all()
+
+    @staticmethod
+    def list_by_user_e_locais(db: Session, usuario_id: int, local_ids: list[int]) -> list[Plantao]:
+        """Retorna os plantões ativos (não transferidos) do usuário restritos aos locais informados.
+
+        Usado para exibir a agenda de um amigo, já filtrada pelos locais que ele permite mostrar.
+        """
+        if not local_ids:
+            return []
+        stmt = (
+            select(Plantao)
+            .where(
+                Plantao.usuario_id == usuario_id,
+                Plantao.local_id.in_(local_ids),
+                Plantao.transferido.is_(False),
+            )
+            .options(selectinload(Plantao.bonificacoes))
+            .order_by(Plantao.data_inicio.desc())
+        )
+        return list(db.scalars(stmt).all())
 
     @staticmethod
     def list_all(db: Session) -> list[Plantao]:
@@ -554,6 +614,171 @@ class TrocaRepository:
         db.delete(troca)
         db.commit()
         return True
+
+
+class AmizadeRepository:
+    @staticmethod
+    def get_relacao_existente(db: Session, usuario_a_id: int, usuario_b_id: int) -> Amizade | None:
+        """Retorna amizade pendente ou aceita entre os dois usuários, em qualquer direção."""
+        return db.scalar(
+            select(Amizade).where(
+                Amizade.status.in_(("pendente", "aceito")),
+                or_(
+                    and_(
+                        Amizade.solicitante_usuario_id == usuario_a_id,
+                        Amizade.destinatario_usuario_id == usuario_b_id,
+                    ),
+                    and_(
+                        Amizade.solicitante_usuario_id == usuario_b_id,
+                        Amizade.destinatario_usuario_id == usuario_a_id,
+                    ),
+                ),
+            )
+        )
+
+    @staticmethod
+    def create(db: Session, solicitante_usuario_id: int, destinatario_usuario_id: int) -> Amizade:
+        amizade = Amizade(
+            solicitante_usuario_id=solicitante_usuario_id,
+            destinatario_usuario_id=destinatario_usuario_id,
+            status="pendente",
+        )
+        db.add(amizade)
+        db.commit()
+        db.refresh(amizade)
+        return amizade
+
+    @staticmethod
+    def get_by_id(db: Session, amizade_id: int) -> Amizade | None:
+        return db.scalar(
+            select(Amizade)
+            .options(selectinload(Amizade.solicitante), selectinload(Amizade.destinatario))
+            .where(Amizade.id == amizade_id)
+        )
+
+    @staticmethod
+    def list_by_usuario(db: Session, usuario_id: int) -> list[Amizade]:
+        stmt = (
+            select(Amizade)
+            .options(selectinload(Amizade.solicitante), selectinload(Amizade.destinatario))
+            .where(
+                or_(
+                    Amizade.solicitante_usuario_id == usuario_id,
+                    Amizade.destinatario_usuario_id == usuario_id,
+                )
+            )
+            .order_by(Amizade.id.desc())
+        )
+        return list(db.scalars(stmt).all())
+
+    @staticmethod
+    def aceitar(db: Session, amizade: Amizade) -> tuple[Amizade, AmigoConfiguracao, AmigoConfiguracao]:
+        """Marca a amizade como aceita e cria as duas linhas de configuração (uma por direção)."""
+        amizade.status = "aceito"
+        amizade.atualizado_em = datetime.now(UTC)
+
+        config_solicitante = AmigoConfiguracao(
+            usuario_id=amizade.solicitante_usuario_id,
+            amigo_usuario_id=amizade.destinatario_usuario_id,
+        )
+        config_destinatario = AmigoConfiguracao(
+            usuario_id=amizade.destinatario_usuario_id,
+            amigo_usuario_id=amizade.solicitante_usuario_id,
+        )
+        db.add_all([amizade, config_solicitante, config_destinatario])
+        db.commit()
+        db.refresh(amizade)
+        db.refresh(config_solicitante)
+        db.refresh(config_destinatario)
+        return amizade, config_solicitante, config_destinatario
+
+    @staticmethod
+    def rejeitar(db: Session, amizade: Amizade) -> None:
+        db.delete(amizade)
+        db.commit()
+
+    @staticmethod
+    def deletar_aceita(db: Session, amizade: Amizade) -> None:
+        """Remove a amizade aceita e as duas linhas de configuração associadas."""
+        db.execute(
+            delete(AmigoConfiguracao).where(
+                or_(
+                    and_(
+                        AmigoConfiguracao.usuario_id == amizade.solicitante_usuario_id,
+                        AmigoConfiguracao.amigo_usuario_id == amizade.destinatario_usuario_id,
+                    ),
+                    and_(
+                        AmigoConfiguracao.usuario_id == amizade.destinatario_usuario_id,
+                        AmigoConfiguracao.amigo_usuario_id == amizade.solicitante_usuario_id,
+                    ),
+                )
+            )
+        )
+        db.delete(amizade)
+        db.commit()
+
+
+class AmigoConfiguracaoRepository:
+    @staticmethod
+    def get_by_id(db: Session, config_id: int) -> AmigoConfiguracao | None:
+        return db.scalar(
+            select(AmigoConfiguracao)
+            .options(selectinload(AmigoConfiguracao.locais_permitidos))
+            .where(AmigoConfiguracao.id == config_id)
+        )
+
+    @staticmethod
+    def list_by_usuario(db: Session, usuario_id: int) -> list[AmigoConfiguracao]:
+        stmt = (
+            select(AmigoConfiguracao)
+            .options(selectinload(AmigoConfiguracao.locais_permitidos))
+            .where(AmigoConfiguracao.usuario_id == usuario_id)
+        )
+        return list(db.scalars(stmt).all())
+
+    @staticmethod
+    def list_visibilidade_para_usuario(
+        db: Session, visualizador_usuario_id: int, donos_ids: list[int]
+    ) -> list[AmigoConfiguracao]:
+        """Configs que os `donos_ids` definiram para `visualizador_usuario_id` — ou seja, o que
+        cada um deles decidiu mostrar para este usuário (direção oposta à de list_by_usuario)."""
+        if not donos_ids:
+            return []
+        stmt = (
+            select(AmigoConfiguracao)
+            .options(selectinload(AmigoConfiguracao.locais_permitidos))
+            .where(
+                AmigoConfiguracao.amigo_usuario_id == visualizador_usuario_id,
+                AmigoConfiguracao.usuario_id.in_(donos_ids),
+            )
+        )
+        return list(db.scalars(stmt).all())
+
+    @staticmethod
+    def update(
+        db: Session,
+        config: AmigoConfiguracao,
+        *,
+        modo_visibilidade: str | None = None,
+        mostrar_valores: bool | None = None,
+        cor: str | None = None,
+        locais_permitidos_ids: list[int] | None = None,
+    ) -> AmigoConfiguracao:
+        if modo_visibilidade is not None:
+            config.modo_visibilidade = modo_visibilidade
+        if mostrar_valores is not None:
+            config.mostrar_valores = mostrar_valores
+        if cor is not None:
+            config.cor = cor
+        if locais_permitidos_ids is not None:
+            db.execute(
+                delete(AmigoLocalPermitido).where(AmigoLocalPermitido.amigo_configuracao_id == config.id)
+            )
+            for local_id in locais_permitidos_ids:
+                db.add(AmigoLocalPermitido(amigo_configuracao_id=config.id, local_id=local_id))
+        db.commit()
+        # Recarrega via get_by_id para garantir que locais_permitidos reflita as mudanças acima.
+        return AmigoConfiguracaoRepository.get_by_id(db, config.id)
 
 
 class TokenRevogadoRepository:

@@ -609,3 +609,70 @@ class GraficoMensalItem(BaseModel):
 
 class UpgradeWebhookRequest(BaseModel):
     usuario_id: int
+
+
+class UsuarioResumo(BaseModel):
+    id: int
+    nome: str
+    email: EmailStr
+    avatar: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AmizadeCreate(BaseModel):
+    destinatario_usuario_id: int
+
+
+class AmizadeResponse(BaseModel):
+    id: int
+    solicitante_usuario_id: int
+    destinatario_usuario_id: int
+    status: str
+    criado_em: datetime
+    atualizado_em: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AmizadeListItem(BaseModel):
+    id: int
+    status: str
+    papel: Literal["solicitante", "destinatario"]
+    amigo: UsuarioResumo
+    configuracao_id: Optional[int] = Field(
+        default=None, description="ID da linha de amigo_configuracoes do usuário autenticado (para PATCH /api/amigo-configuracoes/:id). Presente apenas quando status='aceito'."
+    )
+    modo_visibilidade: Optional[Literal["tudo", "personalizado"]] = None
+    mostrar_valores: Optional[bool] = None
+    cor: Optional[str] = None
+    locais_permitidos: list[int] = Field(default_factory=list)
+
+
+class AmigoConfiguracaoUpdate(BaseModel):
+    modo_visibilidade: Optional[Literal["tudo", "personalizado"]] = None
+    mostrar_valores: Optional[bool] = None
+    locais_permitidos_ids: Optional[list[int]] = None
+    cor: Optional[str] = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$", example="#0D9488")
+
+
+class AmigoConfiguracaoResponse(BaseModel):
+    id: int
+    usuario_id: int
+    amigo_usuario_id: int
+    modo_visibilidade: str
+    mostrar_valores: bool
+    cor: str
+    locais_permitidos: list[int] = Field(default_factory=list)
+
+
+class AmigoPlantaoItem(BaseModel):
+    amigo_usuario_id: int
+    amigo_nome: str
+    amigo_avatar: Optional[str] = None
+    cor: str = Field(description="Cor escolhida pelo usuário autenticado para pintar este amigo no próprio calendário.")
+    local_id: int
+    local_nome: str
+    plantao: PlantaoResponse

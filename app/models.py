@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime, time
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, UniqueConstraint
 
 # Definição dos modelos de domínio persistidos no banco de dados.
 # Cada classe corresponde a uma tabela e usa SQLAlchemy ORM para mapeamento.
@@ -200,3 +200,57 @@ class Troca(Base):
     local_rel: Mapped["Local | None"] = relationship(foreign_keys=[local_id])
     plantao_transferido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_transferido])
     plantao_recebido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_recebido])
+
+
+class Amizade(Base):
+    """Ciclo de vida do convite de amizade entre dois usuários."""
+    __tablename__ = "amizades"
+    __table_args__ = (
+        CheckConstraint("status IN ('pendente', 'aceito', 'rejeitado')", name="ck_amizades_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    solicitante_usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    destinatario_usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pendente")
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
+
+    solicitante: Mapped[User] = relationship(foreign_keys=[solicitante_usuario_id])
+    destinatario: Mapped[User] = relationship(foreign_keys=[destinatario_usuario_id])
+
+
+class AmigoConfiguracao(Base):
+    """Configuração unidirecional (visibilidade e cor) que um usuário define para um amigo."""
+    __tablename__ = "amigo_configuracoes"
+    __table_args__ = (
+        CheckConstraint("modo_visibilidade IN ('tudo', 'personalizado')", name="ck_amigo_configuracoes_modo"),
+        UniqueConstraint("usuario_id", "amigo_usuario_id", name="uq_amigo_configuracoes_usuario_amigo"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    amigo_usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    modo_visibilidade: Mapped[str] = mapped_column(String(20), nullable=False, default="tudo")
+    mostrar_valores: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    cor: Mapped[str] = mapped_column(String(7), nullable=False, default="#0D9488")
+
+    usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
+    amigo: Mapped[User] = relationship(foreign_keys=[amigo_usuario_id])
+    locais_permitidos: Mapped[list["AmigoLocalPermitido"]] = relationship(
+        back_populates="configuracao", cascade="all, delete-orphan"
+    )
+
+
+class AmigoLocalPermitido(Base):
+    """Locais do dono da configuração visíveis para o amigo quando modo_visibilidade='personalizado'."""
+    __tablename__ = "amigo_locais_permitidos"
+
+    amigo_configuracao_id: Mapped[int] = mapped_column(
+        ForeignKey("amigo_configuracoes.id", ondelete="CASCADE"), primary_key=True
+    )
+    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), primary_key=True)
+
+    configuracao: Mapped[AmigoConfiguracao] = relationship(back_populates="locais_permitidos")

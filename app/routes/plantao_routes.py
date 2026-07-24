@@ -5,7 +5,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
 from app.core.rate_limiter import rate_limit
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
@@ -23,6 +23,8 @@ from app.core.security import (
     verify_password,
 )
 from app.repositories.plantao_repository import (
+    AmigoConfiguracaoRepository,
+    AmizadeRepository,
     FinanceiroRepository,
     LocalRepository,
     PlantaoRepository,
@@ -36,6 +38,12 @@ from app.repositories.plantao_repository import (
 from app.schemas.plantao_schema import (
     APIResponse,
     AlterarSenhaRequest,
+    AmigoConfiguracaoResponse,
+    AmigoConfiguracaoUpdate,
+    AmigoPlantaoItem,
+    AmizadeCreate,
+    AmizadeListItem,
+    AmizadeResponse,
     FinanceiroCreate,
     FinanceiroEmAtrasoUpdate,
     FinanceiroRecordResponse,
@@ -69,6 +77,7 @@ from app.schemas.plantao_schema import (
     TrocaOperacaoCreate,
     TrocaOperacaoData,
     TrocaResponse,
+    UsuarioResumo,
     UserCreate,
     UserLogin,
     UserResponse,
@@ -1799,3 +1808,302 @@ def recusar_transferencia(
     )
 
     return APIResponse(success=True, message="Transferência recusada. O plantão foi devolvido ao remetente.", data=None)
+
+
+def _serializar_amigo_configuracao(config) -> AmigoConfiguracaoResponse:
+    return AmigoConfiguracaoResponse(
+        id=config.id,
+        usuario_id=config.usuario_id,
+        amigo_usuario_id=config.amigo_usuario_id,
+        modo_visibilidade=config.modo_visibilidade,
+        mostrar_valores=config.mostrar_valores,
+        cor=config.cor,
+        locais_permitidos=[item.local_id for item in config.locais_permitidos],
+    )
+
+
+@router.get(
+    "/usuarios/busca",
+    response_model=APIResponse[list[UsuarioResumo]],
+    summary="Buscar usuários por email",
+    description="Busca usuários por prefixo de email (máx. 5 resultados), excluindo o próprio usuário "
+    "e quem já tem amizade pendente ou aceita com ele.",
+)
+def buscar_usuarios(
+    email: str = Query(..., min_length=1, max_length=255),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    usuarios = UserRepository.buscar_por_email_prefixo(db, email, excluir_usuario_id=current_user.id)
+    return APIResponse(
+        success=True,
+        message="Usuários encontrados.",
+        data=[UsuarioResumo.model_validate(u) for u in usuarios],
+    )
+
+
+@router.post(
+    "/amizades",
+    response_model=APIResponse[AmizadeResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Enviar solicitação de amizade",
+)
+def criar_amizade(
+    payload: AmizadeCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if payload.destinatario_usuario_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Não é possível adicionar a si mesmo.")
+
+    destinatario = UserRepository.get_by_id(db, payload.destinatario_usuario_id)
+    if destinatario is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+
+    existente = AmizadeRepository.get_relacao_existente(db, current_user.id, payload.destinatario_usuario_id)
+    if existente is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Já existe uma solicitação pendente ou amizade com este usuário.",
+        )
+
+    amizade = AmizadeRepository.create(db, current_user.id, payload.destinatario_usuario_id)
+    logger.info("Solicitação de amizade criada: %s -> %s", current_user.email, destinatario.email)
+    return APIResponse(
+        success=True,
+        message="Solicitação de amizade enviada.",
+        data=AmizadeResponse.model_validate(amizade),
+    )
+
+
+@router.get(
+    "/amizades",
+    response_model=APIResponse[list[AmizadeListItem]],
+    summary="Listar amizades e solicitações",
+    description="Lista as amizades e solicitações do usuário autenticado, embutindo o outro usuário e, "
+    "quando aceita, a configuração de visibilidade/cor do próprio usuário para aquele amigo.",
+)
+def listar_amizades(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    amizades = AmizadeRepository.list_by_usuario(db, current_user.id)
+    configs_por_amigo = {
+        config.amigo_usuario_id: config
+        for config in AmigoConfiguracaoRepository.list_by_usuario(db, current_user.id)
+    }
+
+    itens = []
+    for amizade in amizades:
+        if amizade.solicitante_usuario_id == current_user.id:
+            papel = "solicitante"
+            outro = amizade.destinatario
+        else:
+            papel = "destinatario"
+            outro = amizade.solicitante
+
+        config = configs_por_amigo.get(outro.id)
+        itens.append(
+            AmizadeListItem(
+                id=amizade.id,
+                status=amizade.status,
+                papel=papel,
+                amigo=UsuarioResumo.model_validate(outro),
+                configuracao_id=config.id if config else None,
+                modo_visibilidade=config.modo_visibilidade if config else None,
+                mostrar_valores=config.mostrar_valores if config else None,
+                cor=config.cor if config else None,
+                locais_permitidos=[item.local_id for item in config.locais_permitidos] if config else [],
+            )
+        )
+
+    return APIResponse(success=True, message="Amizades listadas com sucesso.", data=itens)
+
+
+@router.patch(
+    "/amizades/{amizade_id}/aceitar",
+    response_model=APIResponse[AmizadeResponse],
+    summary="Aceitar solicitação de amizade",
+    description="Somente o destinatário pode aceitar. Cria automaticamente as duas linhas de "
+    "configuração (uma para cada lado) com os valores padrão.",
+)
+def aceitar_amizade(
+    amizade_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    amizade = AmizadeRepository.get_by_id(db, amizade_id)
+    if amizade is None or amizade.destinatario_usuario_id != current_user.id or amizade.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação de amizade não encontrada ou não está pendente.")
+
+    amizade, _, _ = AmizadeRepository.aceitar(db, amizade)
+    logger.info("Amizade %s aceita por %s", amizade_id, current_user.email)
+    return APIResponse(success=True, message="Amizade aceita.", data=AmizadeResponse.model_validate(amizade))
+
+
+@router.patch(
+    "/amizades/{amizade_id}/rejeitar",
+    response_model=APIResponse[None],
+    summary="Rejeitar solicitação de amizade",
+    description="Somente o destinatário pode rejeitar. A linha é apagada, permitindo um novo convite futuro.",
+)
+def rejeitar_amizade(
+    amizade_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    amizade = AmizadeRepository.get_by_id(db, amizade_id)
+    if amizade is None or amizade.destinatario_usuario_id != current_user.id or amizade.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação de amizade não encontrada ou não está pendente.")
+
+    AmizadeRepository.rejeitar(db, amizade)
+    logger.info("Amizade %s rejeitada por %s", amizade_id, current_user.email)
+    return APIResponse(success=True, message="Solicitação de amizade rejeitada.", data=None)
+
+
+@router.delete(
+    "/amizades/{amizade_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remover amizade",
+    description="Remove uma amizade aceita e as duas linhas de configuração associadas. "
+    "Pode ser chamado por qualquer um dos dois lados.",
+)
+def remover_amizade(
+    amizade_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    amizade = AmizadeRepository.get_by_id(db, amizade_id)
+    if (
+        amizade is None
+        or amizade.status != "aceito"
+        or current_user.id not in (amizade.solicitante_usuario_id, amizade.destinatario_usuario_id)
+    ):
+        raise HTTPException(status_code=404, detail="Amizade não encontrada.")
+
+    AmizadeRepository.deletar_aceita(db, amizade)
+    logger.info("Amizade %s removida por %s", amizade_id, current_user.email)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch(
+    "/amigo-configuracoes/{config_id}",
+    response_model=APIResponse[AmigoConfiguracaoResponse],
+    summary="Atualizar configuração de visibilidade/cor de um amigo",
+    description="Atualiza apenas a linha de configuração cujo usuario_id é o do usuário autenticado. "
+    "Cada lado da amizade só pode editar a própria configuração.",
+)
+def atualizar_amigo_configuracao(
+    config_id: int,
+    payload: AmigoConfiguracaoUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    config = AmigoConfiguracaoRepository.get_by_id(db, config_id)
+    if config is None or config.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Configuração não encontrada.")
+
+    dados = payload.model_dump(exclude_unset=True)
+    locais_permitidos_ids = dados.pop("locais_permitidos_ids", None)
+
+    if locais_permitidos_ids is not None:
+        locais_do_usuario = {local.id for local in LocalRepository.list_by_user(db, current_user.id)}
+        invalidos = set(locais_permitidos_ids) - locais_do_usuario
+        if invalidos:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Locais inválidos ou não pertencentes ao usuário: {sorted(invalidos)}",
+            )
+
+    config = AmigoConfiguracaoRepository.update(
+        db, config, locais_permitidos_ids=locais_permitidos_ids, **dados
+    )
+    return APIResponse(
+        success=True,
+        message="Configuração atualizada com sucesso.",
+        data=_serializar_amigo_configuracao(config),
+    )
+
+
+@router.get(
+    "/amigos/plantoes",
+    response_model=APIResponse[list[AmigoPlantaoItem]],
+    summary="Listar plantões visíveis dos amigos",
+    description=(
+        "Retorna os plantões dos amigos aceitos do usuário autenticado, filtrados pela "
+        "visibilidade (modo_visibilidade/locais_permitidos) e mostrar_valores que CADA AMIGO "
+        "definiu para este usuário. A cor de cada item é a que o usuário autenticado escolheu "
+        "para pintar aquele amigo em seu próprio calendário."
+    ),
+)
+def listar_plantoes_de_amigos(
+    amigo_usuario_id: int | None = Query(default=None, description="Filtra o resultado para um único amigo."),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    amizades_aceitas = [
+        a for a in AmizadeRepository.list_by_usuario(db, current_user.id) if a.status == "aceito"
+    ]
+    amigos_ids = [
+        (a.destinatario_usuario_id if a.solicitante_usuario_id == current_user.id else a.solicitante_usuario_id)
+        for a in amizades_aceitas
+    ]
+
+    if amigo_usuario_id is not None:
+        if amigo_usuario_id not in amigos_ids:
+            raise HTTPException(status_code=404, detail="Amigo não encontrado ou amizade não aceita.")
+        amigos_ids = [amigo_usuario_id]
+
+    if not amigos_ids:
+        return APIResponse(success=True, message="Nenhum amigo com plantões visíveis.", data=[])
+
+    minhas_cores = {
+        config.amigo_usuario_id: config.cor
+        for config in AmigoConfiguracaoRepository.list_by_usuario(db, current_user.id)
+    }
+    visibilidades = {
+        config.usuario_id: config
+        for config in AmigoConfiguracaoRepository.list_visibilidade_para_usuario(db, current_user.id, amigos_ids)
+    }
+
+    itens: list[AmigoPlantaoItem] = []
+    for amigo_id in amigos_ids:
+        visibilidade = visibilidades.get(amigo_id)
+        if visibilidade is None:
+            continue
+
+        locais_do_amigo = {local.id: local for local in LocalRepository.list_by_user(db, amigo_id)}
+        if visibilidade.modo_visibilidade == "personalizado":
+            local_ids_permitidos = [item.local_id for item in visibilidade.locais_permitidos]
+        else:
+            local_ids_permitidos = list(locais_do_amigo.keys())
+
+        if not local_ids_permitidos:
+            continue
+
+        amigo_user = UserRepository.get_by_id(db, amigo_id)
+        if amigo_user is None:
+            continue
+
+        plantoes = PlantaoRepository.list_by_user_e_locais(db, amigo_id, local_ids_permitidos)
+        for plantao in plantoes:
+            plantao_data = PlantaoResponse.model_validate(plantao)
+            if not visibilidade.mostrar_valores:
+                plantao_data.valor = Decimal("0")
+                for bonificacao in plantao_data.bonificacoes:
+                    bonificacao.valor = Decimal("0")
+
+            local = locais_do_amigo.get(plantao.local_id)
+            itens.append(
+                AmigoPlantaoItem(
+                    amigo_usuario_id=amigo_id,
+                    amigo_nome=amigo_user.nome,
+                    amigo_avatar=amigo_user.avatar,
+                    cor=minhas_cores.get(amigo_id, "#0D9488"),
+                    local_id=plantao.local_id,
+                    local_nome=local.nome_local if local else "",
+                    plantao=plantao_data,
+                )
+            )
+
+    return APIResponse(success=True, message="Plantões de amigos listados com sucesso.", data=itens)
