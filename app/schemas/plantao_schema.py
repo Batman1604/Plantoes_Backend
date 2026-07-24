@@ -417,6 +417,9 @@ class PlantaoTrocaResponse(BaseModel):
     contraparte_nome: str
     contraparte_telefone: str
     contraparte_observacao: Optional[str] = None
+    contraparte_usuario_id: Optional[int] = Field(
+        default=None, description="usuario_id da outra pessoa da troca quando for conta real; null se contraparte manual (texto livre)."
+    )
     plantao_relacionado_id: Optional[int] = None
 
 
@@ -466,6 +469,103 @@ class TrocaOperacaoData(BaseModel):
     troca_id: int
     plantao_transferido: PlantaoResponse
     plantao_recebido: Optional[PlantaoResponse] = None
+
+
+class SolicitacaoTrocaPlantaoRecebido(BaseModel):
+    local_id: int
+    data_inicio: date
+    horario_inicio: time
+    data_fim: date
+    horario_fim: time
+    valor: Decimal = Field(ge=0)
+    sobreaviso: bool = False
+
+    @field_validator("data_inicio", "data_fim", mode="before")
+    @classmethod
+    def validar_campos_data(cls, value):
+        return validar_formato_data(value)
+
+    @model_validator(mode="after")
+    def validar_intervalo(self):
+        inicio = datetime.combine(self.data_inicio, self.horario_inicio)
+        fim = datetime.combine(self.data_fim, self.horario_fim)
+        if fim <= inicio:
+            raise ValueError("data_fim e horario_fim devem ser posteriores ao início do plantão.")
+        if fim - inicio > timedelta(hours=48):
+            raise ValueError("A duração do plantão não pode ser maior que 48 horas.")
+        return self
+
+
+class SolicitacaoTrocaCreate(BaseModel):
+    destinatario_usuario_id: int
+    tipo: Literal["transferir", "receber", "trocar"]
+    plantao_transferido_id: Optional[int] = None
+    plantao_recebido: Optional[SolicitacaoTrocaPlantaoRecebido] = None
+    plantao_alvo_id: Optional[int] = Field(
+        default=None,
+        description="Plantão já existente do destinatário a ser recebido (ownership transfer). "
+        "Alternativa a plantao_recebido — informe só um dos dois.",
+    )
+
+    @model_validator(mode="after")
+    def validar_campos_por_tipo(self):
+        recebendo = self.plantao_recebido is not None or self.plantao_alvo_id is not None
+        recebendo_ambiguo = self.plantao_recebido is not None and self.plantao_alvo_id is not None
+
+        if self.tipo == "transferir":
+            if self.plantao_transferido_id is None or recebendo:
+                raise ValueError("Para tipo='transferir', informe apenas plantao_transferido_id.")
+        elif self.tipo == "receber":
+            if not recebendo or recebendo_ambiguo or self.plantao_transferido_id is not None:
+                raise ValueError("Para tipo='receber', informe plantao_recebido OU plantao_alvo_id (não ambos).")
+        elif self.tipo == "trocar":
+            if self.plantao_transferido_id is None or not recebendo or recebendo_ambiguo:
+                raise ValueError(
+                    "Para tipo='trocar', informe plantao_transferido_id e (plantao_recebido OU plantao_alvo_id)."
+                )
+        return self
+
+
+class SolicitacaoTrocaResponse(BaseModel):
+    id: int
+    remetente_usuario_id: int
+    destinatario_usuario_id: int
+    tipo: Literal["transferir", "receber", "trocar"]
+    status: str
+    criado_em: datetime
+    respondido_em: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PessoaTrocaResumo(BaseModel):
+    id: int
+    nome: str
+
+    class Config:
+        from_attributes = True
+
+
+class PlantaoTrocaResumo(BaseModel):
+    id: Optional[int] = Field(default=None, description="Null quando o plantão ainda não existe (proposta de plantao_recebido pendente).")
+    local_nome: str
+    data_inicio: date
+    horario_inicio: time
+    data_fim: date
+    horario_fim: time
+    valor: Decimal
+
+
+class SolicitacaoTrocaListItem(BaseModel):
+    id: int
+    tipo: Literal["transferir", "receber", "trocar"]
+    status: str
+    papel: Literal["remetente", "destinatario"]
+    remetente: PessoaTrocaResumo
+    destinatario: PessoaTrocaResumo
+    plantao_transferido: Optional[PlantaoTrocaResumo] = None
+    plantao_recebido: Optional[PlantaoTrocaResumo] = None
 
 
 class TransferenciaCreate(BaseModel):
@@ -675,4 +775,6 @@ class AmigoPlantaoItem(BaseModel):
     cor: str = Field(description="Cor escolhida pelo usuário autenticado para pintar este amigo no próprio calendário.")
     local_id: int
     local_nome: str
+    local_endereco: Optional[str] = None
+    local_dia_pagamento: Optional[int] = None
     plantao: PlantaoResponse

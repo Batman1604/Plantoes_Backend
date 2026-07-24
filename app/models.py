@@ -196,10 +196,14 @@ class Troca(Base):
     data_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
     horario_inicio: Mapped[time | None] = mapped_column(Time, nullable=True)
     horario_fim: Mapped[time | None] = mapped_column(Time, nullable=True)
+    contraparte_usuario_id: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     local_rel: Mapped["Local | None"] = relationship(foreign_keys=[local_id])
     plantao_transferido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_transferido])
     plantao_recebido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_recebido])
+    contraparte: Mapped["User | None"] = relationship(foreign_keys=[contraparte_usuario_id])
 
 
 class Amizade(Base):
@@ -254,3 +258,41 @@ class AmigoLocalPermitido(Base):
     local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), primary_key=True)
 
     configuracao: Mapped[AmigoConfiguracao] = relationship(back_populates="locais_permitidos")
+
+
+class SolicitacaoTroca(Base):
+    """Pedido de troca de plantão entre amigos — fica pendente até o destinatário aceitar ou rejeitar."""
+    __tablename__ = "solicitacoes_troca"
+    __table_args__ = (
+        CheckConstraint("tipo IN ('transferir', 'receber', 'trocar')", name="ck_solicitacoes_troca_tipo"),
+        CheckConstraint("status IN ('pendente', 'aceita', 'rejeitada')", name="ck_solicitacoes_troca_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    remetente_usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    destinatario_usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False)
+    plantao_transferido_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plantoes.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    plantao_alvo_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plantoes.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    plantao_recebido_local_id: Mapped[int | None] = mapped_column(
+        ForeignKey("locais.id", ondelete="CASCADE"), nullable=True
+    )
+    plantao_recebido_data_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
+    plantao_recebido_horario_inicio: Mapped[time | None] = mapped_column(Time, nullable=True)
+    plantao_recebido_data_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
+    plantao_recebido_horario_fim: Mapped[time | None] = mapped_column(Time, nullable=True)
+    plantao_recebido_valor: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    plantao_recebido_sobreaviso: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pendente")
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    respondido_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    remetente: Mapped[User] = relationship(foreign_keys=[remetente_usuario_id])
+    destinatario: Mapped[User] = relationship(foreign_keys=[destinatario_usuario_id])
+    plantao_transferido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_transferido_id])
+    plantao_alvo: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_alvo_id])
+    plantao_recebido_local: Mapped["Local | None"] = relationship(foreign_keys=[plantao_recebido_local_id])

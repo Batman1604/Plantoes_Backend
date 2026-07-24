@@ -835,6 +835,46 @@ def ensure_financeiro_em_atraso_column() -> None:
 ensure_financeiro_em_atraso_column()
 
 
+def ensure_trocas_contraparte_usuario_id_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = connection.execute(text("PRAGMA table_info(trocas)")).fetchall()
+            col_names = [c[1] for c in cols]
+            if "contraparte_usuario_id" not in col_names:
+                connection.execute(text("ALTER TABLE trocas ADD COLUMN contraparte_usuario_id INTEGER NULL"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE trocas ADD COLUMN IF NOT EXISTS contraparte_usuario_id INTEGER NULL"
+            ))
+        return
+
+
+ensure_trocas_contraparte_usuario_id_column()
+
+
+def ensure_solicitacoes_troca_plantao_alvo_id_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = connection.execute(text("PRAGMA table_info(solicitacoes_troca)")).fetchall()
+            col_names = [c[1] for c in cols]
+            if "plantao_alvo_id" not in col_names:
+                connection.execute(text("ALTER TABLE solicitacoes_troca ADD COLUMN plantao_alvo_id INTEGER NULL"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE solicitacoes_troca ADD COLUMN IF NOT EXISTS plantao_alvo_id INTEGER NULL"
+            ))
+        return
+
+
+ensure_solicitacoes_troca_plantao_alvo_id_column()
+
+
 def backfill_financeiro() -> None:
     """Sincroniza financeiro para todos os plantões existentes — chamado uma vez na inicialização."""
     from app.repositories.plantao_repository import FinanceiroRepository

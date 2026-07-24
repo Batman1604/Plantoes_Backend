@@ -12,6 +12,7 @@ from app.models import (
     Financeiro,
     Local,
     Plantao,
+    SolicitacaoTroca,
     TokenRevogado,
     Transferencia,
     Troca,
@@ -637,6 +638,25 @@ class AmizadeRepository:
         )
 
     @staticmethod
+    def get_aceita_entre(db: Session, usuario_a_id: int, usuario_b_id: int) -> Amizade | None:
+        """Retorna a amizade ACEITA entre os dois usuários, em qualquer direção (ou None)."""
+        return db.scalar(
+            select(Amizade).where(
+                Amizade.status == "aceito",
+                or_(
+                    and_(
+                        Amizade.solicitante_usuario_id == usuario_a_id,
+                        Amizade.destinatario_usuario_id == usuario_b_id,
+                    ),
+                    and_(
+                        Amizade.solicitante_usuario_id == usuario_b_id,
+                        Amizade.destinatario_usuario_id == usuario_a_id,
+                    ),
+                ),
+            )
+        )
+
+    @staticmethod
     def create(db: Session, solicitante_usuario_id: int, destinatario_usuario_id: int) -> Amizade:
         amizade = Amizade(
             solicitante_usuario_id=solicitante_usuario_id,
@@ -779,6 +799,59 @@ class AmigoConfiguracaoRepository:
         db.commit()
         # Recarrega via get_by_id para garantir que locais_permitidos reflita as mudanças acima.
         return AmigoConfiguracaoRepository.get_by_id(db, config.id)
+
+
+class SolicitacaoTrocaRepository:
+    @staticmethod
+    def create(db: Session, **kwargs) -> SolicitacaoTroca:
+        solicitacao = SolicitacaoTroca(**kwargs)
+        db.add(solicitacao)
+        db.commit()
+        db.refresh(solicitacao)
+        return solicitacao
+
+    @staticmethod
+    def get_by_id(db: Session, solicitacao_id: int) -> SolicitacaoTroca | None:
+        return db.scalar(
+            select(SolicitacaoTroca)
+            .options(
+                selectinload(SolicitacaoTroca.remetente),
+                selectinload(SolicitacaoTroca.destinatario),
+                selectinload(SolicitacaoTroca.plantao_transferido),
+                selectinload(SolicitacaoTroca.plantao_alvo),
+                selectinload(SolicitacaoTroca.plantao_recebido_local),
+            )
+            .where(SolicitacaoTroca.id == solicitacao_id)
+        )
+
+    @staticmethod
+    def list_by_usuario(db: Session, usuario_id: int) -> list[SolicitacaoTroca]:
+        stmt = (
+            select(SolicitacaoTroca)
+            .options(
+                selectinload(SolicitacaoTroca.remetente),
+                selectinload(SolicitacaoTroca.destinatario),
+                selectinload(SolicitacaoTroca.plantao_transferido).selectinload(Plantao.local),
+                selectinload(SolicitacaoTroca.plantao_alvo).selectinload(Plantao.local),
+                selectinload(SolicitacaoTroca.plantao_recebido_local),
+            )
+            .where(
+                or_(
+                    SolicitacaoTroca.remetente_usuario_id == usuario_id,
+                    SolicitacaoTroca.destinatario_usuario_id == usuario_id,
+                )
+            )
+            .order_by(SolicitacaoTroca.id.desc())
+        )
+        return list(db.scalars(stmt).all())
+
+    @staticmethod
+    def marcar_respondida(db: Session, solicitacao: SolicitacaoTroca, status: str) -> SolicitacaoTroca:
+        solicitacao.status = status
+        solicitacao.respondido_em = datetime.now(UTC)
+        db.commit()
+        db.refresh(solicitacao)
+        return solicitacao
 
 
 class TokenRevogadoRepository:

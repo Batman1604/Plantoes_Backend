@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import Plantao, Troca
+from app.models import Plantao, SolicitacaoTroca, Troca
 from app.core.security import (
     create_access_token,
     create_purpose_token,
@@ -28,6 +28,7 @@ from app.repositories.plantao_repository import (
     FinanceiroRepository,
     LocalRepository,
     PlantaoRepository,
+    SolicitacaoTrocaRepository,
     TokenRevogadoRepository,
     BonificacaoRepository,
     TransferenciaRepository,
@@ -67,6 +68,11 @@ from app.schemas.plantao_schema import (
     ResetPasswordRequest,
     SenhaResetConfirmar,
     SenhaResetRequest,
+    SolicitacaoTrocaCreate,
+    SolicitacaoTrocaListItem,
+    SolicitacaoTrocaResponse,
+    PessoaTrocaResumo,
+    PlantaoTrocaResumo,
     TransferenciaAceitar,
     TransferenciaCreate,
     TransferenciaResponse,
@@ -147,6 +153,7 @@ def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
             "contraparte_nome": troca.nome_transferir or "",
             "contraparte_telefone": troca.telefone_transferir or "",
             "contraparte_observacao": troca.observacao_transferir,
+            "contraparte_usuario_id": troca.contraparte_usuario_id,
             "plantao_relacionado_id": troca.plantao_id_recebido,
         }
     else:
@@ -157,6 +164,7 @@ def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
             "contraparte_nome": troca.nome_receber or "",
             "contraparte_telefone": troca.telefone_receber or "",
             "contraparte_observacao": troca.observacao_receber,
+            "contraparte_usuario_id": troca.contraparte_usuario_id,
             "plantao_relacionado_id": troca.plantao_id_transferido,
         }
     return PlantaoResponse.model_validate(result)
@@ -2102,8 +2110,269 @@ def listar_plantoes_de_amigos(
                     cor=minhas_cores.get(amigo_id, "#0D9488"),
                     local_id=plantao.local_id,
                     local_nome=local.nome_local if local else "",
+                    local_endereco=local.endereco_local if local else None,
+                    local_dia_pagamento=local.dia_pagamento if local else None,
                     plantao=plantao_data,
                 )
             )
 
     return APIResponse(success=True, message="Plantões de amigos listados com sucesso.", data=itens)
+
+
+def _plantao_troca_resumo(plantao: Plantao) -> PlantaoTrocaResumo:
+    return PlantaoTrocaResumo(
+        id=plantao.id,
+        local_nome=plantao.local.nome_local if plantao.local else "",
+        data_inicio=plantao.data_inicio,
+        horario_inicio=plantao.horario_inicio,
+        data_fim=plantao.data_fim,
+        horario_fim=plantao.horario_fim,
+        valor=plantao.valor,
+    )
+
+
+def _plantao_recebido_troca_resumo(solicitacao: SolicitacaoTroca) -> PlantaoTrocaResumo | None:
+    if solicitacao.plantao_alvo_id is not None:
+        return _plantao_troca_resumo(solicitacao.plantao_alvo) if solicitacao.plantao_alvo else None
+
+    if solicitacao.plantao_recebido_local_id is None:
+        return None
+    local = solicitacao.plantao_recebido_local
+    return PlantaoTrocaResumo(
+        id=None,
+        local_nome=local.nome_local if local else "",
+        data_inicio=solicitacao.plantao_recebido_data_inicio,
+        horario_inicio=solicitacao.plantao_recebido_horario_inicio,
+        data_fim=solicitacao.plantao_recebido_data_fim,
+        horario_fim=solicitacao.plantao_recebido_horario_fim,
+        valor=solicitacao.plantao_recebido_valor,
+    )
+
+
+@router.post(
+    "/solicitacoes-troca",
+    response_model=APIResponse[SolicitacaoTrocaResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Solicitar troca de plantão com um amigo",
+    description=(
+        "Cria um pedido pendente de troca de plantão com um amigo (amizade precisa estar aceita). "
+        "Só vira uma troca de fato (POST /trocas) quando o destinatário aceitar."
+    ),
+)
+def criar_solicitacao_troca(
+    payload: SolicitacaoTrocaCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if payload.destinatario_usuario_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Não é possível solicitar troca consigo mesmo.")
+
+    destinatario = UserRepository.get_by_id(db, payload.destinatario_usuario_id)
+    if destinatario is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+
+    amizade = AmizadeRepository.get_aceita_entre(db, current_user.id, payload.destinatario_usuario_id)
+    if amizade is None:
+        raise HTTPException(status_code=403, detail="Só é possível solicitar troca com um amigo com amizade aceita.")
+
+    if payload.plantao_transferido_id is not None:
+        plantao = db.scalar(select(Plantao).where(Plantao.id == payload.plantao_transferido_id))
+        if plantao is None or plantao.usuario_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Plantão transferido não encontrado.")
+        if plantao.transferido:
+            raise HTTPException(status_code=400, detail="Este plantão já foi transferido e não pode ser transferido novamente.")
+
+    if payload.plantao_recebido is not None:
+        local = LocalRepository.get_by_id(db, payload.plantao_recebido.local_id)
+        if local is None or local.usuario_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Local do plantão recebido não encontrado.")
+
+    if payload.plantao_alvo_id is not None:
+        plantao_alvo = db.scalar(select(Plantao).where(Plantao.id == payload.plantao_alvo_id))
+        if plantao_alvo is None or plantao_alvo.usuario_id != payload.destinatario_usuario_id:
+            raise HTTPException(status_code=404, detail="Plantão alvo não encontrado ou não pertence ao destinatário.")
+        if plantao_alvo.transferido:
+            raise HTTPException(status_code=400, detail="Este plantão já foi transferido e não pode ser negociado novamente.")
+
+    recebido = payload.plantao_recebido
+    solicitacao = SolicitacaoTrocaRepository.create(
+        db,
+        remetente_usuario_id=current_user.id,
+        destinatario_usuario_id=payload.destinatario_usuario_id,
+        tipo=payload.tipo,
+        plantao_transferido_id=payload.plantao_transferido_id,
+        plantao_alvo_id=payload.plantao_alvo_id,
+        plantao_recebido_local_id=recebido.local_id if recebido else None,
+        plantao_recebido_data_inicio=recebido.data_inicio if recebido else None,
+        plantao_recebido_horario_inicio=recebido.horario_inicio if recebido else None,
+        plantao_recebido_data_fim=recebido.data_fim if recebido else None,
+        plantao_recebido_horario_fim=recebido.horario_fim if recebido else None,
+        plantao_recebido_valor=recebido.valor if recebido else None,
+        plantao_recebido_sobreaviso=recebido.sobreaviso if recebido else False,
+    )
+    logger.info(
+        "Solicitação de troca criada: %s -> %s (%s)", current_user.email, destinatario.email, payload.tipo
+    )
+    return APIResponse(
+        success=True,
+        message="Solicitação de troca enviada.",
+        data=SolicitacaoTrocaResponse.model_validate(solicitacao),
+    )
+
+
+@router.get(
+    "/solicitacoes-troca",
+    response_model=APIResponse[list[SolicitacaoTrocaListItem]],
+    summary="Listar solicitações de troca",
+    description="Lista as solicitações de troca em que o usuário autenticado é remetente ou destinatário.",
+)
+def listar_solicitacoes_troca(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    solicitacoes = SolicitacaoTrocaRepository.list_by_usuario(db, current_user.id)
+    itens = [
+        SolicitacaoTrocaListItem(
+            id=s.id,
+            tipo=s.tipo,
+            status=s.status,
+            papel="remetente" if s.remetente_usuario_id == current_user.id else "destinatario",
+            remetente=PessoaTrocaResumo(id=s.remetente.id, nome=s.remetente.nome),
+            destinatario=PessoaTrocaResumo(id=s.destinatario.id, nome=s.destinatario.nome),
+            plantao_transferido=_plantao_troca_resumo(s.plantao_transferido) if s.plantao_transferido else None,
+            plantao_recebido=_plantao_recebido_troca_resumo(s),
+        )
+        for s in solicitacoes
+    ]
+    return APIResponse(success=True, message="Solicitações de troca listadas com sucesso.", data=itens)
+
+
+@router.patch(
+    "/solicitacoes-troca/{solicitacao_id}/aceitar",
+    response_model=APIResponse[None],
+    summary="Aceitar solicitação de troca",
+    description=(
+        "Somente o destinatário pode aceitar. Executa o mesmo registro que POST /trocas já faz hoje "
+        "(marca o plantão transferido, cria o plantão recebido quando houver, e grava o registro em trocas), "
+        "usando os dados reais das contas de remetente e destinatário em vez de texto livre."
+    ),
+)
+def aceitar_solicitacao_troca(
+    solicitacao_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    solicitacao = SolicitacaoTrocaRepository.get_by_id(db, solicitacao_id)
+    if (
+        solicitacao is None
+        or solicitacao.destinatario_usuario_id != current_user.id
+        or solicitacao.status != "pendente"
+    ):
+        raise HTTPException(status_code=404, detail="Solicitação de troca não encontrada ou não está pendente.")
+
+    destinatario = solicitacao.destinatario
+
+    plantao_transferido = None
+    if solicitacao.plantao_transferido_id is not None:
+        plantao_transferido = db.scalar(
+            select(Plantao).where(Plantao.id == solicitacao.plantao_transferido_id)
+        )
+        if plantao_transferido is None or plantao_transferido.usuario_id != solicitacao.remetente_usuario_id:
+            raise HTTPException(status_code=404, detail="Plantão transferido não encontrado.")
+        if plantao_transferido.transferido:
+            raise HTTPException(status_code=400, detail="Este plantão já foi transferido e não pode ser transferido novamente.")
+
+    plantao_alvo = None
+    if solicitacao.plantao_alvo_id is not None:
+        plantao_alvo = db.scalar(select(Plantao).where(Plantao.id == solicitacao.plantao_alvo_id))
+        if plantao_alvo is None or plantao_alvo.usuario_id != solicitacao.destinatario_usuario_id:
+            raise HTTPException(status_code=404, detail="Plantão alvo não encontrado ou não pertence mais ao destinatário.")
+        if plantao_alvo.transferido:
+            raise HTTPException(status_code=400, detail="Este plantão já foi transferido e não pode ser negociado novamente.")
+
+    if solicitacao.plantao_recebido_local_id is not None:
+        local = LocalRepository.get_by_id(db, solicitacao.plantao_recebido_local_id)
+        if local is None or local.usuario_id != solicitacao.remetente_usuario_id:
+            raise HTTPException(status_code=404, detail="Local do plantão recebido não encontrado.")
+
+    try:
+        if plantao_transferido is not None:
+            plantao_transferido.transferido = True
+
+        recebido = None
+        if plantao_alvo is not None:
+            # Transfere a posse do plantão já existente do destinatário — não cria um novo.
+            plantao_alvo.usuario_id = solicitacao.remetente_usuario_id
+            plantao_alvo.recebido_via_transferencia = True
+            recebido = plantao_alvo
+        elif solicitacao.plantao_recebido_local_id is not None:
+            recebido = Plantao(
+                usuario_id=solicitacao.remetente_usuario_id,
+                local_id=solicitacao.plantao_recebido_local_id,
+                valor=solicitacao.plantao_recebido_valor,
+                data_inicio=solicitacao.plantao_recebido_data_inicio,
+                horario_inicio=solicitacao.plantao_recebido_horario_inicio,
+                data_fim=solicitacao.plantao_recebido_data_fim,
+                horario_fim=solicitacao.plantao_recebido_horario_fim,
+                sobreaviso=solicitacao.plantao_recebido_sobreaviso,
+                recorrencia=None,
+                notificacao_ativa=True,
+                notificacao_antecedencia_minutos=60,
+                notificado=False,
+                executado=False,
+                transferido=False,
+                recebido_via_transferencia=True,
+            )
+            db.add(recebido)
+            db.flush()
+
+        troca = Troca(
+            usuario_id=solicitacao.remetente_usuario_id,
+            local_id=(recebido.local_id if recebido is not None else plantao_transferido.local_id),
+            plantao_id_transferido=plantao_transferido.id if plantao_transferido is not None else None,
+            plantao_id_recebido=recebido.id if recebido is not None else None,
+            nome_transferir=destinatario.nome if plantao_transferido is not None else None,
+            telefone_transferir=destinatario.telefone if plantao_transferido is not None else None,
+            nome_receber=destinatario.nome if recebido is not None else None,
+            telefone_receber=destinatario.telefone if recebido is not None else None,
+            contraparte_usuario_id=destinatario.id,
+        )
+        db.add(troca)
+        db.flush()
+
+        solicitacao.status = "aceita"
+        solicitacao.respondido_em = datetime.now(UTC)
+        db.add(solicitacao)
+
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Falha transacional ao aceitar solicitação de troca")
+        raise HTTPException(status_code=500, detail="Não foi possível concluir a troca; nenhuma alteração foi salva.") from exc
+
+    logger.info("Solicitação de troca %s aceita por %s", solicitacao_id, current_user.email)
+    return APIResponse(success=True, message="Troca concluída com sucesso.", data=None)
+
+
+@router.patch(
+    "/solicitacoes-troca/{solicitacao_id}/rejeitar",
+    response_model=APIResponse[None],
+    summary="Rejeitar solicitação de troca",
+    description="Somente o destinatário pode rejeitar. Marca status='rejeitada', sem outro efeito.",
+)
+def rejeitar_solicitacao_troca(
+    solicitacao_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    solicitacao = SolicitacaoTrocaRepository.get_by_id(db, solicitacao_id)
+    if (
+        solicitacao is None
+        or solicitacao.destinatario_usuario_id != current_user.id
+        or solicitacao.status != "pendente"
+    ):
+        raise HTTPException(status_code=404, detail="Solicitação de troca não encontrada ou não está pendente.")
+
+    SolicitacaoTrocaRepository.marcar_respondida(db, solicitacao, "rejeitada")
+    logger.info("Solicitação de troca %s rejeitada por %s", solicitacao_id, current_user.email)
+    return APIResponse(success=True, message="Solicitação de troca rejeitada.", data=None)
