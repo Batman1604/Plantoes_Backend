@@ -285,6 +285,20 @@ class PlantaoRepository:
         )
 
     @staticmethod
+    def get_by_id_and_user_incluindo_transferidos(db: Session, plantao_id: int, usuario_id: int) -> Plantao | None:
+        """Como get_by_id_and_user, mas também retorna plantões já transferidos.
+
+        Usado onde é preciso distinguir 'não existe/não é seu' (404) de
+        'existe, é seu, mas já foi transferido' (409) — ex.: PATCH/DELETE de /plantoes/:id.
+        """
+        return db.scalar(
+            select(Plantao).where(
+                Plantao.id == plantao_id,
+                Plantao.usuario_id == usuario_id,
+            )
+        )
+
+    @staticmethod
     def update_by_user(db: Session, plantao_id: int, usuario_id: int, **kwargs) -> Plantao | None:
         plantao = db.scalar(
             select(Plantao).where(

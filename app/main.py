@@ -875,6 +875,43 @@ def ensure_solicitacoes_troca_plantao_alvo_id_column() -> None:
 ensure_solicitacoes_troca_plantao_alvo_id_column()
 
 
+def ensure_trocas_contraparte_usuario_id_receber_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = connection.execute(text("PRAGMA table_info(trocas)")).fetchall()
+            col_names = [c[1] for c in cols]
+            if "contraparte_usuario_id_receber" not in col_names:
+                connection.execute(
+                    text("ALTER TABLE trocas ADD COLUMN contraparte_usuario_id_receber INTEGER NULL")
+                )
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE trocas ADD COLUMN IF NOT EXISTS contraparte_usuario_id_receber INTEGER NULL"
+            ))
+        return
+
+
+ensure_trocas_contraparte_usuario_id_receber_column()
+
+
+def backfill_contraparte_usuario_id_receber() -> None:
+    """Para trocas já existentes com plantao_id_recebido, o recebido sempre pertencia ao
+    remetente (comportamento anterior a este fix), então a contraparte do lado 'recebido'
+    é a mesma já gravada em contraparte_usuario_id."""
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE trocas SET contraparte_usuario_id_receber = contraparte_usuario_id "
+            "WHERE plantao_id_recebido IS NOT NULL AND contraparte_usuario_id_receber IS NULL "
+            "AND contraparte_usuario_id IS NOT NULL"
+        ))
+
+
+backfill_contraparte_usuario_id_receber()
+
+
 def backfill_financeiro() -> None:
     """Sincroniza financeiro para todos os plantões existentes — chamado uma vez na inicialização."""
     from app.repositories.plantao_repository import FinanceiroRepository

@@ -199,11 +199,15 @@ class Troca(Base):
     contraparte_usuario_id: Mapped[int | None] = mapped_column(
         ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    contraparte_usuario_id_receber: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     local_rel: Mapped["Local | None"] = relationship(foreign_keys=[local_id])
     plantao_transferido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_transferido])
     plantao_recebido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_recebido])
     contraparte: Mapped["User | None"] = relationship(foreign_keys=[contraparte_usuario_id])
+    contraparte_receber: Mapped["User | None"] = relationship(foreign_keys=[contraparte_usuario_id_receber])
 
 
 class Amizade(Base):

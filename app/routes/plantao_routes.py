@@ -164,7 +164,7 @@ def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
             "contraparte_nome": troca.nome_receber or "",
             "contraparte_telefone": troca.telefone_receber or "",
             "contraparte_observacao": troca.observacao_receber,
-            "contraparte_usuario_id": troca.contraparte_usuario_id,
+            "contraparte_usuario_id": troca.contraparte_usuario_id_receber,
             "plantao_relacionado_id": troca.plantao_id_transferido,
         }
     return PlantaoResponse.model_validate(result)
@@ -1207,9 +1207,14 @@ def atualizar_plantao(
     if dados_atualizacao.get("recorrencia") == "Unico":
         dados_atualizacao["recorrencia"] = None
 
-    plantao_atual = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
+    plantao_atual = PlantaoRepository.get_by_id_and_user_incluindo_transferidos(db, plantao_id, current_user.id)
     if plantao_atual is None:
         raise HTTPException(status_code=404, detail="Plantão não encontrado")
+    if plantao_atual.transferido:
+        raise HTTPException(
+            status_code=409,
+            detail="Este plantão foi transferido e não pode mais ser editado pelo dono original.",
+        )
 
     local_destino_id = dados_atualizacao.get("local_id", plantao_atual.local_id)
     local = LocalRepository.get_by_id(db, local_destino_id)
@@ -1496,9 +1501,14 @@ def deletar_plantao(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    plantao_del = PlantaoRepository.get_by_id_and_user(db, plantao_id, current_user.id)
+    plantao_del = PlantaoRepository.get_by_id_and_user_incluindo_transferidos(db, plantao_id, current_user.id)
     if plantao_del is None:
         raise HTTPException(status_code=404, detail="Plantão não encontrado")
+    if plantao_del.transferido:
+        raise HTTPException(
+            status_code=409,
+            detail="Este plantão foi transferido e não pode mais ser editado pelo dono original.",
+        )
     _sync_del = (plantao_del.local_id, plantao_del.data_inicio.month, plantao_del.data_inicio.year)
     PlantaoRepository.delete_by_user(db, plantao_id, current_user.id)
     FinanceiroRepository.sync_mes(db, *_sync_del)
@@ -2252,9 +2262,11 @@ def listar_solicitacoes_troca(
     response_model=APIResponse[None],
     summary="Aceitar solicitação de troca",
     description=(
-        "Somente o destinatário pode aceitar. Executa o mesmo registro que POST /trocas já faz hoje "
-        "(marca o plantão transferido, cria o plantão recebido quando houver, e grava o registro em trocas), "
-        "usando os dados reais das contas de remetente e destinatário em vez de texto livre."
+        "Somente o destinatário pode aceitar. Marca o plantão transferido, cria/transfere o "
+        "plantão recebido quando houver, e grava o registro em trocas usando os dados reais das "
+        "contas de remetente e destinatário em vez de texto livre. Para tipo='transferir' puro "
+        "(sem plantao_recebido nem plantao_alvo_id), clona o plantão transferido para a conta do "
+        "destinatário, que passa a ter o próprio plantão marcado recebido_via_transferencia=true."
     ),
 )
 def aceitar_solicitacao_troca(
@@ -2270,6 +2282,7 @@ def aceitar_solicitacao_troca(
     ):
         raise HTTPException(status_code=404, detail="Solicitação de troca não encontrada ou não está pendente.")
 
+    remetente = solicitacao.remetente
     destinatario = solicitacao.destinatario
 
     plantao_transferido = None
@@ -2325,6 +2338,35 @@ def aceitar_solicitacao_troca(
             )
             db.add(recebido)
             db.flush()
+        elif plantao_transferido is not None:
+            # tipo='transferir' puro: sem plantao_recebido nem plantao_alvo_id, o destinatário
+            # ainda precisa ganhar o plantão na própria conta — clona os dados do transferido.
+            recebido = Plantao(
+                usuario_id=solicitacao.destinatario_usuario_id,
+                local_id=plantao_transferido.local_id,
+                valor=plantao_transferido.valor,
+                data_inicio=plantao_transferido.data_inicio,
+                horario_inicio=plantao_transferido.horario_inicio,
+                data_fim=plantao_transferido.data_fim,
+                horario_fim=plantao_transferido.horario_fim,
+                sobreaviso=plantao_transferido.sobreaviso,
+                descricao=plantao_transferido.descricao,
+                recorrencia=None,
+                notificacao_ativa=True,
+                notificacao_antecedencia_minutos=60,
+                notificado=False,
+                executado=False,
+                transferido=False,
+                recebido_via_transferencia=True,
+            )
+            db.add(recebido)
+            db.flush()
+
+        # A contraparte do lado "recebido" depende de quem ficou dono do plantão recebido:
+        # se foi o remetente (tipos receber/trocar), a contraparte é o destinatário; se foi
+        # o destinatário (clone do tipo=transferir), a contraparte é o remetente.
+        recebido_pertence_ao_remetente = recebido is not None and recebido.usuario_id == solicitacao.remetente_usuario_id
+        contraparte_do_recebido = destinatario if recebido_pertence_ao_remetente else remetente
 
         troca = Troca(
             usuario_id=solicitacao.remetente_usuario_id,
@@ -2333,9 +2375,10 @@ def aceitar_solicitacao_troca(
             plantao_id_recebido=recebido.id if recebido is not None else None,
             nome_transferir=destinatario.nome if plantao_transferido is not None else None,
             telefone_transferir=destinatario.telefone if plantao_transferido is not None else None,
-            nome_receber=destinatario.nome if recebido is not None else None,
-            telefone_receber=destinatario.telefone if recebido is not None else None,
+            nome_receber=contraparte_do_recebido.nome if recebido is not None else None,
+            telefone_receber=contraparte_do_recebido.telefone if recebido is not None else None,
             contraparte_usuario_id=destinatario.id,
+            contraparte_usuario_id_receber=contraparte_do_recebido.id if recebido is not None else None,
         )
         db.add(troca)
         db.flush()
