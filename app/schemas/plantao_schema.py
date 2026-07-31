@@ -526,6 +526,17 @@ class SolicitacaoTrocaCreate(BaseModel):
         return self
 
 
+class SolicitacaoTrocaAceitar(BaseModel):
+    local_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "ID do local na conta do destinatário ao qual o plantão clonado será vinculado. "
+            "Obrigatório apenas para tipo='transferir' puro (quando o destinatário ainda não "
+            "possui um plantão/local próprio informado na solicitação)."
+        ),
+    )
+
+
 class SolicitacaoTrocaResponse(BaseModel):
     id: int
     remetente_usuario_id: int

@@ -68,6 +68,7 @@ from app.schemas.plantao_schema import (
     ResetPasswordRequest,
     SenhaResetConfirmar,
     SenhaResetRequest,
+    SolicitacaoTrocaAceitar,
     SolicitacaoTrocaCreate,
     SolicitacaoTrocaListItem,
     SolicitacaoTrocaResponse,
@@ -2271,6 +2272,7 @@ def listar_solicitacoes_troca(
 )
 def aceitar_solicitacao_troca(
     solicitacao_id: int,
+    payload: SolicitacaoTrocaAceitar | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -2308,6 +2310,19 @@ def aceitar_solicitacao_troca(
         if local is None or local.usuario_id != solicitacao.remetente_usuario_id:
             raise HTTPException(status_code=404, detail="Local do plantão recebido não encontrado.")
 
+    # tipo='transferir' puro: o plantão será clonado para a conta do destinatário, então
+    # precisamos de um local que já pertença a ele (o local do remetente não serve).
+    destinatario_local = None
+    if plantao_transferido is not None and plantao_alvo is None and solicitacao.plantao_recebido_local_id is None:
+        if payload is None or payload.local_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Informe local_id (de um local da sua própria conta) para aceitar esta transferência.",
+            )
+        destinatario_local = LocalRepository.get_by_id(db, payload.local_id)
+        if destinatario_local is None or destinatario_local.usuario_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Local não encontrado ou não pertence à sua conta.")
+
     try:
         if plantao_transferido is not None:
             plantao_transferido.transferido = True
@@ -2340,10 +2355,11 @@ def aceitar_solicitacao_troca(
             db.flush()
         elif plantao_transferido is not None:
             # tipo='transferir' puro: sem plantao_recebido nem plantao_alvo_id, o destinatário
-            # ainda precisa ganhar o plantão na própria conta — clona os dados do transferido.
+            # ainda precisa ganhar o plantão na própria conta — clona os dados do transferido,
+            # mas vinculado a um local que já pertence ao destinatário.
             recebido = Plantao(
                 usuario_id=solicitacao.destinatario_usuario_id,
-                local_id=plantao_transferido.local_id,
+                local_id=destinatario_local.id,
                 valor=plantao_transferido.valor,
                 data_inicio=plantao_transferido.data_inicio,
                 horario_inicio=plantao_transferido.horario_inicio,

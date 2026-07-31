@@ -36,7 +36,6 @@ class FinanceiroService:
             .where(
                 Plantao.usuario_id == usuario_id,
                 Plantao.transferido.is_(False),
-                Plantao.recebido_via_transferencia.is_(False),
                 extract("month", Plantao.data_inicio) == mes,
                 extract("year", Plantao.data_inicio) == ano,
             )

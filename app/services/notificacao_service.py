@@ -4,7 +4,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import Local, Plantao
+from app.models import Plantao
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class NotificacaoService:
                 Plantao.notificacao_ativa.is_(True),
                 Plantao.notificado.is_(False),
             )
-            .options(joinedload(Plantao.local).joinedload(Local.usuario))
+            .options(joinedload(Plantao.usuario))
         )
         plantoes = db.scalars(stmt).unique().all()
 
@@ -61,8 +61,8 @@ class NotificacaoService:
 
         for plantao in plantoes:
             try:
-                if plantao.local is not None and plantao.local.usuario is not None:
-                    email = plantao.local.usuario.email
+                if plantao.usuario is not None:
+                    email = plantao.usuario.email
                 else:
                     email = "destinatario@desconhecido"
 

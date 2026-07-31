@@ -76,6 +76,7 @@ class Plantao(Base):
     descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     local: Mapped[Local] = relationship(back_populates="plantoes")
+    usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
     transferencia: Mapped["Transferencia | None"] = relationship(
         back_populates="plantao",
         uselist=False,
