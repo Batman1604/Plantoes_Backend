@@ -245,7 +245,7 @@ class PlantaoRepository:
         stmt = (
             select(Plantao)
             .where(Plantao.usuario_id == usuario_id)
-            .options(selectinload(Plantao.bonificacoes))
+            .options(selectinload(Plantao.bonificacoes), selectinload(Plantao.local))
             .order_by(Plantao.id.desc())
         )
         return db.scalars(stmt).all()
@@ -265,7 +265,7 @@ class PlantaoRepository:
                 Plantao.local_id.in_(local_ids),
                 Plantao.transferido.is_(False),
             )
-            .options(selectinload(Plantao.bonificacoes))
+            .options(selectinload(Plantao.bonificacoes), selectinload(Plantao.local))
             .order_by(Plantao.data_inicio.desc())
         )
         return list(db.scalars(stmt).all())

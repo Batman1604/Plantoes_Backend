@@ -68,7 +68,6 @@ from app.schemas.plantao_schema import (
     ResetPasswordRequest,
     SenhaResetConfirmar,
     SenhaResetRequest,
-    SolicitacaoTrocaAceitar,
     SolicitacaoTrocaCreate,
     SolicitacaoTrocaListItem,
     SolicitacaoTrocaResponse,
@@ -2272,7 +2271,6 @@ def listar_solicitacoes_troca(
 )
 def aceitar_solicitacao_troca(
     solicitacao_id: int,
-    payload: SolicitacaoTrocaAceitar | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -2310,31 +2308,21 @@ def aceitar_solicitacao_troca(
         if local is None or local.usuario_id != solicitacao.remetente_usuario_id:
             raise HTTPException(status_code=404, detail="Local do plantão recebido não encontrado.")
 
-    # tipo='transferir' puro: o plantão será clonado para a conta do destinatário, então
-    # precisamos de um local que já pertença a ele (o local do remetente não serve).
-    destinatario_local = None
-    if plantao_transferido is not None and plantao_alvo is None and solicitacao.plantao_recebido_local_id is None:
-        if payload is None or payload.local_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Informe local_id (de um local da sua própria conta) para aceitar esta transferência.",
-            )
-        destinatario_local = LocalRepository.get_by_id(db, payload.local_id)
-        if destinatario_local is None or destinatario_local.usuario_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Local não encontrado ou não pertence à sua conta.")
-
     try:
         if plantao_transferido is not None:
             plantao_transferido.transferido = True
 
-        recebido = None
+        # Lado do remetente: o que ele ganha nesta solicitação, quando o destinatário está
+        # cedendo um plantão (tipos 'receber' e 'trocar'). Independente do lado do
+        # destinatário abaixo — numa troca real (tipo='trocar') os dois acontecem juntos.
+        recebido_remetente = None
         if plantao_alvo is not None:
             # Transfere a posse do plantão já existente do destinatário — não cria um novo.
             plantao_alvo.usuario_id = solicitacao.remetente_usuario_id
             plantao_alvo.recebido_via_transferencia = True
-            recebido = plantao_alvo
+            recebido_remetente = plantao_alvo
         elif solicitacao.plantao_recebido_local_id is not None:
-            recebido = Plantao(
+            recebido_remetente = Plantao(
                 usuario_id=solicitacao.remetente_usuario_id,
                 local_id=solicitacao.plantao_recebido_local_id,
                 valor=solicitacao.plantao_recebido_valor,
@@ -2351,15 +2339,22 @@ def aceitar_solicitacao_troca(
                 transferido=False,
                 recebido_via_transferencia=True,
             )
-            db.add(recebido)
+            db.add(recebido_remetente)
             db.flush()
-        elif plantao_transferido is not None:
-            # tipo='transferir' puro: sem plantao_recebido nem plantao_alvo_id, o destinatário
-            # ainda precisa ganhar o plantão na própria conta — clona os dados do transferido,
-            # mas vinculado a um local que já pertence ao destinatário.
-            recebido = Plantao(
+
+        # Lado do destinatário: o que ele ganha nesta solicitação, sempre que o remetente
+        # está cedendo plantao_transferido (tipos 'transferir' e 'trocar'). Isso NÃO pode
+        # ser um elif do bloco acima — numa troca real (tipo='trocar') ambos os lados
+        # precisam ser processados, senão quem aceita nunca recebe o plantão do remetente
+        # (bug: só o remetente ficava com os dois plantões após aceitar uma troca).
+        # É sempre um clone novo — o plantão original permanece com o remetente, só
+        # marcado transferido=True para histórico. Não fica vinculado a nenhum local
+        # próprio do destinatário; existe só como card do recebimento.
+        recebido_destinatario = None
+        if plantao_transferido is not None:
+            recebido_destinatario = Plantao(
                 usuario_id=solicitacao.destinatario_usuario_id,
-                local_id=destinatario_local.id,
+                local_id=plantao_transferido.local_id,
                 valor=plantao_transferido.valor,
                 data_inicio=plantao_transferido.data_inicio,
                 horario_inicio=plantao_transferido.horario_inicio,
@@ -2375,28 +2370,35 @@ def aceitar_solicitacao_troca(
                 transferido=False,
                 recebido_via_transferencia=True,
             )
-            db.add(recebido)
+            db.add(recebido_destinatario)
             db.flush()
 
-        # A contraparte do lado "recebido" depende de quem ficou dono do plantão recebido:
-        # se foi o remetente (tipos receber/trocar), a contraparte é o destinatário; se foi
-        # o destinatário (clone do tipo=transferir), a contraparte é o remetente.
-        recebido_pertence_ao_remetente = recebido is not None and recebido.usuario_id == solicitacao.remetente_usuario_id
-        contraparte_do_recebido = destinatario if recebido_pertence_ao_remetente else remetente
+        # Cada lado vira seu próprio registro Troca, para que cada plantão envolvido
+        # (transferido ou recebido) resolva a contraparte correta em _plantao_com_troca.
+        # Uma troca real (tipo='trocar') gera as duas: uma para cada sentido.
+        if plantao_transferido is not None:
+            db.add(Troca(
+                usuario_id=solicitacao.remetente_usuario_id,
+                local_id=plantao_transferido.local_id,
+                plantao_id_transferido=plantao_transferido.id,
+                plantao_id_recebido=recebido_destinatario.id,
+                nome_transferir=destinatario.nome,
+                telefone_transferir=destinatario.telefone,
+                contraparte_usuario_id=destinatario.id,
+                nome_receber=remetente.nome,
+                telefone_receber=remetente.telefone,
+                contraparte_usuario_id_receber=remetente.id,
+            ))
 
-        troca = Troca(
-            usuario_id=solicitacao.remetente_usuario_id,
-            local_id=(recebido.local_id if recebido is not None else plantao_transferido.local_id),
-            plantao_id_transferido=plantao_transferido.id if plantao_transferido is not None else None,
-            plantao_id_recebido=recebido.id if recebido is not None else None,
-            nome_transferir=destinatario.nome if plantao_transferido is not None else None,
-            telefone_transferir=destinatario.telefone if plantao_transferido is not None else None,
-            nome_receber=contraparte_do_recebido.nome if recebido is not None else None,
-            telefone_receber=contraparte_do_recebido.telefone if recebido is not None else None,
-            contraparte_usuario_id=destinatario.id,
-            contraparte_usuario_id_receber=contraparte_do_recebido.id if recebido is not None else None,
-        )
-        db.add(troca)
+        if recebido_remetente is not None:
+            db.add(Troca(
+                usuario_id=solicitacao.remetente_usuario_id,
+                local_id=recebido_remetente.local_id,
+                plantao_id_recebido=recebido_remetente.id,
+                nome_receber=destinatario.nome,
+                telefone_receber=destinatario.telefone,
+                contraparte_usuario_id_receber=destinatario.id,
+            ))
         db.flush()
 
         solicitacao.status = "aceita"

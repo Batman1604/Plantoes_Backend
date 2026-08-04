@@ -355,6 +355,8 @@ class PlantaoResponse(BaseModel):
     id: int
     usuario_id: int
     local_id: int
+    local_nome: str = ""
+    local_cor: Optional[str] = None
     valor: Decimal = Decimal("0")
     data_inicio: date
     data_fim: date
@@ -386,6 +388,11 @@ class PlantaoResponse(BaseModel):
                 "id": obj.id,
                 "usuario_id": obj.usuario_id,
                 "local_id": obj.local_id,
+                # Resolvido aqui porque um plantão recebido via troca/transferência aponta
+                # para um local que pertence a quem cedeu, não a quem está vendo a resposta —
+                # esse local nunca aparece no GET /locais de quem recebeu.
+                "local_nome": obj.local.nome_local if getattr(obj, "local", None) else "",
+                "local_cor": obj.local.cor if getattr(obj, "local", None) else None,
                 "valor": obj.valor,
                 "data_inicio": obj.data_inicio,
                 "data_fim": obj.data_fim,
@@ -524,17 +531,6 @@ class SolicitacaoTrocaCreate(BaseModel):
                     "Para tipo='trocar', informe plantao_transferido_id e (plantao_recebido OU plantao_alvo_id)."
                 )
         return self
-
-
-class SolicitacaoTrocaAceitar(BaseModel):
-    local_id: Optional[int] = Field(
-        default=None,
-        description=(
-            "ID do local na conta do destinatário ao qual o plantão clonado será vinculado. "
-            "Obrigatório apenas para tipo='transferir' puro (quando o destinatário ainda não "
-            "possui um plantão/local próprio informado na solicitação)."
-        ),
-    )
 
 
 class SolicitacaoTrocaResponse(BaseModel):
