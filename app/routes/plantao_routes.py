@@ -2317,10 +2317,32 @@ def aceitar_solicitacao_troca(
         # destinatário abaixo — numa troca real (tipo='trocar') os dois acontecem juntos.
         recebido_remetente = None
         if plantao_alvo is not None:
-            # Transfere a posse do plantão já existente do destinatário — não cria um novo.
-            plantao_alvo.usuario_id = solicitacao.remetente_usuario_id
-            plantao_alvo.recebido_via_transferencia = True
-            recebido_remetente = plantao_alvo
+            # Mesmo tratamento do plantao_transferido abaixo: o plantão original
+            # permanece com quem cedeu (destinatário), só marcado transferido=True, e um
+            # clone novo é criado para quem recebe. Reatribuir usuario_id diretamente
+            # (comportamento antigo) fazia o plantão sumir da agenda de quem cedeu, sem
+            # deixar rastro de que ele foi transferido.
+            plantao_alvo.transferido = True
+            recebido_remetente = Plantao(
+                usuario_id=solicitacao.remetente_usuario_id,
+                local_id=plantao_alvo.local_id,
+                valor=plantao_alvo.valor,
+                data_inicio=plantao_alvo.data_inicio,
+                horario_inicio=plantao_alvo.horario_inicio,
+                data_fim=plantao_alvo.data_fim,
+                horario_fim=plantao_alvo.horario_fim,
+                sobreaviso=plantao_alvo.sobreaviso,
+                descricao=plantao_alvo.descricao,
+                recorrencia=None,
+                notificacao_ativa=True,
+                notificacao_antecedencia_minutos=60,
+                notificado=False,
+                executado=False,
+                transferido=False,
+                recebido_via_transferencia=True,
+            )
+            db.add(recebido_remetente)
+            db.flush()
         elif solicitacao.plantao_recebido_local_id is not None:
             recebido_remetente = Plantao(
                 usuario_id=solicitacao.remetente_usuario_id,
@@ -2392,9 +2414,13 @@ def aceitar_solicitacao_troca(
 
         if recebido_remetente is not None:
             db.add(Troca(
-                usuario_id=solicitacao.remetente_usuario_id,
+                usuario_id=solicitacao.destinatario_usuario_id,
                 local_id=recebido_remetente.local_id,
+                plantao_id_transferido=plantao_alvo.id if plantao_alvo is not None else None,
                 plantao_id_recebido=recebido_remetente.id,
+                nome_transferir=remetente.nome if plantao_alvo is not None else None,
+                telefone_transferir=remetente.telefone if plantao_alvo is not None else None,
+                contraparte_usuario_id=remetente.id if plantao_alvo is not None else None,
                 nome_receber=destinatario.nome,
                 telefone_receber=destinatario.telefone,
                 contraparte_usuario_id_receber=destinatario.id,
