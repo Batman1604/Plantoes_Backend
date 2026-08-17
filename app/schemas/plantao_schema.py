@@ -573,6 +573,7 @@ class SolicitacaoTrocaListItem(BaseModel):
     destinatario: PessoaTrocaResumo
     plantao_transferido: Optional[PlantaoTrocaResumo] = None
     plantao_recebido: Optional[PlantaoTrocaResumo] = None
+    criado_em: datetime
 
 
 class TransferenciaCreate(BaseModel):
@@ -744,11 +745,17 @@ class AmizadeResponse(BaseModel):
         from_attributes = True
 
 
+class AmizadeAmigoResumo(UsuarioResumo):
+    """Dados do outro usuário numa amizade/solicitação — inclui telefone porque, diferente da
+    busca genérica de usuários, aqui já existe uma amizade real (ou solicitação) entre as partes."""
+    telefone: Optional[str] = None
+
+
 class AmizadeListItem(BaseModel):
     id: int
     status: str
     papel: Literal["solicitante", "destinatario"]
-    amigo: UsuarioResumo
+    amigo: AmizadeAmigoResumo
     configuracao_id: Optional[int] = Field(
         default=None, description="ID da linha de amigo_configuracoes do usuário autenticado (para PATCH /api/amigo-configuracoes/:id). Presente apenas quando status='aceito'."
     )
@@ -756,6 +763,7 @@ class AmizadeListItem(BaseModel):
     mostrar_valores: Optional[bool] = None
     cor: Optional[str] = None
     locais_permitidos: list[int] = Field(default_factory=list)
+    criado_em: datetime
 
 
 class AmigoConfiguracaoUpdate(BaseModel):

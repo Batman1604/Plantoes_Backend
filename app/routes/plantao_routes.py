@@ -42,6 +42,7 @@ from app.schemas.plantao_schema import (
     AmigoConfiguracaoResponse,
     AmigoConfiguracaoUpdate,
     AmigoPlantaoItem,
+    AmizadeAmigoResumo,
     AmizadeCreate,
     AmizadeListItem,
     AmizadeResponse,
@@ -1843,16 +1844,25 @@ def _serializar_amigo_configuracao(config) -> AmigoConfiguracaoResponse:
 @router.get(
     "/usuarios/busca",
     response_model=APIResponse[list[UsuarioResumo]],
-    summary="Buscar usuários por email",
-    description="Busca usuários por prefixo de email (máx. 5 resultados), excluindo o próprio usuário "
-    "e quem já tem amizade pendente ou aceita com ele.",
+    summary="Buscar usuários por email ou telefone",
+    description="Busca usuários por prefixo de email OU por telefone normalizado (máx. 5 resultados), "
+    "excluindo o próprio usuário e quem já tem amizade pendente ou aceita com ele. Informe "
+    "exatamente um dos dois parâmetros.",
 )
 def buscar_usuarios(
-    email: str = Query(..., min_length=1, max_length=255),
+    email: str | None = Query(default=None, min_length=1, max_length=255),
+    telefone: str | None = Query(default=None, min_length=1, max_length=30),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    usuarios = UserRepository.buscar_por_email_prefixo(db, email, excluir_usuario_id=current_user.id)
+    if (email is None) == (telefone is None):
+        raise HTTPException(status_code=400, detail="Informe email ou telefone, nunca os dois nem nenhum.")
+
+    if email is not None:
+        usuarios = UserRepository.buscar_por_email_prefixo(db, email, excluir_usuario_id=current_user.id)
+    else:
+        usuarios = UserRepository.buscar_por_telefone(db, telefone, excluir_usuario_id=current_user.id)
+
     return APIResponse(
         success=True,
         message="Usuários encontrados.",
@@ -1926,12 +1936,13 @@ def listar_amizades(
                 id=amizade.id,
                 status=amizade.status,
                 papel=papel,
-                amigo=UsuarioResumo.model_validate(outro),
+                amigo=AmizadeAmigoResumo.model_validate(outro),
                 configuracao_id=config.id if config else None,
                 modo_visibilidade=config.modo_visibilidade if config else None,
                 mostrar_valores=config.mostrar_valores if config else None,
                 cor=config.cor if config else None,
                 locais_permitidos=[item.local_id for item in config.locais_permitidos] if config else [],
+                criado_em=amizade.criado_em,
             )
         )
 
@@ -1951,8 +1962,12 @@ def aceitar_amizade(
     current_user=Depends(get_current_user),
 ):
     amizade = AmizadeRepository.get_by_id(db, amizade_id)
-    if amizade is None or amizade.destinatario_usuario_id != current_user.id or amizade.status != "pendente":
-        raise HTTPException(status_code=404, detail="Solicitação de amizade não encontrada ou não está pendente.")
+    if amizade is None or current_user.id not in (amizade.solicitante_usuario_id, amizade.destinatario_usuario_id):
+        raise HTTPException(status_code=404, detail="Solicitação de amizade não encontrada.")
+    if amizade.destinatario_usuario_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Apenas o destinatário pode aceitar esta solicitação.")
+    if amizade.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação de amizade não está pendente.")
 
     amizade, _, _ = AmizadeRepository.aceitar(db, amizade)
     logger.info("Amizade %s aceita por %s", amizade_id, current_user.email)
@@ -1971,8 +1986,12 @@ def rejeitar_amizade(
     current_user=Depends(get_current_user),
 ):
     amizade = AmizadeRepository.get_by_id(db, amizade_id)
-    if amizade is None or amizade.destinatario_usuario_id != current_user.id or amizade.status != "pendente":
-        raise HTTPException(status_code=404, detail="Solicitação de amizade não encontrada ou não está pendente.")
+    if amizade is None or current_user.id not in (amizade.solicitante_usuario_id, amizade.destinatario_usuario_id):
+        raise HTTPException(status_code=404, detail="Solicitação de amizade não encontrada.")
+    if amizade.destinatario_usuario_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Apenas o destinatário pode rejeitar esta solicitação.")
+    if amizade.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação de amizade não está pendente.")
 
     AmizadeRepository.rejeitar(db, amizade)
     logger.info("Amizade %s rejeitada por %s", amizade_id, current_user.email)
@@ -1982,9 +2001,10 @@ def rejeitar_amizade(
 @router.delete(
     "/amizades/{amizade_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Remover amizade",
-    description="Remove uma amizade aceita e as duas linhas de configuração associadas. "
-    "Pode ser chamado por qualquer um dos dois lados.",
+    summary="Remover amizade ou cancelar solicitação pendente",
+    description="Quando a amizade está aceita, remove a amizade e as duas linhas de configuração "
+    "associadas; qualquer um dos dois lados pode chamar. Quando está pendente, cancela a "
+    "solicitação; só quem enviou (solicitante) pode chamar — o destinatário deve usar /rejeitar.",
 )
 def remover_amizade(
     amizade_id: int,
@@ -1992,12 +2012,18 @@ def remover_amizade(
     current_user=Depends(get_current_user),
 ):
     amizade = AmizadeRepository.get_by_id(db, amizade_id)
-    if (
-        amizade is None
-        or amizade.status != "aceito"
-        or current_user.id not in (amizade.solicitante_usuario_id, amizade.destinatario_usuario_id)
-    ):
+    if amizade is None or current_user.id not in (amizade.solicitante_usuario_id, amizade.destinatario_usuario_id):
         raise HTTPException(status_code=404, detail="Amizade não encontrada.")
+
+    if amizade.status == "pendente":
+        if amizade.solicitante_usuario_id != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Apenas quem enviou a solicitação pode cancelá-la. Use /rejeitar para recusar.",
+            )
+        AmizadeRepository.cancelar_pendente(db, amizade)
+        logger.info("Solicitação de amizade %s cancelada por %s", amizade_id, current_user.email)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     AmizadeRepository.deletar_aceita(db, amizade)
     logger.info("Amizade %s removida por %s", amizade_id, current_user.email)
@@ -2251,6 +2277,7 @@ def listar_solicitacoes_troca(
             destinatario=PessoaTrocaResumo(id=s.destinatario.id, nome=s.destinatario.nome),
             plantao_transferido=_plantao_troca_resumo(s.plantao_transferido) if s.plantao_transferido else None,
             plantao_recebido=_plantao_recebido_troca_resumo(s),
+            criado_em=s.criado_em,
         )
         for s in solicitacoes
     ]

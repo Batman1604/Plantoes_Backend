@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -20,6 +21,35 @@ from app.models import (
     VerificacaoTelefone,
 )
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
+
+
+def _normalizar_telefone(telefone: str) -> str:
+    """Reduz um telefone a apenas dígitos e remove o DDI 55 quando presente, permitindo
+    comparar números digitados com ou sem máscara/DDI."""
+    digitos = re.sub(r"\D", "", telefone or "")
+    if len(digitos) > 11 and digitos.startswith("55"):
+        digitos = digitos[2:]
+    return digitos
+
+
+def _ids_excluidos_busca_amigo(db: Session, usuario_id: int) -> set[int]:
+    """IDs a excluir de uma busca de usuários para adicionar amigo: o próprio usuário e
+    qualquer um com quem ele já tenha amizade pendente ou aceita (nas duas direções)."""
+    relacoes = db.execute(
+        select(Amizade.solicitante_usuario_id, Amizade.destinatario_usuario_id).where(
+            Amizade.status.in_(("pendente", "aceito")),
+            or_(
+                Amizade.solicitante_usuario_id == usuario_id,
+                Amizade.destinatario_usuario_id == usuario_id,
+            ),
+        )
+    ).all()
+
+    ids_excluir = {usuario_id}
+    for solicitante_id, destinatario_id in relacoes:
+        ids_excluir.add(solicitante_id)
+        ids_excluir.add(destinatario_id)
+    return ids_excluir
 
 
 class UserRepository:
@@ -63,20 +93,7 @@ class UserRepository:
     def buscar_por_email_prefixo(db: Session, prefixo: str, excluir_usuario_id: int) -> list[User]:
         """Busca usuários cujo email começa com o prefixo, excluindo o próprio usuário e
         qualquer usuário que já tenha amizade pendente ou aceita com ele."""
-        relacoes = db.execute(
-            select(Amizade.solicitante_usuario_id, Amizade.destinatario_usuario_id).where(
-                Amizade.status.in_(("pendente", "aceito")),
-                or_(
-                    Amizade.solicitante_usuario_id == excluir_usuario_id,
-                    Amizade.destinatario_usuario_id == excluir_usuario_id,
-                ),
-            )
-        ).all()
-
-        ids_excluir = {excluir_usuario_id}
-        for solicitante_id, destinatario_id in relacoes:
-            ids_excluir.add(solicitante_id)
-            ids_excluir.add(destinatario_id)
+        ids_excluir = _ids_excluidos_busca_amigo(db, excluir_usuario_id)
 
         stmt = (
             select(User)
@@ -85,6 +102,23 @@ class UserRepository:
             .limit(5)
         )
         return list(db.scalars(stmt).all())
+
+    @staticmethod
+    def buscar_por_telefone(db: Session, telefone: str, excluir_usuario_id: int) -> list[User]:
+        """Busca usuários cujo telefone, depois de normalizado (apenas dígitos, sem DDI 55),
+        bate com o telefone informado (também normalizado). Exclui o próprio usuário e
+        qualquer usuário que já tenha amizade pendente ou aceita com ele. O telefone não é
+        armazenado de forma normalizada, então a comparação é feita em Python após carregar
+        os usuários com telefone cadastrado."""
+        alvo = _normalizar_telefone(telefone)
+        if not alvo:
+            return []
+
+        ids_excluir = _ids_excluidos_busca_amigo(db, excluir_usuario_id)
+
+        stmt = select(User).where(User.telefone.isnot(None), User.id.notin_(ids_excluir)).order_by(User.email)
+        candidatos = db.scalars(stmt).all()
+        return [u for u in candidatos if _normalizar_telefone(u.telefone) == alvo][:5]
 
     @staticmethod
     def delete(db: Session, user_id: int) -> bool:
@@ -728,6 +762,12 @@ class AmizadeRepository:
 
     @staticmethod
     def rejeitar(db: Session, amizade: Amizade) -> None:
+        db.delete(amizade)
+        db.commit()
+
+    @staticmethod
+    def cancelar_pendente(db: Session, amizade: Amizade) -> None:
+        """Cancela uma solicitação ainda pendente, a pedido de quem a enviou."""
         db.delete(amizade)
         db.commit()
 
