@@ -75,6 +75,23 @@ class AuthStatusResponse(BaseModel):
     usuario: Optional[UserResponse] = None
 
 
+class GoogleAuthRequest(BaseModel):
+    id_token: str = Field(min_length=1, description="ID Token JWT emitido pelo Google Sign-In para este app.")
+
+
+class AppleAuthRequest(BaseModel):
+    identity_token: str = Field(min_length=1, description="Identity Token JWT emitido pelo Sign in with Apple.")
+    nome: Optional[str] = Field(
+        default=None,
+        max_length=120,
+        description=(
+            "Nome completo do usuário. A Apple só envia o nome na primeira autorização "
+            "(fora do identity_token, no retorno nativo do SDK) — envie aqui nessa primeira "
+            "chamada; em logins seguintes pode ser omitido."
+        ),
+    )
+
+
 class VerificarTelefoneRequest(BaseModel):
     codigo: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido via WhatsApp.")
 
@@ -114,6 +131,9 @@ class LocalBase(BaseModel):
     util_corrido: bool = Field(default=True, description="True = dia útil, False = dia corrido")
     cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
     endereco_local: Optional[str] = Field(default=None, max_length=255)
+    uuid_cliente: Optional[str] = Field(
+        default=None, max_length=36, description="Identificador gerado no dispositivo, usado para sincronização offline."
+    )
 
     @field_validator("data_inicio", "data_final", mode="before")
     @classmethod
@@ -164,6 +184,7 @@ class LocalCreateWithUsuario(LocalCreate):
 class LocalResponse(LocalBase):
     id: int
     usuario_id: int
+    atualizado_em: datetime
 
     class Config:
         from_attributes = True
@@ -259,6 +280,9 @@ class PlantaoBase(BaseModel):
     )
     sobreaviso: bool = Field(default=False, example=False, description="Indica se o plantão é de sobreaviso.")
     descricao: Optional[str] = Field(default=None, max_length=2000, description="Descrição ou anotações livres sobre o plantão.")
+    uuid_cliente: Optional[str] = Field(
+        default=None, max_length=36, description="Identificador gerado no dispositivo, usado para sincronização offline."
+    )
 
     @field_validator("recorrencia", mode="before")
     @classmethod
@@ -320,6 +344,7 @@ class PlantaoCreateWithUsuario(BaseModel):
     executado: bool = False
     pagamento_plantao: Optional[date] = None
     transferido: bool = False
+    uuid_cliente: Optional[str] = None
 
 
 class PlantaoUpdate(BaseModel):
@@ -375,6 +400,8 @@ class PlantaoResponse(BaseModel):
     tipo_troca: Literal["transferido", "recebido", "trocado"] | None = None
     troca: "PlantaoTrocaResponse | None" = None
     bonificacoes: list["BonificacaoResponse"] = []
+    uuid_cliente: Optional[str] = None
+    atualizado_em: datetime
 
     class Config:
         from_attributes = True
@@ -410,6 +437,8 @@ class PlantaoResponse(BaseModel):
                 "descricao": obj.descricao,
                 "tipo_troca": None,
                 "troca": None,
+                "uuid_cliente": getattr(obj, "uuid_cliente", None),
+                "atualizado_em": obj.atualizado_em,
                 "bonificacoes": [
                     {"id": b.id, "plantao_id": b.plantao_id, "local_id": b.local_id, "valor": b.valor, "descricao": b.descricao}
                     for b in bons
@@ -781,6 +810,7 @@ class AmigoConfiguracaoResponse(BaseModel):
     mostrar_valores: bool
     cor: str
     locais_permitidos: list[int] = Field(default_factory=list)
+    atualizado_em: Optional[datetime] = None
 
 
 class AmigoPlantaoItem(BaseModel):
@@ -793,3 +823,120 @@ class AmigoPlantaoItem(BaseModel):
     local_endereco: Optional[str] = None
     local_dia_pagamento: Optional[int] = None
     plantao: PlantaoResponse
+
+
+# ---------------------------------------------------------------------------
+# Sincronização offline (GET /api/sync/pull, POST /api/sync/push)
+# ---------------------------------------------------------------------------
+# Os itens de push carregam o estado local COMPLETO do registro (não um diff/patch) — é
+# assim que o app deve tratar cada linha "suja" no banco local: reenviar tudo, não só os
+# campos que mudaram. O servidor decide criar vs. atualizar comparando uuid_cliente/id com
+# o que já existe, e usa "last-write-wins" comparando atualizado_em contra o valor salvo no
+# servidor (ver SyncService para a regra completa).
+
+
+class SyncLocalItem(BaseModel):
+    uuid_cliente: str = Field(min_length=1, max_length=36, description="Identificador estável gerado no dispositivo.")
+    id: Optional[int] = Field(default=None, description="ID no servidor, se este local já foi sincronizado antes.")
+    nome_local: str = Field(min_length=2, max_length=120)
+    data_inicio: Optional[date] = None
+    data_final: date
+    dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
+    util_corrido: bool = True
+    cor: Optional[str] = Field(default=None, max_length=20)
+    endereco_local: Optional[str] = Field(default=None, max_length=255)
+    atualizado_em: datetime = Field(description="Hora da última alteração feita no dispositivo (relógio local).")
+    deletado: bool = Field(default=False, description="True se o registro foi excluído localmente.")
+
+
+class SyncPlantaoItem(BaseModel):
+    uuid_cliente: str = Field(min_length=1, max_length=36, description="Identificador estável gerado no dispositivo.")
+    id: Optional[int] = Field(default=None, description="ID no servidor, se este plantão já foi sincronizado antes.")
+    local_id: Optional[int] = Field(default=None, description="ID do local no servidor. Informe local_id OU local_uuid_cliente.")
+    local_uuid_cliente: Optional[str] = Field(
+        default=None, max_length=36, description="uuid_cliente de um local enviado no mesmo push (ainda sem id de servidor)."
+    )
+    valor: Optional[Decimal] = Field(default=None, ge=0)
+    data_inicio: datetime
+    data_fim: datetime
+    recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = None
+    sobreaviso: bool = False
+    descricao: Optional[str] = Field(default=None, max_length=2000)
+    notificacao_ativa: bool = True
+    notificacao_antecedencia_minutos: int = Field(default=60, ge=0, le=2880)
+    pagamento_plantao: Optional[date] = None
+    atualizado_em: datetime = Field(description="Hora da última alteração feita no dispositivo (relógio local).")
+    deletado: bool = Field(default=False, description="True se o registro foi excluído localmente.")
+
+    @field_validator("recorrencia", mode="before")
+    @classmethod
+    def normalizar_recorrencia(cls, value):
+        return _normalizar_recorrencia(value)
+
+    @model_validator(mode="after")
+    def validar_referencia_local(self):
+        if not self.deletado and self.local_id is None and self.local_uuid_cliente is None:
+            raise ValueError("Informe local_id ou local_uuid_cliente.")
+        return self
+
+
+class SyncPushRequest(BaseModel):
+    locais: list[SyncLocalItem] = Field(default_factory=list, max_length=500)
+    plantoes: list[SyncPlantaoItem] = Field(default_factory=list, max_length=500)
+
+
+class SyncItemResultado(BaseModel):
+    uuid_cliente: str
+    id: int
+
+
+class SyncConflito(BaseModel):
+    entidade: Literal["local", "plantao"]
+    uuid_cliente: str
+    id: Optional[int] = None
+    motivo: str
+    servidor_atualizado_em: datetime
+
+
+class SyncErro(BaseModel):
+    entidade: Literal["local", "plantao"]
+    uuid_cliente: str
+    detalhe: str
+    status_code: int
+
+
+class SyncPushResponse(BaseModel):
+    locais_criados: list[SyncItemResultado] = Field(default_factory=list)
+    locais_atualizados: list[SyncItemResultado] = Field(default_factory=list)
+    locais_deletados: list[SyncItemResultado] = Field(default_factory=list)
+    plantoes_criados: list[SyncItemResultado] = Field(default_factory=list)
+    plantoes_atualizados: list[SyncItemResultado] = Field(default_factory=list)
+    plantoes_deletados: list[SyncItemResultado] = Field(default_factory=list)
+    conflitos: list[SyncConflito] = Field(default_factory=list)
+    erros: list[SyncErro] = Field(default_factory=list)
+    servidor_timestamp: datetime = Field(
+        description="Timestamp do servidor no momento da resposta — use como parâmetro `since` na próxima chamada."
+    )
+
+
+class SyncExclusaoItem(BaseModel):
+    entidade: str
+    id: int
+    uuid_cliente: Optional[str] = None
+    deletado_em: datetime
+
+
+class SyncPullResponse(BaseModel):
+    servidor_timestamp: datetime = Field(
+        description="Timestamp do servidor no momento da resposta — use como parâmetro `since` na próxima chamada."
+    )
+    locais: list[LocalResponse] = Field(default_factory=list)
+    plantoes: list[PlantaoResponse] = Field(default_factory=list)
+    amizades: list[AmizadeListItem] = Field(default_factory=list)
+    amigo_configuracoes: list[AmigoConfiguracaoResponse] = Field(default_factory=list)
+    solicitacoes_troca: list[SolicitacaoTrocaListItem] = Field(default_factory=list)
+    trocas: list[TrocaResponse] = Field(default_factory=list)
+    exclusoes: list[SyncExclusaoItem] = Field(
+        default_factory=list,
+        description="Registros excluídos desde `since` — o app deve remover essas linhas do banco local.",
+    )

@@ -17,6 +17,7 @@ from app import models  # noqa: F401
 from app.core.database import Base, SessionLocal, engine
 from app.routes.plantao_routes import router
 from app.routes.politicas_routes import router as politicas_router
+from app.routes.sync_routes import router as sync_router
 from app.routes.whatsapp_routes import router as whatsapp_router
 from app.repositories.plantao_repository import TokenRevogadoRepository
 from app.services.notificacao_service import NotificacaoService
@@ -897,6 +898,141 @@ def ensure_trocas_contraparte_usuario_id_receber_column() -> None:
 ensure_trocas_contraparte_usuario_id_receber_column()
 
 
+def ensure_oauth_columns() -> None:
+    """Colunas que guardam o 'sub' (identificador estável) devolvido pelo Google/Apple —
+    ver User.google_id / User.apple_id em app.models."""
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = {c[1] for c in connection.execute(text("PRAGMA table_info(usuarios)")).fetchall()}
+            if "google_id" not in cols:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN google_id VARCHAR(255) NULL"))
+            if "apple_id" not in cols:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN apple_id VARCHAR(255) NULL"))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_usuarios_google_id ON usuarios (google_id)"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_usuarios_apple_id ON usuarios (apple_id)"
+            ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) NULL"))
+            connection.execute(text("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS apple_id VARCHAR(255) NULL"))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_usuarios_google_id ON usuarios (google_id)"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_usuarios_apple_id ON usuarios (apple_id)"
+            ))
+        return
+
+
+ensure_oauth_columns()
+
+
+def ensure_sync_colunas_locais_plantoes() -> None:
+    """uuid_cliente (correlação com o registro criado offline) e atualizado_em (comparação
+    last-write-wins) em locais e plantoes — base da sincronização offline."""
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            # SQLite recusa "ADD COLUMN ... DEFAULT CURRENT_TIMESTAMP" (considera o default
+            # não-constante) — adiciona a coluna sem default e faz o backfill em seguida.
+            locais_cols = {c[1] for c in connection.execute(text("PRAGMA table_info(locais)")).fetchall()}
+            if "uuid_cliente" not in locais_cols:
+                connection.execute(text("ALTER TABLE locais ADD COLUMN uuid_cliente VARCHAR(36) NULL"))
+            if "atualizado_em" not in locais_cols:
+                connection.execute(text("ALTER TABLE locais ADD COLUMN atualizado_em DATETIME NULL"))
+                connection.execute(text(
+                    "UPDATE locais SET atualizado_em = CURRENT_TIMESTAMP WHERE atualizado_em IS NULL"
+                ))
+
+            plantoes_cols = {c[1] for c in connection.execute(text("PRAGMA table_info(plantoes)")).fetchall()}
+            if "uuid_cliente" not in plantoes_cols:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN uuid_cliente VARCHAR(36) NULL"))
+            if "atualizado_em" not in plantoes_cols:
+                connection.execute(text("ALTER TABLE plantoes ADD COLUMN atualizado_em DATETIME NULL"))
+                connection.execute(text(
+                    "UPDATE plantoes SET atualizado_em = CURRENT_TIMESTAMP WHERE atualizado_em IS NULL"
+                ))
+
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_locais_uuid_cliente ON locais (uuid_cliente)"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_plantoes_uuid_cliente ON plantoes (uuid_cliente)"
+            ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE locais ADD COLUMN IF NOT EXISTS uuid_cliente VARCHAR(36) NULL"))
+            connection.execute(text(
+                "ALTER TABLE locais ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()"
+            ))
+            connection.execute(text("ALTER TABLE plantoes ADD COLUMN IF NOT EXISTS uuid_cliente VARCHAR(36) NULL"))
+            connection.execute(text(
+                "ALTER TABLE plantoes ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_locais_uuid_cliente ON locais (uuid_cliente)"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_plantoes_uuid_cliente ON plantoes (uuid_cliente)"
+            ))
+        return
+
+
+ensure_sync_colunas_locais_plantoes()
+
+
+def ensure_amigo_configuracoes_atualizado_em_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = {c[1] for c in connection.execute(text("PRAGMA table_info(amigo_configuracoes)")).fetchall()}
+            if "atualizado_em" not in cols:
+                connection.execute(text("ALTER TABLE amigo_configuracoes ADD COLUMN atualizado_em DATETIME NULL"))
+                connection.execute(text(
+                    "UPDATE amigo_configuracoes SET atualizado_em = CURRENT_TIMESTAMP WHERE atualizado_em IS NULL"
+                ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE amigo_configuracoes ADD COLUMN IF NOT EXISTS atualizado_em "
+                "TIMESTAMPTZ NOT NULL DEFAULT now()"
+            ))
+        return
+
+
+ensure_amigo_configuracoes_atualizado_em_column()
+
+
+def ensure_trocas_criado_em_column() -> None:
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = {c[1] for c in connection.execute(text("PRAGMA table_info(trocas)")).fetchall()}
+            if "criado_em" not in cols:
+                connection.execute(text("ALTER TABLE trocas ADD COLUMN criado_em DATETIME NULL"))
+                connection.execute(text(
+                    "UPDATE trocas SET criado_em = CURRENT_TIMESTAMP WHERE criado_em IS NULL"
+                ))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE trocas ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ NOT NULL DEFAULT now()"
+            ))
+        return
+
+
+ensure_trocas_criado_em_column()
+
+
+
 def backfill_contraparte_usuario_id_receber() -> None:
     """Para trocas já existentes com plantao_id_recebido, o recebido sempre pertencia ao
     remetente (comportamento anterior a este fix), então a contraparte do lado 'recebido'
@@ -961,6 +1097,7 @@ app.add_middleware(
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.include_router(router)
 app.include_router(politicas_router)
+app.include_router(sync_router)
 app.include_router(whatsapp_router)
 
 

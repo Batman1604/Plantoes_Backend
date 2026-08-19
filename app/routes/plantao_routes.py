@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import Plantao, SolicitacaoTroca, Troca
+from app.models import Plantao, SolicitacaoTroca, Troca, User
 from app.core.security import (
     create_access_token,
     create_purpose_token,
@@ -46,6 +46,7 @@ from app.schemas.plantao_schema import (
     AmizadeCreate,
     AmizadeListItem,
     AmizadeResponse,
+    AppleAuthRequest,
     FinanceiroCreate,
     FinanceiroEmAtrasoUpdate,
     FinanceiroRecordResponse,
@@ -55,6 +56,7 @@ from app.schemas.plantao_schema import (
     DeviceTokenUpdate,
     FeedbackCreate,
     FinanceiroData,
+    GoogleAuthRequest,
     GraficoMensalItem,
     UpgradeWebhookRequest,
     LocalCreate,
@@ -94,6 +96,7 @@ from app.services.email_service import EmailService
 from app.services.feedback_service import FeedbackService
 from app.services.financeiro_service import FinanceiroService
 from app.core.config import settings
+from app.services.oauth_service import OAuthService, OAuthTokenError, parse_bool_claim
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 from app.services.plano_service import PlanoService
 from app.services.sms_service import SmsService
@@ -240,6 +243,112 @@ def autenticar_usuario(payload: UserLogin, db: Session = Depends(get_db), _=Depe
     return APIResponse(
         success=True,
         message="Login realizado com sucesso.",
+        data=AuthResponse(autenticado=True, access_token=access_token, usuario=UserResponse.model_validate(user)),
+    )
+
+
+@router.post(
+    "/auth/google",
+    response_model=APIResponse[AuthResponse],
+    summary="Autenticar com Google",
+    description=(
+        "Valida o ID Token emitido pelo Google Sign-In, localiza a conta pelo google_id, "
+        "vincula a uma conta existente com o mesmo email (só se o Google confirma que o "
+        "email é verificado) ou cria uma conta nova sem senha. Retorna o mesmo tipo de "
+        "token de acesso usado pelo login por email/senha — não existe uma sessão separada."
+    ),
+)
+def autenticar_google(payload: GoogleAuthRequest, db: Session = Depends(get_db), _=Depends(rate_limit(10, 60))):
+    try:
+        claims = OAuthService.verificar_token_google(payload.id_token)
+    except OAuthTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    email = claims.get("email")
+    if not email:
+        raise HTTPException(status_code=422, detail="O token do Google não contém um email.")
+
+    try:
+        user, criado = UserRepository.find_or_create_google(
+            db,
+            google_id=claims["sub"],
+            email=email,
+            nome=claims.get("name") or email.split("@")[0],
+            avatar=claims.get("picture"),
+            email_verificado=parse_bool_claim(claims.get("email_verified", False)),
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Já existe uma conta com este email, mas o Google não confirmou que você é "
+                "o dono dela. Entre com email e senha; a vinculação com o Google poderá ser "
+                "feita depois, autenticado, pelo app."
+            ),
+        )
+
+    logger.info("%s via Google: %s", "Usuário criado" if criado else "Login", user.email)
+    access_token = create_access_token(user.id)
+    return APIResponse(
+        success=True,
+        message="Autenticado com Google.",
+        data=AuthResponse(autenticado=True, access_token=access_token, usuario=UserResponse.model_validate(user)),
+    )
+
+
+@router.post(
+    "/auth/apple",
+    response_model=APIResponse[AuthResponse],
+    summary="Autenticar com Apple",
+    description=(
+        "Valida o Identity Token emitido pelo Sign in with Apple, localiza a conta pelo "
+        "apple_id, vincula a uma conta existente com o mesmo email (só se a Apple confirma "
+        "que o email é verificado) ou cria uma conta nova sem senha. A Apple só devolve o "
+        "email dentro do token; se ele não vier (comum em logins após o primeiro) e não "
+        "houver conta vinculada ainda, retorna 422 — o app precisa reenviar o email "
+        "capturado na primeira autorização."
+    ),
+)
+def autenticar_apple(payload: AppleAuthRequest, db: Session = Depends(get_db), _=Depends(rate_limit(10, 60))):
+    try:
+        claims = OAuthService.verificar_token_apple(payload.identity_token)
+    except OAuthTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    apple_id = claims["sub"]
+    email = claims.get("email")
+
+    if not email:
+        usuario_existente = db.scalar(select(User).where(User.apple_id == apple_id))
+        if usuario_existente is None:
+            raise HTTPException(
+                status_code=422,
+                detail="A Apple não enviou o email neste login. Reenvie o email capturado na primeira autorização.",
+            )
+
+    try:
+        user, criado = UserRepository.find_or_create_apple(
+            db,
+            apple_id=apple_id,
+            email=email or f"{apple_id}@privaterelay.apple.local",
+            nome=payload.nome or (email.split("@")[0] if email else "Usuário Apple"),
+            email_verificado=parse_bool_claim(claims.get("email_verified", False)),
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Já existe uma conta com este email, mas a Apple não confirmou que você é o "
+                "dono dela. Entre com email e senha; a vinculação com a Apple poderá ser "
+                "feita depois, autenticado, pelo app."
+            ),
+        )
+
+    logger.info("%s via Apple: %s", "Usuário criado" if criado else "Login", user.email)
+    access_token = create_access_token(user.id)
+    return APIResponse(
+        success=True,
+        message="Autenticado com Apple.",
         data=AuthResponse(autenticado=True, access_token=access_token, usuario=UserResponse.model_validate(user)),
     )
 
@@ -951,6 +1060,10 @@ def atualizar_local(
                             dia_pagamento=dia_pagamento_novo,
                             util_corrido=util_corrido_novo,
                         ),
+                        # bulk_update_mappings ignora o onupdate do ORM — sem isto, esses
+                        # plantões ficariam com atualizado_em desatualizado e o pagamento
+                        # recalculado não apareceria em GET /api/sync/pull.
+                        "atualizado_em": datetime.now(UTC),
                     }
                     for plantao_id, data_plantao in plantoes
                 ]
@@ -1156,6 +1269,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
                 pagamento_plantao=pagamento_plantao,
 
                 transferido=False,
+                uuid_cliente=payload.uuid_cliente,
             ),
         )
         FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
@@ -1838,6 +1952,7 @@ def _serializar_amigo_configuracao(config) -> AmigoConfiguracaoResponse:
         mostrar_valores=config.mostrar_valores,
         cor=config.cor,
         locais_permitidos=[item.local_id for item in config.locais_permitidos],
+        atualizado_em=config.atualizado_em,
     )
 
 
@@ -2490,3 +2605,38 @@ def rejeitar_solicitacao_troca(
     SolicitacaoTrocaRepository.marcar_respondida(db, solicitacao, "rejeitada")
     logger.info("Solicitação de troca %s rejeitada por %s", solicitacao_id, current_user.email)
     return APIResponse(success=True, message="Solicitação de troca rejeitada.", data=None)
+
+
+@router.delete(
+    "/solicitacoes-troca/{solicitacao_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cancelar solicitação de troca pendente",
+    description=(
+        "Cancela uma solicitação de troca/transferência/recebimento ainda pendente. Só quem "
+        "enviou (remetente) pode cancelar — o destinatário deve usar /rejeitar. Como uma "
+        "solicitação tipo='trocar' guarda os dois lados (plantão transferido e recebido) na "
+        "mesma linha, cancelar cancela a troca inteira de uma vez, não é preciso duas chamadas."
+    ),
+)
+def cancelar_solicitacao_troca(
+    solicitacao_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    solicitacao = SolicitacaoTrocaRepository.get_by_id(db, solicitacao_id)
+    if solicitacao is None or current_user.id not in (
+        solicitacao.remetente_usuario_id,
+        solicitacao.destinatario_usuario_id,
+    ):
+        raise HTTPException(status_code=404, detail="Solicitação de troca não encontrada.")
+    if solicitacao.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação de troca não está pendente.")
+    if solicitacao.remetente_usuario_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Apenas quem enviou a solicitação pode cancelá-la. Use /rejeitar para recusar.",
+        )
+
+    SolicitacaoTrocaRepository.cancelar_pendente(db, solicitacao)
+    logger.info("Solicitação de troca %s cancelada por %s", solicitacao_id, current_user.email)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

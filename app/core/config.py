@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = "plantoes_whatsapp_verify"
     reset_password_url: str = "https://app.plantoesapp.com.br/reset-password"
     upgrade_webhook_secret: str = ""
+    # Aceitam múltiplos valores separados por vírgula (ex.: client ID de iOS, Android e Web
+    # do mesmo projeto Google, ou Service ID + Bundle ID da Apple).
+    google_client_id: str = ""
+    apple_client_id: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

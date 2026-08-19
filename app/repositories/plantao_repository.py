@@ -2,6 +2,7 @@ import re
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import hash_password, verify_password
@@ -14,6 +15,7 @@ from app.models import (
     Local,
     Plantao,
     SolicitacaoTroca,
+    SyncExclusao,
     TokenRevogado,
     Transferencia,
     Troca,
@@ -121,6 +123,86 @@ class UserRepository:
         return [u for u in candidatos if _normalizar_telefone(u.telefone) == alvo][:5]
 
     @staticmethod
+    def _find_or_create_oauth(
+        db: Session,
+        *,
+        provider_column,
+        provider_id: str,
+        email: str,
+        nome: str,
+        avatar: str | None,
+        email_verificado: bool,
+    ) -> tuple[User, bool]:
+        """Localiza um usuário pelo id do provedor (google_id/apple_id); se não achar, tenta
+        vincular a uma conta existente com o mesmo email — só quando o provedor confirma que
+        o email é verificado, para não permitir que alguém sequestre uma conta alheia só por
+        conhecer o email dela. Se não houver conta nenhuma, cria uma nova sem senha.
+
+        Retorna (usuario, criado). Levanta ValueError("email_nao_verificado") quando existe
+        conta com o email mas o provedor não confirma a posse dele.
+        """
+        usuario = db.scalar(select(User).where(provider_column == provider_id))
+        if usuario is not None:
+            return usuario, False
+
+        usuario = db.scalar(select(User).where(func.lower(User.email) == email.lower()))
+        if usuario is not None:
+            if not email_verificado:
+                raise ValueError("email_nao_verificado")
+            setattr(usuario, provider_column.key, provider_id)
+            if not usuario.avatar and avatar:
+                usuario.avatar = avatar
+            if not usuario.email_verificado:
+                usuario.email_verificado = True
+            db.commit()
+            db.refresh(usuario)
+            return usuario, False
+
+        usuario = User(
+            nome=nome,
+            email=email.lower(),
+            senha_hash=None,
+            avatar=avatar,
+            email_verificado=email_verificado,
+        )
+        setattr(usuario, provider_column.key, provider_id)
+        db.add(usuario)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            usuario = db.scalar(select(User).where(provider_column == provider_id))
+            if usuario is not None:
+                return usuario, False
+            raise
+        db.refresh(usuario)
+        return usuario, True
+
+    @staticmethod
+    def find_or_create_google(db: Session, *, google_id: str, email: str, nome: str, avatar: str | None, email_verificado: bool) -> tuple[User, bool]:
+        return UserRepository._find_or_create_oauth(
+            db,
+            provider_column=User.google_id,
+            provider_id=google_id,
+            email=email,
+            nome=nome,
+            avatar=avatar,
+            email_verificado=email_verificado,
+        )
+
+    @staticmethod
+    def find_or_create_apple(db: Session, *, apple_id: str, email: str, nome: str, email_verificado: bool) -> tuple[User, bool]:
+        return UserRepository._find_or_create_oauth(
+            db,
+            provider_column=User.apple_id,
+            provider_id=apple_id,
+            email=email,
+            nome=nome,
+            avatar=None,
+            email_verificado=email_verificado,
+        )
+
+    @staticmethod
     def delete(db: Session, user_id: int) -> bool:
         user = db.scalar(select(User).where(User.id == user_id))
         if user is None:
@@ -188,6 +270,12 @@ class LocalRepository:
         return db.scalars(select(Local).order_by(Local.data_inicio.desc())).all()
 
     @staticmethod
+    def get_by_uuid_cliente(db: Session, uuid_cliente: str, usuario_id: int) -> Local | None:
+        return db.scalar(
+            select(Local).where(Local.uuid_cliente == uuid_cliente, Local.usuario_id == usuario_id)
+        )
+
+    @staticmethod
     def update_by_user(db: Session, local_id: int, usuario_id: int, **kwargs) -> Local | None:
         local = db.scalar(select(Local).where(Local.id == local_id, Local.usuario_id == usuario_id))
         if local is None:
@@ -204,6 +292,7 @@ class LocalRepository:
         local = db.scalar(select(Local).where(Local.id == local_id, Local.usuario_id == usuario_id))
         if local is None:
             return False
+        SyncRepository.registrar_exclusao(db, usuario_id, "local", local.id, local.uuid_cliente)
         db.delete(local)
         db.commit()
         return True
@@ -333,6 +422,12 @@ class PlantaoRepository:
         )
 
     @staticmethod
+    def get_by_uuid_cliente(db: Session, uuid_cliente: str, usuario_id: int) -> Plantao | None:
+        return db.scalar(
+            select(Plantao).where(Plantao.uuid_cliente == uuid_cliente, Plantao.usuario_id == usuario_id)
+        )
+
+    @staticmethod
     def update_by_user(db: Session, plantao_id: int, usuario_id: int, **kwargs) -> Plantao | None:
         plantao = db.scalar(
             select(Plantao).where(
@@ -383,6 +478,7 @@ class PlantaoRepository:
         )
         if plantao is None:
             return False
+        SyncRepository.registrar_exclusao(db, usuario_id, "plantao", plantao.id, plantao.uuid_cliente)
         db.delete(plantao)
         db.commit()
         return True
@@ -660,6 +756,8 @@ class TrocaRepository:
         troca = db.scalar(select(Troca).where(Troca.id == troca_id))
         if troca is None:
             return False
+        if troca.usuario_id is not None:
+            SyncRepository.registrar_exclusao(db, troca.usuario_id, "troca", troca.id)
         db.delete(troca)
         db.commit()
         return True
@@ -761,19 +859,45 @@ class AmizadeRepository:
         return amizade, config_solicitante, config_destinatario
 
     @staticmethod
+    def _registrar_exclusao_dos_dois_lados(db: Session, amizade: Amizade) -> None:
+        """Amizade envolve dois usuários — cada um precisa do tombstone no próprio pull."""
+        for usuario_id in (amizade.solicitante_usuario_id, amizade.destinatario_usuario_id):
+            SyncRepository.registrar_exclusao(db, usuario_id, "amizade", amizade.id)
+
+    @staticmethod
     def rejeitar(db: Session, amizade: Amizade) -> None:
+        AmizadeRepository._registrar_exclusao_dos_dois_lados(db, amizade)
         db.delete(amizade)
         db.commit()
 
     @staticmethod
     def cancelar_pendente(db: Session, amizade: Amizade) -> None:
         """Cancela uma solicitação ainda pendente, a pedido de quem a enviou."""
+        AmizadeRepository._registrar_exclusao_dos_dois_lados(db, amizade)
         db.delete(amizade)
         db.commit()
 
     @staticmethod
     def deletar_aceita(db: Session, amizade: Amizade) -> None:
         """Remove a amizade aceita e as duas linhas de configuração associadas."""
+        configs = db.scalars(
+            select(AmigoConfiguracao).where(
+                or_(
+                    and_(
+                        AmigoConfiguracao.usuario_id == amizade.solicitante_usuario_id,
+                        AmigoConfiguracao.amigo_usuario_id == amizade.destinatario_usuario_id,
+                    ),
+                    and_(
+                        AmigoConfiguracao.usuario_id == amizade.destinatario_usuario_id,
+                        AmigoConfiguracao.amigo_usuario_id == amizade.solicitante_usuario_id,
+                    ),
+                )
+            )
+        ).all()
+        for config in configs:
+            SyncRepository.registrar_exclusao(db, config.usuario_id, "amigo_configuracao", config.id)
+        AmizadeRepository._registrar_exclusao_dos_dois_lados(db, amizade)
+
         db.execute(
             delete(AmigoConfiguracao).where(
                 or_(
@@ -850,6 +974,10 @@ class AmigoConfiguracaoRepository:
             )
             for local_id in locais_permitidos_ids:
                 db.add(AmigoLocalPermitido(amigo_configuracao_id=config.id, local_id=local_id))
+            # locais_permitidos_ids mexe só na tabela filha — sem tocar em nenhuma coluna
+            # da própria config, o onupdate de atualizado_em não dispara sozinho, e essa
+            # mudança ficaria invisível para GET /api/sync/pull.
+            config.atualizado_em = datetime.now(UTC)
         db.commit()
         # Recarrega via get_by_id para garantir que locais_permitidos reflita as mudanças acima.
         return AmigoConfiguracaoRepository.get_by_id(db, config.id)
@@ -907,6 +1035,17 @@ class SolicitacaoTrocaRepository:
         db.refresh(solicitacao)
         return solicitacao
 
+    @staticmethod
+    def cancelar_pendente(db: Session, solicitacao: SolicitacaoTroca) -> None:
+        """Cancela uma solicitação de troca ainda pendente, a pedido de quem a enviou. Mesmo
+        tratamento de AmizadeRepository.cancelar_pendente: exclusão física (não há status
+        'cancelada' no CHECK constraint da tabela) com tombstone de sync para os dois lados —
+        uma solicitação de troca sempre envolve remetente e destinatário."""
+        for usuario_id in (solicitacao.remetente_usuario_id, solicitacao.destinatario_usuario_id):
+            SyncRepository.registrar_exclusao(db, usuario_id, "solicitacao_troca", solicitacao.id)
+        db.delete(solicitacao)
+        db.commit()
+
 
 class TokenRevogadoRepository:
     @staticmethod
@@ -926,3 +1065,29 @@ class TokenRevogadoRepository:
         result = db.execute(delete(TokenRevogado).where(TokenRevogado.expira_em < datetime.now(UTC)))
         db.commit()
         return result.rowcount
+
+
+class SyncRepository:
+    """Tombstones de sincronização (ver SyncExclusao em app.models) e consultas de apoio ao
+    GET /api/sync/pull. Não faz commit sozinho em registrar_exclusao — quem chama já está no
+    meio de uma transação de exclusão e deve confirmar tudo junto."""
+
+    @staticmethod
+    def registrar_exclusao(
+        db: Session, usuario_id: int, entidade: str, entidade_id: int, uuid_cliente: str | None = None
+    ) -> None:
+        db.add(
+            SyncExclusao(
+                usuario_id=usuario_id,
+                entidade=entidade,
+                entidade_id=entidade_id,
+                uuid_cliente=uuid_cliente,
+            )
+        )
+
+    @staticmethod
+    def list_exclusoes(db: Session, usuario_id: int) -> list[SyncExclusao]:
+        """Retorna todos os tombstones do usuário — o filtro por `since` é feito em
+        SyncService.pull (em Python, normalizado para UTC; ver _as_utc lá)."""
+        stmt = select(SyncExclusao).where(SyncExclusao.usuario_id == usuario_id)
+        return list(db.scalars(stmt.order_by(SyncExclusao.deletado_em.asc())).all())

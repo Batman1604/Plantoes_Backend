@@ -21,6 +21,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     telefone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     senha_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Identificadores estáveis ('sub') devolvidos pelo Google/Apple. Nulos para contas
+    # email/senha puras; uma conta pode ter os dois preenchidos se o usuário vincular ambos.
+    google_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
+    apple_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
     plano: Mapped[str] = mapped_column(String(20), nullable=False, default="free")
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     pagamento_realizado: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -48,6 +52,14 @@ class Local(Base):
     cor: Mapped[str | None] = mapped_column(String(20), nullable=True)
     endereco_local: Mapped[str | None] = mapped_column(String(255), nullable=True)
     executado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Identificador gerado no dispositivo (ex.: uuid4), estável mesmo antes deste registro
+    # existir no servidor. Permite que o app correlacione o que criou offline com o "id"
+    # que o servidor atribui na primeira sincronização, sem risco de duplicar o registro
+    # em uma reenvio.
+    uuid_cliente: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True, index=True)
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     usuario: Mapped[User] = relationship(back_populates="locais")
     plantoes: Mapped[list["Plantao"]] = relationship(back_populates="local", cascade="all, delete-orphan")
@@ -74,6 +86,11 @@ class Plantao(Base):
     transferido: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     recebido_via_transferencia: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Ver comentário equivalente em Local.uuid_cliente.
+    uuid_cliente: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True, index=True)
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     local: Mapped[Local] = relationship(back_populates="plantoes")
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
@@ -203,6 +220,9 @@ class Troca(Base):
     contraparte_usuario_id_receber: Mapped[int | None] = mapped_column(
         ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
 
     local_rel: Mapped["Local | None"] = relationship(foreign_keys=[local_id])
     plantao_transferido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_id_transferido])
@@ -245,6 +265,9 @@ class AmigoConfiguracao(Base):
     modo_visibilidade: Mapped[str] = mapped_column(String(20), nullable=False, default="tudo")
     mostrar_valores: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     cor: Mapped[str] = mapped_column(String(7), nullable=False, default="#0D9488")
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
     amigo: Mapped[User] = relationship(foreign_keys=[amigo_usuario_id])
@@ -301,3 +324,20 @@ class SolicitacaoTroca(Base):
     plantao_transferido: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_transferido_id])
     plantao_alvo: Mapped["Plantao | None"] = relationship(foreign_keys=[plantao_alvo_id])
     plantao_recebido_local: Mapped["Local | None"] = relationship(foreign_keys=[plantao_recebido_local_id])
+
+
+class SyncExclusao(Base):
+    """Tombstone de sincronização: registra que uma linha foi excluída, para que outros
+    dispositivos do mesmo usuário saibam remover a cópia local ao puxar mudanças (GET
+    /api/sync/pull). Sem isso, uma exclusão física normal (DELETE ... WHERE id = ...) não
+    deixaria nenhum rastro para um dispositivo que estava offline no momento."""
+    __tablename__ = "sync_exclusoes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    entidade: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    entidade_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    uuid_cliente: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    deletado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
