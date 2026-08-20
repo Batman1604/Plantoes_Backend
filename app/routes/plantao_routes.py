@@ -20,11 +20,13 @@ from app.core.security import (
     create_purpose_token,
     decode_access_token,
     decode_purpose_token,
+    hash_password,
     verify_password,
 )
 from app.repositories.plantao_repository import (
     AmigoConfiguracaoRepository,
     AmizadeRepository,
+    CadastroPendenteRepository,
     FinanceiroRepository,
     LocalRepository,
     PlantaoRepository,
@@ -47,6 +49,7 @@ from app.schemas.plantao_schema import (
     AmizadeListItem,
     AmizadeResponse,
     AppleAuthRequest,
+    ConfirmarCadastroRequest,
     FinanceiroCreate,
     FinanceiroEmAtrasoUpdate,
     FinanceiroRecordResponse,
@@ -59,6 +62,7 @@ from app.schemas.plantao_schema import (
     GoogleAuthRequest,
     GraficoMensalItem,
     UpgradeWebhookRequest,
+    IniciarCadastroRequest,
     LocalCreate,
     LocalCreateWithUsuario,
     LocalResponse,
@@ -68,6 +72,7 @@ from app.schemas.plantao_schema import (
     PlantaoExecutadoUpdate,
     PlantaoResponse,
     PlantaoUpdate,
+    ReenviarCadastroRequest,
     ResetPasswordRequest,
     SenhaResetConfirmar,
     SenhaResetRequest,
@@ -182,14 +187,9 @@ def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
     description="Cria um novo usuário e retorna o token de acesso para uso imediato.",
 )
 def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
-    conflitos = []
-    if UserRepository.get_by_email(db, payload.email):
-        conflitos.append("Email")
-    if payload.telefone and UserRepository.get_by_phone(db, payload.telefone):
-        conflitos.append("Telefone")
+    conflitos = _conflitos_cadastro(db, payload.email, payload.telefone)
     if conflitos:
-        detalhe = " e ".join(conflitos) + (" já cadastrado" if len(conflitos) == 1 else " já cadastrados")
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detalhe)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_detalhe_conflito(conflitos))
 
     try:
         user = UserRepository.create(db, payload)
@@ -218,12 +218,162 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(
 def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) -> None:
     try:
         codigo = f"{secrets.randbelow(1_000_000):06d}"
-        expira_em = datetime.now(UTC) + timedelta(minutes=2)
+        expira_em = datetime.now(UTC) + timedelta(minutes=5)
         VerificacaoTelefoneRepository.upsert(db, usuario_id, codigo, expira_em)
         SmsService.enviar_codigo_verificacao(telefone, codigo)
         logger.info("Código de verificação enviado para %s", telefone)
     except Exception:
         logger.warning("Falha ao enviar código de verificação para %s", telefone)
+
+
+def _conflitos_cadastro(db: Session, email: str, telefone: str | None) -> list[str]:
+    conflitos = []
+    if UserRepository.get_by_email(db, email):
+        conflitos.append("Email")
+    if telefone and UserRepository.get_by_phone(db, telefone):
+        conflitos.append("Telefone")
+    return conflitos
+
+
+def _detalhe_conflito(conflitos: list[str]) -> str:
+    return " e ".join(conflitos) + (" já cadastrado" if len(conflitos) == 1 else " já cadastrados")
+
+
+@router.post(
+    "/auth/cadastro",
+    response_model=APIResponse[None],
+    summary="Iniciar cadastro",
+    description=(
+        "Primeiro passo do cadastro: valida os dados, envia um código de verificação por "
+        "WhatsApp/SMS e NÃO cria a conta ainda. A conta só é criada em /auth/confirmar-cadastro, "
+        "depois que o código é confirmado no app."
+    ),
+)
+def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
+    conflitos = _conflitos_cadastro(db, payload.email, payload.telefone)
+    if conflitos:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_detalhe_conflito(conflitos))
+
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    expira_em = datetime.now(UTC) + timedelta(minutes=5)
+    try:
+        CadastroPendenteRepository.upsert(
+            db,
+            nome=payload.nome,
+            email=payload.email,
+            telefone=payload.telefone,
+            senha_hash=hash_password(payload.senha),
+            codigo=codigo,
+            expira_em=expira_em,
+        )
+        enviado = SmsService.enviar_codigo_verificacao(payload.telefone, codigo)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Falha ao iniciar cadastro para %s: %s", payload.email, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível enviar o código de verificação. Tente novamente.",
+        ) from exc
+
+    if not enviado:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível enviar o código de verificação. Tente novamente.",
+        )
+
+    logger.info("Cadastro iniciado, código de verificação enviado para %s", payload.telefone)
+    return APIResponse(success=True, message="Código enviado para o seu WhatsApp.", data=None)
+
+
+@router.post(
+    "/auth/confirmar-cadastro",
+    response_model=APIResponse[AuthResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Confirmar cadastro",
+    description="Confirma o código de 6 dígitos e cria a conta, retornando o token de acesso para uso imediato.",
+)
+def confirmar_cadastro(
+    payload: ConfirmarCadastroRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 120))
+):
+    pendente = CadastroPendenteRepository.get_by_email(db, payload.email)
+    expira_em = pendente.expira_em if pendente else None
+    if expira_em is not None and expira_em.tzinfo is None:
+        # SQLite (usado nos testes) não preserva o timezone ao ler de volta a coluna.
+        expira_em = expira_em.replace(tzinfo=UTC)
+    if pendente is None or pendente.codigo != payload.codigo or expira_em <= datetime.now(UTC):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Código inválido ou expirado.")
+
+    conflitos = _conflitos_cadastro(db, pendente.email, pendente.telefone)
+    if conflitos:
+        CadastroPendenteRepository.delete_by_email(db, pendente.email)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_detalhe_conflito(conflitos))
+
+    try:
+        user = UserRepository.create_a_partir_de_pendente(db, pendente)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Falha ao concluir cadastro de %s: %s", pendente.email, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível concluir o cadastro. Tente novamente.",
+        ) from exc
+
+    CadastroPendenteRepository.delete_by_email(db, pendente.email)
+    logger.info("Cadastro confirmado, usuário criado: %s", user.email)
+
+    try:
+        token_verificacao = create_purpose_token(user.email, "email_verification", expire_minutes=24 * 60)
+        EmailService.enviar_verificacao(user.email, token_verificacao)
+    except Exception:
+        logger.warning("Falha ao enviar email de verificação para %s", user.email)
+
+    access_token = create_access_token(user.id)
+    return APIResponse(
+        success=True,
+        message="Cadastro confirmado com sucesso.",
+        data=AuthResponse(autenticado=True, access_token=access_token, usuario=UserResponse.model_validate(user)),
+    )
+
+
+@router.post(
+    "/auth/reenviar-cadastro",
+    response_model=APIResponse[None],
+    summary="Reenviar código de cadastro",
+    description="Gera e envia um novo código de 6 dígitos via WhatsApp para um cadastro ainda não confirmado.",
+)
+def reenviar_cadastro(
+    payload: ReenviarCadastroRequest, db: Session = Depends(get_db), _=Depends(rate_limit(3, 60))
+):
+    pendente = CadastroPendenteRepository.get_by_email(db, payload.email)
+    if pendente is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cadastro não encontrado ou já confirmado.")
+
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    expira_em = datetime.now(UTC) + timedelta(minutes=5)
+    try:
+        enviado = SmsService.enviar_codigo_verificacao(pendente.telefone, codigo)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível enviar o código de verificação. Tente novamente.",
+        ) from exc
+
+    if not enviado:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível enviar o código de verificação. Tente novamente.",
+        )
+
+    CadastroPendenteRepository.upsert(
+        db,
+        nome=pendente.nome,
+        email=pendente.email,
+        telefone=pendente.telefone,
+        senha_hash=pendente.senha_hash,
+        codigo=codigo,
+        expira_em=expira_em,
+    )
+    return APIResponse(success=True, message="Código reenviado para o seu WhatsApp.", data=None)
 
 
 @router.post(

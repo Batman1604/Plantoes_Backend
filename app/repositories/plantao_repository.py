@@ -11,6 +11,7 @@ from app.models import (
     AmigoConfiguracao,
     AmigoLocalPermitido,
     Bonificacao,
+    CadastroPendente,
     Financeiro,
     Local,
     Plantao,
@@ -60,6 +61,23 @@ class UserRepository:
         """Cria um novo usuário e armazena a senha com hash seguro."""
         user_data = payload.model_dump(exclude={"senha"})
         user = User(**user_data, senha_hash=hash_password(payload.senha))
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+
+    @staticmethod
+    def create_a_partir_de_pendente(db: Session, pendente: CadastroPendente) -> User:
+        """Cria a conta definitiva a partir de um cadastro pendente já confirmado.
+        Reaproveita o senha_hash já calculado (evita re-hash de senha em texto
+        plano) e marca o telefone como verificado, já que o código foi confirmado."""
+        user = User(
+            nome=pendente.nome,
+            email=pendente.email,
+            telefone=pendente.telefone,
+            senha_hash=pendente.senha_hash,
+            telefone_verificado=True,
+        )
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -597,6 +615,47 @@ class VerificacaoTelefoneRepository:
     @staticmethod
     def delete_by_user(db: Session, usuario_id: int) -> None:
         db.execute(delete(VerificacaoTelefone).where(VerificacaoTelefone.usuario_id == usuario_id))
+        db.commit()
+
+
+class CadastroPendenteRepository:
+    @staticmethod
+    def upsert(
+        db: Session,
+        *,
+        nome: str,
+        email: str,
+        telefone: str,
+        senha_hash: str,
+        codigo: str,
+        expira_em: datetime,
+    ) -> CadastroPendente:
+        email = email.lower()
+        existente = db.scalar(select(CadastroPendente).where(CadastroPendente.email == email))
+        if existente:
+            existente.nome = nome
+            existente.telefone = telefone
+            existente.senha_hash = senha_hash
+            existente.codigo = codigo
+            existente.expira_em = expira_em
+            db.commit()
+            db.refresh(existente)
+            return existente
+        pendente = CadastroPendente(
+            nome=nome, email=email, telefone=telefone, senha_hash=senha_hash, codigo=codigo, expira_em=expira_em
+        )
+        db.add(pendente)
+        db.commit()
+        db.refresh(pendente)
+        return pendente
+
+    @staticmethod
+    def get_by_email(db: Session, email: str) -> CadastroPendente | None:
+        return db.scalar(select(CadastroPendente).where(CadastroPendente.email == email.lower()))
+
+    @staticmethod
+    def delete_by_email(db: Session, email: str) -> None:
+        db.execute(delete(CadastroPendente).where(CadastroPendente.email == email.lower()))
         db.commit()
 
 

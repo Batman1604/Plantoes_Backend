@@ -46,7 +46,7 @@ class SmsService:
     def enviar_codigo_verificacao(telefone: str, codigo: str) -> bool:
         mensagem = (
             f"Seu código de verificação do app Plantões é: *{codigo}*\n"
-            f"Válido por 15 minutos. Não compartilhe com ninguém."
+            f"Válido por 5 minutos. Não compartilhe com ninguém."
         )
         enviado = SmsService._enviar_whatsapp(telefone, mensagem)
         if not enviado:

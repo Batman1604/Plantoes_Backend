@@ -96,6 +96,20 @@ class VerificarTelefoneRequest(BaseModel):
     codigo: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido via WhatsApp.")
 
 
+class IniciarCadastroRequest(UserBase):
+    telefone: str = Field(max_length=30, example="11999999999")
+    senha: str = Field(min_length=8, max_length=128, example="SenhaForte123")
+
+
+class ConfirmarCadastroRequest(BaseModel):
+    email: EmailStr = Field(example="joao@example.com")
+    codigo: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido via WhatsApp.")
+
+
+class ReenviarCadastroRequest(BaseModel):
+    email: EmailStr = Field(example="joao@example.com")
+
+
 class SenhaResetRequest(BaseModel):
     email: EmailStr = Field(example="joao@example.com")
 

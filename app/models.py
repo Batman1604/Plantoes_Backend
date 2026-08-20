@@ -182,6 +182,22 @@ class VerificacaoTelefone(Base):
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
 
 
+class CadastroPendente(Base):
+    """Cadastro iniciado mas ainda não confirmado: a conta em `usuarios` só é
+    criada depois que o código de verificação enviado por WhatsApp/SMS é
+    confirmado (ver /auth/cadastro e /auth/confirmar-cadastro)."""
+    __tablename__ = "cadastros_pendentes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    nome: Mapped[str] = mapped_column(String(120), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    telefone: Mapped[str] = mapped_column(String(30), nullable=False)
+    senha_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    codigo: Mapped[str] = mapped_column(String(6), nullable=False)
+    expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
 
 class Bonificacao(Base):
     __tablename__ = "bonificacoes"
