@@ -12,6 +12,7 @@ from app.models import (
     AmigoLocalPermitido,
     Bonificacao,
     CadastroPendente,
+    CodigoResetSenha,
     Financeiro,
     Local,
     Plantao,
@@ -589,6 +590,38 @@ class VerificacaoTelefoneRepository:
     @staticmethod
     def delete_by_user(db: Session, usuario_id: int) -> None:
         db.execute(delete(VerificacaoTelefone).where(VerificacaoTelefone.usuario_id == usuario_id))
+        db.commit()
+
+
+class CodigoResetSenhaRepository:
+    @staticmethod
+    def upsert(db: Session, usuario_id: int, codigo: str, expira_em: datetime) -> CodigoResetSenha:
+        existente = db.scalar(select(CodigoResetSenha).where(CodigoResetSenha.usuario_id == usuario_id))
+        if existente:
+            existente.codigo = codigo
+            existente.expira_em = expira_em
+            db.commit()
+            db.refresh(existente)
+            return existente
+        codigo_reset = CodigoResetSenha(usuario_id=usuario_id, codigo=codigo, expira_em=expira_em)
+        db.add(codigo_reset)
+        db.commit()
+        db.refresh(codigo_reset)
+        return codigo_reset
+
+    @staticmethod
+    def get_valido(db: Session, usuario_id: int, codigo: str) -> CodigoResetSenha | None:
+        return db.scalar(
+            select(CodigoResetSenha).where(
+                CodigoResetSenha.usuario_id == usuario_id,
+                CodigoResetSenha.codigo == codigo,
+                CodigoResetSenha.expira_em > datetime.now(UTC),
+            )
+        )
+
+    @staticmethod
+    def delete_by_user(db: Session, usuario_id: int) -> None:
+        db.execute(delete(CodigoResetSenha).where(CodigoResetSenha.usuario_id == usuario_id))
         db.commit()
 
 

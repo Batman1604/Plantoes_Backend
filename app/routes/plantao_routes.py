@@ -27,6 +27,7 @@ from app.repositories.plantao_repository import (
     AmigoConfiguracaoRepository,
     AmizadeRepository,
     CadastroPendenteRepository,
+    CodigoResetSenhaRepository,
     FinanceiroRepository,
     LocalRepository,
     PlantaoRepository,
@@ -76,6 +77,7 @@ from app.schemas.plantao_schema import (
     ResetPasswordRequest,
     SenhaResetConfirmar,
     SenhaResetRequest,
+    VerificarCodigoSenhaRequest,
     SolicitacaoTrocaCreate,
     SolicitacaoTrocaListItem,
     SolicitacaoTrocaResponse,
@@ -218,7 +220,7 @@ def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(
 def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) -> None:
     try:
         codigo = f"{secrets.randbelow(1_000_000):06d}"
-        expira_em = datetime.now(UTC) + timedelta(minutes=5)
+        expira_em = datetime.now(UTC) + timedelta(minutes=1)
         VerificacaoTelefoneRepository.upsert(db, usuario_id, codigo, expira_em)
         SmsService.enviar_codigo_verificacao(telefone, codigo)
         logger.info("Código de verificação enviado para %s", telefone)
@@ -255,7 +257,7 @@ def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_detalhe_conflito(conflitos))
 
     codigo = f"{secrets.randbelow(1_000_000):06d}"
-    expira_em = datetime.now(UTC) + timedelta(minutes=5)
+    expira_em = datetime.now(UTC) + timedelta(minutes=1)
     try:
         CadastroPendenteRepository.upsert(
             db,
@@ -349,7 +351,7 @@ def reenviar_cadastro(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cadastro não encontrado ou já confirmado.")
 
     codigo = f"{secrets.randbelow(1_000_000):06d}"
-    expira_em = datetime.now(UTC) + timedelta(minutes=5)
+    expira_em = datetime.now(UTC) + timedelta(minutes=1)
     try:
         enviado = SmsService.enviar_codigo_verificacao(pendente.telefone, codigo)
     except Exception as exc:
@@ -649,37 +651,45 @@ def reenviar_verificacao_telefone(
     return APIResponse(success=True, message="Código reenviado para o seu WhatsApp.", data=None)
 
 
+def _disparar_codigo_reset_senha(db: Session, user: User) -> None:
+    try:
+        codigo = f"{secrets.randbelow(1_000_000):06d}"
+        expira_em = datetime.now(UTC) + timedelta(minutes=1)
+        CodigoResetSenhaRepository.upsert(db, user.id, codigo, expira_em)
+        EmailService.enviar_reset_senha(user.email, codigo)
+    except Exception:
+        logger.warning("Falha ao enviar código de reset de senha para %s", user.email)
+
+
+_EMAIL_NAO_CADASTRADO = "Não encontramos cadastro com este email. Verifique se digitou certo."
+
+
 @router.post(
     "/auth/esqueci-senha",
     response_model=APIResponse[None],
     summary="Solicitar redefinição de senha",
-    description="Envia um email com token para redefinição de senha. Sempre retorna 200 por segurança.",
+    description="Envia um email com código de 6 dígitos para redefinição de senha. Retorna 404 se o email não estiver cadastrado.",
 )
 def esqueci_senha(payload: SenhaResetRequest, db: Session = Depends(get_db), _=Depends(rate_limit(3, 60))):
     user = UserRepository.get_by_email(db, payload.email)
-    if user:
-        try:
-            token = create_purpose_token(user.email, "password_reset", expire_minutes=60)
-            EmailService.enviar_reset_senha(user.email, token)
-        except Exception:
-            logger.warning("Falha ao enviar email de reset para %s", payload.email)
-    return APIResponse(success=True, message="Se o email existir, as instruções foram enviadas.", data=None)
+    if not user:
+        raise HTTPException(status_code=404, detail=_EMAIL_NAO_CADASTRADO)
+    _disparar_codigo_reset_senha(db, user)
+    return APIResponse(success=True, message="Código enviado para o seu email.", data=None)
 
 
 @router.post(
     "/auth/redefinir-senha",
     response_model=APIResponse[None],
-    summary="Redefinir senha com token",
+    summary="Redefinir senha com código",
 )
 def redefinir_senha(payload: SenhaResetConfirmar, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
-    email = decode_purpose_token(payload.token, "password_reset")
-    if not email:
-        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
-    user = UserRepository.get_by_email(db, email)
-    if not user:
-        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
+    user = UserRepository.get_by_email(db, payload.email)
+    if not user or CodigoResetSenhaRepository.get_valido(db, user.id, payload.codigo) is None:
+        raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
     UserRepository.update_senha(db, user.id, payload.nova_senha)
-    logger.info("Senha redefinida via token para %s", email)
+    CodigoResetSenhaRepository.delete_by_user(db, user.id)
+    logger.info("Senha redefinida via código para %s", user.email)
     return APIResponse(success=True, message="Senha redefinida com sucesso.", data=None)
 
 
@@ -687,33 +697,43 @@ def redefinir_senha(payload: SenhaResetConfirmar, db: Session = Depends(get_db),
     "/auth/forgot-password",
     response_model=APIResponse[None],
     summary="Solicitar redefinição de senha (EN)",
-    description="Envia um email com link para redefinição de senha. Sempre retorna 200 por segurança.",
+    description="Envia um email com código de 6 dígitos para redefinição de senha. Retorna 404 se o email não estiver cadastrado.",
 )
 def forgot_password(payload: SenhaResetRequest, db: Session = Depends(get_db), _=Depends(rate_limit(3, 60))):
     user = UserRepository.get_by_email(db, payload.email)
-    if user:
-        try:
-            token = create_purpose_token(user.email, "password_reset", expire_minutes=60)
-            EmailService.enviar_reset_senha(user.email, token)
-        except Exception:
-            logger.warning("Falha ao enviar email de reset para %s", payload.email)
-    return APIResponse(success=True, message="Se o email existir, as instruções foram enviadas.", data=None)
+    if not user:
+        raise HTTPException(status_code=404, detail=_EMAIL_NAO_CADASTRADO)
+    _disparar_codigo_reset_senha(db, user)
+    return APIResponse(success=True, message="Código enviado para o seu email.", data=None)
+
+
+@router.post(
+    "/auth/verificar-codigo-senha",
+    response_model=APIResponse[None],
+    summary="Verificar código de redefinição de senha",
+    description="Confirma se o código de 6 dígitos enviado por email é válido, sem consumi-lo ainda.",
+)
+def verificar_codigo_senha(
+    payload: VerificarCodigoSenhaRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 120))
+):
+    user = UserRepository.get_by_email(db, payload.email)
+    if not user or CodigoResetSenhaRepository.get_valido(db, user.id, payload.code) is None:
+        raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
+    return APIResponse(success=True, message="Código válido.", data=None)
 
 
 @router.post(
     "/auth/reset-password",
     response_model=APIResponse[None],
-    summary="Redefinir senha com token (EN)",
+    summary="Redefinir senha com código (EN)",
 )
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
-    email = decode_purpose_token(payload.token, "password_reset")
-    if not email:
-        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
-    user = UserRepository.get_by_email(db, email)
-    if not user:
-        raise HTTPException(status_code=400, detail="Token inválido ou expirado.")
+    user = UserRepository.get_by_email(db, payload.email)
+    if not user or CodigoResetSenhaRepository.get_valido(db, user.id, payload.code) is None:
+        raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
     UserRepository.update_senha(db, user.id, payload.newPassword)
-    logger.info("Senha redefinida via token para %s", email)
+    CodigoResetSenhaRepository.delete_by_user(db, user.id)
+    logger.info("Senha redefinida via código para %s", user.email)
     return APIResponse(success=True, message="Senha redefinida com sucesso.", data=None)
 
 

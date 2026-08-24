@@ -23,7 +23,6 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = "plantoes_whatsapp_verify"
-    reset_password_url: str = "https://app.plantoesapp.com.br/reset-password"
     upgrade_webhook_secret: str = ""
     # Aceitam múltiplos valores separados por vírgula (ex.: client ID de iOS, Android e Web
     # do mesmo projeto Google, ou Service ID + Bundle ID da Apple).

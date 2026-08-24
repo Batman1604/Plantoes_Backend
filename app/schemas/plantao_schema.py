@@ -114,13 +114,20 @@ class SenhaResetRequest(BaseModel):
     email: EmailStr = Field(example="joao@example.com")
 
 
+class VerificarCodigoSenhaRequest(BaseModel):
+    email: EmailStr = Field(example="joao@example.com")
+    code: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido por email.")
+
+
 class SenhaResetConfirmar(BaseModel):
-    token: str = Field(min_length=1)
+    email: EmailStr = Field(example="joao@example.com")
+    codigo: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido por email.")
     nova_senha: str = Field(min_length=8, max_length=128, example="NovaSenhaForte123")
 
 
 class ResetPasswordRequest(BaseModel):
-    token: str = Field(min_length=1)
+    email: EmailStr = Field(example="joao@example.com")
+    code: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido por email.")
     newPassword: str = Field(min_length=8, max_length=128, example="NovaSenhaForte123")
 
 

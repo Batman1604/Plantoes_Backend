@@ -62,18 +62,24 @@ class EmailService:
         )
 
     @staticmethod
-    def enviar_reset_senha(email: str, token: str) -> bool:
-        """Envia link de redefinição de senha por email."""
-        link = f"{settings.reset_password_url}?token={token}"
+    def enviar_reset_senha(email: str, codigo: str) -> bool:
+        """Envia código de redefinição de senha por email."""
         corpo = (
             "Olá!\n\n"
             "Recebemos uma solicitação de redefinição de senha para sua conta.\n\n"
-            "Clique no link abaixo para redefinir sua senha (válido por 1 hora):\n\n"
-            f"  {link}\n\n"
+            "Use o código abaixo para redefinir sua senha (válido por 1 minuto):\n\n"
+            f"  {codigo}\n\n"
             "Se você não solicitou a redefinição, ignore este email."
         )
-        return _enviar_email(
+        enviado = _enviar_email(
             para=email,
             assunto="Redefinição de senha — Plantões App",
             corpo=corpo,
         )
+        if not enviado:
+            # Sem SMTP configurado (ambiente local/dev) não há como o código chegar por
+            # email — loga aqui para permitir testar o fluxo manualmente. Só executa quando
+            # o envio de fato não aconteceu, então o código nunca aparece no log em produção
+            # com SMTP funcionando.
+            logger.warning("Email de reset não enviado (SMTP não configurado) — código para %s: %s", email, codigo)
+        return enviado

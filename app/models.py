@@ -182,6 +182,17 @@ class VerificacaoTelefone(Base):
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
 
 
+class CodigoResetSenha(Base):
+    __tablename__ = "codigos_reset_senha"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    codigo: Mapped[str] = mapped_column(String(6), nullable=False)
+    expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
+
+
 class CadastroPendente(Base):
     """Cadastro iniciado mas ainda não confirmado: a conta em `usuarios` só é
     criada depois que o código de verificação enviado por WhatsApp/SMS é
