@@ -1,5 +1,5 @@
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -319,37 +319,11 @@ class LocalRepository:
 class PlantaoRepository:
     @staticmethod
     def create(db: Session, payload: PlantaoCreate) -> Plantao:
-        plantao = Plantao(**payload.model_dump(exclude={"acao_conflito"}))
+        plantao = Plantao(**payload.model_dump())
         db.add(plantao)
         db.commit()
         db.refresh(plantao)
         return plantao
-
-    @staticmethod
-    def get_conflito(
-        db: Session,
-        usuario_id: int,
-        inicio: datetime,
-        fim: datetime,
-        excluir_id: int | None = None,
-    ) -> Plantao | None:
-        """Verifica se há plantão conflitante no mesmo intervalo de tempo."""
-        data_min = inicio.date() - timedelta(days=1)
-        data_max = fim.date() + timedelta(days=1)
-        stmt = select(Plantao).where(
-            Plantao.usuario_id == usuario_id,
-            Plantao.data_inicio >= data_min,
-            Plantao.data_fim <= data_max,
-            Plantao.transferido.is_(False),
-        )
-        if excluir_id is not None:
-            stmt = stmt.where(Plantao.id != excluir_id)
-        for plantao in db.scalars(stmt).all():
-            inicio_existente = datetime.combine(plantao.data_inicio, plantao.horario_inicio)
-            fim_existente = datetime.combine(plantao.data_fim, plantao.horario_fim)
-            if inicio_existente < fim and fim_existente > inicio:
-                return plantao
-        return None
 
     @staticmethod
     def update(db: Session, plantao_id: int, **kwargs) -> Plantao | None:

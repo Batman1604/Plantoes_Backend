@@ -34,8 +34,8 @@ from app.schemas.plantao_schema import (
     TrocaResponse,
 )
 
-# Reutiliza a lógica de negócio já validada dos endpoints normais (conflito de horário,
-# limite do plano free, recálculo de pagamento, série recorrente, etc.) chamando as próprias
+# Reutiliza a lógica de negócio já validada dos endpoints normais (limite do plano free,
+# recálculo de pagamento, série recorrente, etc.) chamando as próprias
 # funções de rota como funções Python comuns — os parâmetros com Depends(...) são apenas
 # valores padrão e são ignorados quando db/current_user são passados explicitamente. Isso
 # evita reimplementar essas regras (e desalinhar sync do restante do sistema).
@@ -216,9 +216,6 @@ class SyncService:
                 pagamento_plantao=item.pagamento_plantao,
                 notificacao_ativa=item.notificacao_ativa,
                 notificacao_antecedencia_minutos=item.notificacao_antecedencia_minutos,
-                # 'manter' nunca bloqueia nem sobrescreve outro plantão — é o único modo sem
-                # necessidade de decisão interativa do usuário, essencial em um push em lote.
-                acao_conflito="manter",
                 uuid_cliente=item.uuid_cliente,
             )
             try:

@@ -30,8 +30,7 @@ Regras importantes:
 - Responda sempre em português, de forma amigável e objetiva
 - Não invente IDs — sempre liste os itens primeiro para o usuário escolher
 - Ao mostrar datas, use o formato DD/MM/YYYY; ao chamar tools, use YYYY-MM-DD
-- Ao mostrar horários, use o formato HH:MM; ao chamar tools, use HH:MM
-- Se houver conflito de horário ao criar um plantão, informe o usuário e pergunte se quer manter, ajustar ou cancelar"""
+- Ao mostrar horários, use o formato HH:MM; ao chamar tools, use HH:MM"""
 
 TOOLS = [
     {
@@ -60,11 +59,6 @@ TOOLS = [
                     "type": "string",
                     "enum": ["Semanal", "Quinzenal", "Unico"],
                     "description": "Recorrência opcional do plantão",
-                },
-                "acao_conflito": {
-                    "type": "string",
-                    "enum": ["manter", "ajustar", "cancelar"],
-                    "description": "Ação a tomar caso haja conflito de horário com outro plantão",
                 },
             },
         },
@@ -178,23 +172,6 @@ def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
 
     if (fim_dt - inicio_dt).total_seconds() > 48 * 3600:
         return "A duração do plantão não pode ser maior que 48 horas."
-
-    conflito = PlantaoRepository.get_conflito(db, usuario_id=usuario_id, inicio=inicio_dt, fim=fim_dt)
-    acao = inputs.get("acao_conflito")
-
-    if conflito and acao is None:
-        conf_inicio = datetime.combine(conflito.data_inicio, conflito.horario_inicio).strftime("%d/%m/%Y %H:%M")
-        conf_fim = conflito.horario_fim.strftime("%H:%M")
-        return (
-            f"Conflito detectado com o plantão ID {conflito.id} ({conf_inicio}-{conf_fim}). "
-            "Informe a ação desejada: 'manter' (criar mesmo assim), 'ajustar' (encurtar o conflitante) ou 'cancelar' (não criar)."
-        )
-
-    if acao == "cancelar":
-        return "Criação de plantão cancelada conforme solicitado."
-
-    if acao == "ajustar" and conflito:
-        PlantaoRepository.update(db, conflito.id, horario_fim=inicio_dt.time())
 
     recorrencia = inputs.get("recorrencia")
     pagamento_plantao = None

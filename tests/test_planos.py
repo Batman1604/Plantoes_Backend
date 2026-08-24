@@ -104,7 +104,6 @@ class TestPlanos(unittest.TestCase):
                     "local_id": local_id,
                     "notificacao_ativa": True,
                     "notificacao_antecedencia_minutos": 60,
-                    "acao_conflito": "manter",
                 },
             )
             self.assertEqual(resposta.status_code, 201)
@@ -120,7 +119,6 @@ class TestPlanos(unittest.TestCase):
                 "local_id": local_id,
                 "notificacao_ativa": True,
                 "notificacao_antecedencia_minutos": 60,
-                "acao_conflito": "manter",
             },
         )
 

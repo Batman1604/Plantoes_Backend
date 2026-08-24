@@ -1342,49 +1342,6 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
             detail=f"A duração do plantão não pode ser maior que {max_duration_hours} horas.",
         )
 
-    # Verificar conflito
-    plantao_conflitante = PlantaoRepository.get_conflito(
-        db,
-        usuario_id=current_user.id,
-        inicio=inicio_dt,
-        fim=fim_dt,
-    )
-
-    # Se houver conflito e acao_conflito for None
-    if plantao_conflitante and payload.acao_conflito is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Conflito de horário detectado. Escolha uma ação para resolver: 'manter', 'ajustar' ou 'cancelar'."
-        )
-
-    # Se acao_conflito == "cancelar"
-    if payload.acao_conflito == "cancelar":
-        logger.info("Criação de plantão cancelada por usuário %s", current_user.email)
-        return APIResponse(
-            success=True,
-            message="Criação de plantão cancelada conforme solicitado.",
-            data=None,
-        )
-
-    # Se acao_conflito == "ajustar"
-    if payload.acao_conflito == "ajustar" and plantao_conflitante:
-        try:
-            # Atualizar o horario_fim do plantão conflitante para o horario_inicio do novo
-            PlantaoRepository.update(
-                db,
-                plantao_conflitante.id,
-                horario_fim=payload.data_inicio.time()
-            )
-            logger.info(
-                "Plantão %s ajustado para resolver conflito com novo plantão do usuário %s",
-                plantao_conflitante.id,
-                current_user.email
-            )
-        except Exception as exc:
-            db.rollback()
-            raise HTTPException(status_code=500, detail="Erro ao ajustar plantão conflitante") from exc
-
-    # Criar plantão (acao_conflito == "manter" ou "ajustar" com ajuste realizado)
     recorrencia = payload.recorrencia if payload.recorrencia != "Unico" else None
     if payload.pagamento_plantao is not None:
         pagamento_plantao = payload.pagamento_plantao
@@ -1518,21 +1475,6 @@ def atualizar_plantao(
     else:
         nova_data_pagamento = _calcular_data_pagamento(inicio_dt.date())
     dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
-
-    conflito_relevante = any(k in dados_atualizacao for k in ("data_inicio", "data_fim"))
-    if conflito_relevante and aplicar_em == "somente_este":
-        conflito = PlantaoRepository.get_conflito(
-            db,
-            usuario_id=current_user.id,
-            inicio=inicio_dt,
-            fim=fim_dt,
-            excluir_id=plantao_id,
-        )
-        if conflito:
-            raise HTTPException(
-                status_code=409,
-                detail="Conflito de horário detectado com outro plantão existente.",
-            )
 
     def _decompor_datetimes(dados: dict) -> dict:
         result = {k: v for k, v in dados.items() if k not in ("data_inicio", "data_fim")}

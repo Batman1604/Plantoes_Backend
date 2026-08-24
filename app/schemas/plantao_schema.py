@@ -315,10 +315,6 @@ class PlantaoCreate(PlantaoBase):
         example=60,
         description="Minutos antes do início para enviar a notificação."
     )
-    acao_conflito: Literal["manter", "ajustar", "cancelar"] | None = Field(
-        default=None,
-        description="Ação a tomar quando houver conflito de horário: manter (não fazer nada), ajustar (ajustar horários) ou cancelar (cancelar plantão)."
-    )
 
     @model_validator(mode="before")
     @classmethod
