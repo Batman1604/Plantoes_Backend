@@ -199,6 +199,319 @@ class TestSync(unittest.TestCase):
         self.assertEqual(exclusoes[0]["id"], plantao["id"])
 
     # ---------------------------------------------------------------
+    # push: bonificação (sempre aninhada em um item de plantão)
+    # ---------------------------------------------------------------
+
+    def test_push_cria_plantao_com_bonificacao_aninhada(self):
+        headers, _ = self.criar_usuario("push_bonificacao_criar@example.com")
+        local = self.criar_local(headers)
+        agora = _iso(datetime.now(UTC))
+        payload = {
+            "plantoes": [{
+                "uuid_cliente": "plantao-bonificacao-1",
+                "local_id": local["id"],
+                "data_inicio": "2026-04-01T08:00:00",
+                "data_fim": "2026-04-01T16:00:00",
+                "valor": "600.00",
+                "atualizado_em": agora,
+                "bonificacoes": [{
+                    "uuid_cliente": "bonificacao-uuid-1",
+                    "valor": "50.00",
+                    "descricao": "Plantão extra",
+                    "atualizado_em": agora,
+                }],
+            }],
+        }
+        response = self.client.post("/api/sync/push", headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()["data"]
+        self.assertEqual(len(data["plantoes_criados"]), 1)
+        self.assertEqual(len(data["bonificacoes_criadas"]), 1)
+        self.assertEqual(data["erros"], [])
+
+        plantao_id = data["plantoes_criados"][0]["id"]
+        bonificacoes = self.client.get(
+            "/api/bonificacoes", headers=headers, params={"plantao_id": plantao_id}
+        ).json()["data"]
+        self.assertEqual(len(bonificacoes), 1)
+        self.assertEqual(str(bonificacoes[0]["valor"]), "50.00")
+
+    def test_push_atualiza_e_deleta_bonificacao_existente(self):
+        headers, _ = self.criar_usuario("push_bonificacao_ciclo@example.com")
+        local = self.criar_local(headers)
+        plantao = self.criar_plantao(headers, local["id"])
+        base = datetime.now(UTC)
+
+        def push_plantao(bonificacoes, minutos):
+            payload = {
+                "plantoes": [{
+                    "uuid_cliente": "plantao-bonificacao-ciclo",
+                    "id": plantao["id"],
+                    "local_id": local["id"],
+                    "data_inicio": "2026-07-17T07:00:00",
+                    "data_fim": "2026-07-17T19:00:00",
+                    "valor": "1200.00",
+                    "atualizado_em": _iso(base + timedelta(minutes=minutos)),
+                    "bonificacoes": bonificacoes,
+                }],
+            }
+            response = self.client.post("/api/sync/push", headers=headers, json=payload)
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()["data"]
+
+        criacao = push_plantao([{
+            "uuid_cliente": "bonificacao-ciclo-1",
+            "valor": "80.00",
+            "atualizado_em": _iso(base),
+        }], minutos=1)
+        self.assertEqual(len(criacao["bonificacoes_criadas"]), 1)
+        bonificacao_id = criacao["bonificacoes_criadas"][0]["id"]
+
+        atualizacao = push_plantao([{
+            "uuid_cliente": "bonificacao-ciclo-1",
+            "id": bonificacao_id,
+            "valor": "95.00",
+            "atualizado_em": _iso(base + timedelta(minutes=2)),
+        }], minutos=3)
+        self.assertEqual(len(atualizacao["bonificacoes_atualizadas"]), 1)
+        bonificacoes = self.client.get(
+            "/api/bonificacoes", headers=headers, params={"plantao_id": plantao["id"]}
+        ).json()["data"]
+        self.assertEqual(str(bonificacoes[0]["valor"]), "95.00")
+
+        exclusao = push_plantao([{
+            "uuid_cliente": "bonificacao-ciclo-1",
+            "id": bonificacao_id,
+            "valor": "95.00",
+            "atualizado_em": _iso(base + timedelta(minutes=4)),
+            "deletado": True,
+        }], minutos=5)
+        self.assertEqual(len(exclusao["bonificacoes_deletadas"]), 1)
+        bonificacoes = self.client.get(
+            "/api/bonificacoes", headers=headers, params={"plantao_id": plantao["id"]}
+        ).json()["data"]
+        self.assertEqual(bonificacoes, [])
+
+    def test_push_bonificacao_conflito_mais_antiga_nao_e_aplicada(self):
+        headers, _ = self.criar_usuario("push_bonificacao_conflito@example.com")
+        local = self.criar_local(headers)
+        plantao = self.criar_plantao(headers, local["id"])
+
+        criacao = self.client.post("/api/sync/push", headers=headers, json={
+            "plantoes": [{
+                "uuid_cliente": "plantao-bonificacao-conflito",
+                "id": plantao["id"],
+                "local_id": local["id"],
+                "data_inicio": "2026-07-17T07:00:00",
+                "data_fim": "2026-07-17T19:00:00",
+                "valor": "1200.00",
+                "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=1)),
+                "bonificacoes": [{
+                    "uuid_cliente": "bonificacao-conflito-1",
+                    "valor": "80.00",
+                    "atualizado_em": _iso(datetime.now(UTC)),
+                }],
+            }],
+        }).json()["data"]
+        bonificacao_id = criacao["bonificacoes_criadas"][0]["id"]
+
+        # Edita "ao vivo" pra empurrar o atualizado_em do servidor pra frente.
+        self.client.patch(f"/api/bonificacoes/{bonificacao_id}", headers=headers, json={"valor": "120.00"})
+
+        payload = {
+            "plantoes": [{
+                "uuid_cliente": "plantao-bonificacao-conflito",
+                "id": plantao["id"],
+                "local_id": local["id"],
+                "data_inicio": "2026-07-17T07:00:00",
+                "data_fim": "2026-07-17T19:00:00",
+                "valor": "1200.00",
+                "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=2)),
+                "bonificacoes": [{
+                    "uuid_cliente": "bonificacao-conflito-1",
+                    "id": bonificacao_id,
+                    "valor": "1.00",
+                    "atualizado_em": _iso(datetime.now(UTC) - timedelta(days=1)),
+                }],
+            }],
+        }
+        response = self.client.post("/api/sync/push", headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()["data"]
+        conflitos_bonificacao = [c for c in data["conflitos"] if c["entidade"] == "bonificacao"]
+        self.assertEqual(len(conflitos_bonificacao), 1)
+        self.assertEqual(data["bonificacoes_atualizadas"], [])
+
+        bonificacoes = self.client.get(
+            "/api/bonificacoes", headers=headers, params={"plantao_id": plantao["id"]}
+        ).json()["data"]
+        self.assertEqual(str(bonificacoes[0]["valor"]), "120.00")
+
+    # ---------------------------------------------------------------
+    # push: troca (transferência manual — nome/telefone preenchidos à mão)
+    # ---------------------------------------------------------------
+
+    def test_push_cria_troca_transferencia_manual(self):
+        headers, usuario_id = self.criar_usuario("push_troca_criar@example.com")
+        local = self.criar_local(headers)
+        plantao = self.criar_plantao(headers, local["id"])
+
+        payload = {
+            "trocas": [{
+                "uuid_cliente": "troca-uuid-1",
+                "plantao_transferido_id": plantao["id"],
+                "nome_transferir": "Fulano de Tal",
+                "telefone_transferir": "11999999999",
+                "atualizado_em": _iso(datetime.now(UTC)),
+            }],
+        }
+        response = self.client.post("/api/sync/push", headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()["data"]
+        self.assertEqual(len(data["trocas_criadas"]), 1)
+        self.assertEqual(data["erros"], [])
+
+        trocas = self.client.get("/api/trocas", headers=headers, params={"usuario_id": usuario_id}).json()["data"]
+        self.assertEqual(len(trocas), 1)
+        self.assertEqual(trocas[0]["nome_transferir"], "Fulano de Tal")
+        self.assertEqual(trocas[0]["plantao_id_transferido"], plantao["id"])
+
+    def test_push_cria_plantao_e_troca_no_mesmo_lote_via_uuid(self):
+        headers, usuario_id = self.criar_usuario("push_troca_mesmo_lote@example.com")
+        local = self.criar_local(headers)
+        agora = _iso(datetime.now(UTC))
+
+        payload = {
+            "plantoes": [{
+                "uuid_cliente": "plantao-para-troca",
+                "local_id": local["id"],
+                "data_inicio": "2026-05-01T08:00:00",
+                "data_fim": "2026-05-01T16:00:00",
+                "valor": "700.00",
+                "atualizado_em": agora,
+            }],
+            "trocas": [{
+                "uuid_cliente": "troca-uuid-2",
+                "plantao_transferido_uuid_cliente": "plantao-para-troca",
+                "nome_transferir": "Beltrano",
+                "telefone_transferir": "11888887777",
+                "atualizado_em": agora,
+            }],
+        }
+        response = self.client.post("/api/sync/push", headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()["data"]
+        self.assertEqual(len(data["plantoes_criados"]), 1)
+        self.assertEqual(len(data["trocas_criadas"]), 1)
+        self.assertEqual(data["erros"], [])
+
+        trocas = self.client.get("/api/trocas", headers=headers, params={"usuario_id": usuario_id}).json()["data"]
+        self.assertEqual(trocas[0]["plantao_id_transferido"], data["plantoes_criados"][0]["id"])
+
+    def test_push_deleta_troca_gera_tombstone(self):
+        headers, usuario_id = self.criar_usuario("push_troca_deletar@example.com")
+        local = self.criar_local(headers)
+        plantao = self.criar_plantao(headers, local["id"])
+
+        criacao = self.client.post("/api/sync/push", headers=headers, json={
+            "trocas": [{
+                "uuid_cliente": "troca-uuid-deletar",
+                "plantao_transferido_id": plantao["id"],
+                "nome_transferir": "Fulano",
+                "telefone_transferir": "11999999999",
+                "atualizado_em": _iso(datetime.now(UTC)),
+            }],
+        }).json()["data"]
+        troca_id = criacao["trocas_criadas"][0]["id"]
+
+        marcador = datetime.now(UTC)
+        payload = {
+            "trocas": [{
+                "uuid_cliente": "troca-uuid-deletar",
+                "id": troca_id,
+                "nome_transferir": "Fulano",
+                "telefone_transferir": "11999999999",
+                "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=1)),
+                "deletado": True,
+            }],
+        }
+        response = self.client.post("/api/sync/push", headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(response.json()["data"]["trocas_deletadas"]), 1)
+
+        trocas = self.client.get("/api/trocas", headers=headers, params={"usuario_id": usuario_id}).json()["data"]
+        self.assertEqual(trocas, [])
+
+        pull = self.client.get("/api/sync/pull", headers=headers, params={"since": _iso(marcador)})
+        self.assertEqual(pull.status_code, 200, pull.text)
+        exclusoes = [e for e in pull.json()["data"]["exclusoes"] if e["entidade"] == "troca"]
+        self.assertEqual(len(exclusoes), 1)
+        self.assertEqual(exclusoes[0]["id"], troca_id)
+
+    def test_push_troca_conflito_mais_antiga_nao_e_aplicada(self):
+        headers, usuario_id = self.criar_usuario("push_troca_conflito@example.com")
+        local = self.criar_local(headers)
+        plantao = self.criar_plantao(headers, local["id"])
+
+        criada = self.client.post("/api/trocas", headers=headers, json={
+            "plantao_transferido_id": plantao["id"],
+            "transferido_para": {"nome": "Ciclano", "telefone": "11888888888"},
+        })
+        self.assertEqual(criada.status_code, 201, criada.text)
+        troca_id = criada.json()["data"]["troca_id"]
+
+        payload = {
+            "trocas": [{
+                "uuid_cliente": "troca-conflito-1",
+                "id": troca_id,
+                "nome_transferir": "Ciclano",
+                "telefone_transferir": "11888888888",
+                "atualizado_em": _iso(datetime.now(UTC) - timedelta(days=1)),
+                "deletado": True,
+            }],
+        }
+        response = self.client.post("/api/sync/push", headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()["data"]
+        conflitos_troca = [c for c in data["conflitos"] if c["entidade"] == "troca"]
+        self.assertEqual(len(conflitos_troca), 1)
+        self.assertEqual(data["trocas_deletadas"], [])
+
+        trocas = self.client.get("/api/trocas", headers=headers, params={"usuario_id": usuario_id}).json()["data"]
+        self.assertEqual(len(trocas), 1)
+
+    def test_push_troca_plantao_ja_transferido_retorna_erro(self):
+        headers, _ = self.criar_usuario("push_troca_ja_transferida@example.com")
+        local = self.criar_local(headers)
+        plantao = self.criar_plantao(headers, local["id"])
+
+        self.client.post("/api/sync/push", headers=headers, json={
+            "trocas": [{
+                "uuid_cliente": "troca-uuid-primeira",
+                "plantao_transferido_id": plantao["id"],
+                "nome_transferir": "Fulano",
+                "telefone_transferir": "11999999999",
+                "atualizado_em": _iso(datetime.now(UTC)),
+            }],
+        })
+
+        payload = {
+            "trocas": [{
+                "uuid_cliente": "troca-uuid-segunda",
+                "plantao_transferido_id": plantao["id"],
+                "nome_transferir": "Outra Pessoa",
+                "telefone_transferir": "11777777777",
+                "atualizado_em": _iso(datetime.now(UTC)),
+            }],
+        }
+        response = self.client.post("/api/sync/push", headers=headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()["data"]
+        self.assertEqual(data["trocas_criadas"], [])
+        self.assertEqual(len(data["erros"]), 1)
+        self.assertEqual(data["erros"][0]["entidade"], "troca")
+
+    # ---------------------------------------------------------------
     # pull: filtro por since
     # ---------------------------------------------------------------
 

@@ -516,6 +516,9 @@ class TrocaOperacaoCreate(BaseModel):
     plantao_transferido_id: int
     transferido_para: PessoaTrocaCreate
     plantao_recebido: Optional[PlantaoRecebidoTrocaCreate] = None
+    uuid_cliente: Optional[str] = Field(
+        default=None, max_length=36, description="Identificador gerado no dispositivo, usado para sincronização offline."
+    )
 
 
 class TrocaOperacaoData(BaseModel):
@@ -680,6 +683,9 @@ class BonificacaoCreate(BaseModel):
     local_id: Optional[int] = Field(default=None, description="ID do local (informativo, armazenado para facilitar listagem).")
     valor: Decimal = Field(gt=0, description="Valor da bonificação em reais.")
     descricao: Optional[str] = Field(default=None, max_length=500, description="Motivo ou descrição da bonificação.")
+    uuid_cliente: Optional[str] = Field(
+        default=None, max_length=36, description="Identificador gerado no dispositivo, usado para sincronização offline."
+    )
 
 
 class BonificacaoUpdate(BaseModel):
@@ -693,6 +699,7 @@ class BonificacaoResponse(BaseModel):
     local_id: Optional[int] = None
     valor: Decimal
     descricao: Optional[str] = None
+    uuid_cliente: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -724,11 +731,18 @@ class TrocaResponse(BaseModel):
     nome_receber: Optional[str] = None
     telefone_transferir: Optional[str] = None
     telefone_receber: Optional[str] = None
+    observacao_transferir: Optional[str] = None
+    observacao_receber: Optional[str] = None
     local: Optional[str] = None
     data_inicio: Optional[date] = None
     data_fim: Optional[date] = None
     horario_inicio: Optional[time] = None
     horario_fim: Optional[time] = None
+    contraparte_usuario_id: Optional[int] = None
+    contraparte_usuario_id_receber: Optional[int] = None
+    criado_em: Optional[datetime] = None
+    uuid_cliente: Optional[str] = None
+    atualizado_em: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -866,6 +880,17 @@ class SyncLocalItem(BaseModel):
     deletado: bool = Field(default=False, description="True se o registro foi excluído localmente.")
 
 
+class SyncBonificacaoItem(BaseModel):
+    uuid_cliente: str = Field(min_length=1, max_length=36, description="Identificador estável gerado no dispositivo.")
+    id: Optional[int] = Field(default=None, description="ID no servidor, se esta bonificação já foi sincronizada antes.")
+    # gt=0 (não ge=0) igual a BonificacaoCreate.valor — evita que criar_bonificacao rejeite
+    # com um ValidationError não tratado (BonificacaoCreate é mais estrito que este schema).
+    valor: Decimal = Field(gt=0)
+    descricao: Optional[str] = Field(default=None, max_length=2000)
+    atualizado_em: datetime = Field(description="Hora da última alteração feita no dispositivo (relógio local).")
+    deletado: bool = Field(default=False, description="True se o registro foi excluído localmente.")
+
+
 class SyncPlantaoItem(BaseModel):
     uuid_cliente: str = Field(min_length=1, max_length=36, description="Identificador estável gerado no dispositivo.")
     id: Optional[int] = Field(default=None, description="ID no servidor, se este plantão já foi sincronizado antes.")
@@ -882,6 +907,7 @@ class SyncPlantaoItem(BaseModel):
     notificacao_ativa: bool = True
     notificacao_antecedencia_minutos: int = Field(default=60, ge=0, le=2880)
     pagamento_plantao: Optional[date] = None
+    bonificacoes: list[SyncBonificacaoItem] = Field(default_factory=list, max_length=100)
     atualizado_em: datetime = Field(description="Hora da última alteração feita no dispositivo (relógio local).")
     deletado: bool = Field(default=False, description="True se o registro foi excluído localmente.")
 
@@ -897,9 +923,34 @@ class SyncPlantaoItem(BaseModel):
         return self
 
 
+class SyncTrocaItem(BaseModel):
+    """Transferência manual de plantão (nome/telefone preenchidos à mão) feita offline —
+    não cobre troca/transferência via seleção de amigo, que continua exigindo rede."""
+    uuid_cliente: str = Field(min_length=1, max_length=36, description="Identificador estável gerado no dispositivo.")
+    id: Optional[int] = Field(default=None, description="ID no servidor, se esta troca já foi sincronizada antes.")
+    plantao_transferido_id: Optional[int] = Field(
+        default=None, description="ID no servidor do plantão transferido. Informe-o OU plantao_transferido_uuid_cliente."
+    )
+    plantao_transferido_uuid_cliente: Optional[str] = Field(
+        default=None, max_length=36, description="uuid_cliente de um plantão enviado no mesmo push (ainda sem id de servidor)."
+    )
+    nome_transferir: str = Field(min_length=1, max_length=120)
+    telefone_transferir: str = Field(min_length=1, max_length=30)
+    observacao_transferir: Optional[str] = Field(default=None, max_length=2000)
+    atualizado_em: datetime = Field(description="Hora da última alteração feita no dispositivo (relógio local).")
+    deletado: bool = Field(default=False, description="True se o registro foi excluído localmente.")
+
+    @model_validator(mode="after")
+    def validar_referencia_plantao(self):
+        if not self.deletado and self.plantao_transferido_id is None and self.plantao_transferido_uuid_cliente is None:
+            raise ValueError("Informe plantao_transferido_id ou plantao_transferido_uuid_cliente.")
+        return self
+
+
 class SyncPushRequest(BaseModel):
     locais: list[SyncLocalItem] = Field(default_factory=list, max_length=500)
     plantoes: list[SyncPlantaoItem] = Field(default_factory=list, max_length=500)
+    trocas: list[SyncTrocaItem] = Field(default_factory=list, max_length=500)
 
 
 class SyncItemResultado(BaseModel):
@@ -908,7 +959,7 @@ class SyncItemResultado(BaseModel):
 
 
 class SyncConflito(BaseModel):
-    entidade: Literal["local", "plantao"]
+    entidade: Literal["local", "plantao", "troca", "bonificacao"]
     uuid_cliente: str
     id: Optional[int] = None
     motivo: str
@@ -916,7 +967,7 @@ class SyncConflito(BaseModel):
 
 
 class SyncErro(BaseModel):
-    entidade: Literal["local", "plantao"]
+    entidade: Literal["local", "plantao", "troca", "bonificacao"]
     uuid_cliente: str
     detalhe: str
     status_code: int
@@ -929,6 +980,11 @@ class SyncPushResponse(BaseModel):
     plantoes_criados: list[SyncItemResultado] = Field(default_factory=list)
     plantoes_atualizados: list[SyncItemResultado] = Field(default_factory=list)
     plantoes_deletados: list[SyncItemResultado] = Field(default_factory=list)
+    trocas_criadas: list[SyncItemResultado] = Field(default_factory=list)
+    trocas_deletadas: list[SyncItemResultado] = Field(default_factory=list)
+    bonificacoes_criadas: list[SyncItemResultado] = Field(default_factory=list)
+    bonificacoes_atualizadas: list[SyncItemResultado] = Field(default_factory=list)
+    bonificacoes_deletadas: list[SyncItemResultado] = Field(default_factory=list)
     conflitos: list[SyncConflito] = Field(default_factory=list)
     erros: list[SyncErro] = Field(default_factory=list)
     servidor_timestamp: datetime = Field(
