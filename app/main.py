@@ -1032,59 +1032,6 @@ def ensure_trocas_criado_em_column() -> None:
 ensure_trocas_criado_em_column()
 
 
-def ensure_sync_colunas_trocas_bonificacoes() -> None:
-    """uuid_cliente e atualizado_em em trocas e bonificacoes — extensão da sincronização
-    offline (ver ensure_sync_colunas_locais_plantoes) para cobrir transferência manual de
-    plantão e bonificações criadas/editadas offline."""
-    if engine.dialect.name == "sqlite":
-        with engine.begin() as connection:
-            trocas_cols = {c[1] for c in connection.execute(text("PRAGMA table_info(trocas)")).fetchall()}
-            if "uuid_cliente" not in trocas_cols:
-                connection.execute(text("ALTER TABLE trocas ADD COLUMN uuid_cliente VARCHAR(36) NULL"))
-            if "atualizado_em" not in trocas_cols:
-                connection.execute(text("ALTER TABLE trocas ADD COLUMN atualizado_em DATETIME NULL"))
-                connection.execute(text(
-                    "UPDATE trocas SET atualizado_em = CURRENT_TIMESTAMP WHERE atualizado_em IS NULL"
-                ))
-
-            bonificacoes_cols = {c[1] for c in connection.execute(text("PRAGMA table_info(bonificacoes)")).fetchall()}
-            if "uuid_cliente" not in bonificacoes_cols:
-                connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN uuid_cliente VARCHAR(36) NULL"))
-            if "atualizado_em" not in bonificacoes_cols:
-                connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN atualizado_em DATETIME NULL"))
-                connection.execute(text(
-                    "UPDATE bonificacoes SET atualizado_em = CURRENT_TIMESTAMP WHERE atualizado_em IS NULL"
-                ))
-
-            connection.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_trocas_uuid_cliente ON trocas (uuid_cliente)"
-            ))
-            connection.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_bonificacoes_uuid_cliente ON bonificacoes (uuid_cliente)"
-            ))
-        return
-
-    if engine.dialect.name == "postgresql":
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE trocas ADD COLUMN IF NOT EXISTS uuid_cliente VARCHAR(36) NULL"))
-            connection.execute(text(
-                "ALTER TABLE trocas ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()"
-            ))
-            connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN IF NOT EXISTS uuid_cliente VARCHAR(36) NULL"))
-            connection.execute(text(
-                "ALTER TABLE bonificacoes ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()"
-            ))
-            connection.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_trocas_uuid_cliente ON trocas (uuid_cliente)"
-            ))
-            connection.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_bonificacoes_uuid_cliente ON bonificacoes (uuid_cliente)"
-            ))
-        return
-
-
-ensure_sync_colunas_trocas_bonificacoes()
-
 
 def backfill_contraparte_usuario_id_receber() -> None:
     """Para trocas já existentes com plantao_id_recebido, o recebido sempre pertencia ao

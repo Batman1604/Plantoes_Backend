@@ -7,7 +7,6 @@ from app.models import User
 from app.repositories.plantao_repository import (
     AmigoConfiguracaoRepository,
     AmizadeRepository,
-    BonificacaoRepository,
     LocalRepository,
     PlantaoRepository,
     SolicitacaoTrocaRepository,
@@ -17,17 +16,13 @@ from app.repositories.plantao_repository import (
 from app.schemas.plantao_schema import (
     AmizadeAmigoResumo,
     AmizadeListItem,
-    BonificacaoCreate,
-    BonificacaoUpdate,
     LocalCreate,
     LocalResponse,
     LocalUpdate,
-    PessoaTrocaCreate,
     PessoaTrocaResumo,
     PlantaoCreate,
     PlantaoUpdate,
     SolicitacaoTrocaListItem,
-    SyncBonificacaoItem,
     SyncConflito,
     SyncErro,
     SyncExclusaoItem,
@@ -36,8 +31,6 @@ from app.schemas.plantao_schema import (
     SyncPlantaoItem,
     SyncPullResponse,
     SyncPushResponse,
-    SyncTrocaItem,
-    TrocaOperacaoCreate,
     TrocaResponse,
 )
 
@@ -51,17 +44,12 @@ from app.routes.plantao_routes import (
     _plantao_recebido_troca_resumo,
     _plantao_troca_resumo,
     _serializar_amigo_configuracao,
-    atualizar_bonificacao,
     atualizar_local,
     atualizar_plantao,
-    criar_bonificacao,
     criar_local,
     criar_plantao,
-    criar_troca,
-    deletar_bonificacao,
     deletar_local,
     deletar_plantao,
-    deletar_troca,
 )
 
 
@@ -83,25 +71,15 @@ class SyncService:
     o contrato completo e a regra de conflito (last-write-wins por atualizado_em)."""
 
     @staticmethod
-    def push(
-        db: Session,
-        current_user: User,
-        locais: list[SyncLocalItem],
-        plantoes: list[SyncPlantaoItem],
-        trocas: list[SyncTrocaItem] | None = None,
-    ) -> SyncPushResponse:
+    def push(db: Session, current_user: User, locais: list[SyncLocalItem], plantoes: list[SyncPlantaoItem]) -> SyncPushResponse:
         resultado = SyncPushResponse(servidor_timestamp=datetime.now(UTC))
         uuid_para_local_id: dict[str, int] = {}
-        uuid_para_plantao_id: dict[str, int] = {}
 
         for item in locais:
             SyncService._push_local(db, current_user, item, resultado, uuid_para_local_id)
 
         for item in plantoes:
-            SyncService._push_plantao(db, current_user, item, resultado, uuid_para_local_id, uuid_para_plantao_id)
-
-        for item in trocas or []:
-            SyncService._push_troca(db, current_user, item, resultado, uuid_para_plantao_id)
+            SyncService._push_plantao(db, current_user, item, resultado, uuid_para_local_id)
 
         resultado.servidor_timestamp = datetime.now(UTC)
         return resultado
@@ -188,14 +166,7 @@ class SyncService:
         resultado.locais_atualizados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
 
     @staticmethod
-    def _push_plantao(
-        db: Session,
-        current_user: User,
-        item: SyncPlantaoItem,
-        resultado: SyncPushResponse,
-        uuid_para_local_id: dict,
-        uuid_para_plantao_id: dict,
-    ) -> None:
+    def _push_plantao(db: Session, current_user: User, item: SyncPlantaoItem, resultado: SyncPushResponse, uuid_para_local_id: dict) -> None:
         existente = None
         if item.id is not None:
             existente = PlantaoRepository.get_by_id_and_user_incluindo_transferidos(db, item.id, current_user.id)
@@ -252,12 +223,8 @@ class SyncService:
             except HTTPException as exc:
                 resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
                 return
-            uuid_para_plantao_id[item.uuid_cliente] = resposta.data.id
             resultado.plantoes_criados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
-            SyncService._push_bonificacoes(db, current_user, item.bonificacoes, resposta.data.id, local_id, resultado)
             return
-
-        uuid_para_plantao_id[item.uuid_cliente] = existente.id
 
         if _as_utc(existente.atualizado_em) >= _as_utc(item.atualizado_em):
             resultado.conflitos.append(SyncConflito(
@@ -286,148 +253,6 @@ class SyncService:
             resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
             return
         resultado.plantoes_atualizados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
-        SyncService._push_bonificacoes(db, current_user, item.bonificacoes, existente.id, local_id, resultado)
-
-    @staticmethod
-    def _push_bonificacoes(
-        db: Session,
-        current_user: User,
-        itens: list[SyncBonificacaoItem],
-        plantao_id: int,
-        local_id: int,
-        resultado: SyncPushResponse,
-    ) -> None:
-        for item in itens:
-            existente = None
-            if item.id is not None:
-                existente = BonificacaoRepository.get_by_id(db, item.id)
-                if existente is not None and existente.plantao_id != plantao_id:
-                    # Mesma lógica de segurança de _resolver_local_existente: um id de
-                    # bonificação de outro plantão (potencialmente de outro usuário) nunca
-                    # deve "vazar" para o resto da função.
-                    existente = None
-            if existente is None and item.uuid_cliente:
-                existente = BonificacaoRepository.get_by_uuid_cliente(db, item.uuid_cliente, plantao_id)
-
-            if item.deletado:
-                if existente is None:
-                    continue
-                if _as_utc(existente.atualizado_em) > _as_utc(item.atualizado_em):
-                    resultado.conflitos.append(SyncConflito(
-                        entidade="bonificacao", uuid_cliente=item.uuid_cliente, id=existente.id,
-                        motivo="O servidor tem uma versão mais recente desta bonificação.",
-                        servidor_atualizado_em=existente.atualizado_em,
-                    ))
-                    continue
-                try:
-                    deletar_bonificacao(bonificacao_id=existente.id, db=db, current_user=current_user)
-                except HTTPException as exc:
-                    resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
-                    continue
-                resultado.bonificacoes_deletadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
-                continue
-
-            if existente is None:
-                payload = BonificacaoCreate(
-                    plantao_id=plantao_id, local_id=local_id, valor=item.valor, descricao=item.descricao,
-                    uuid_cliente=item.uuid_cliente,
-                )
-                try:
-                    resposta = criar_bonificacao(payload=payload, db=db, current_user=current_user)
-                except HTTPException as exc:
-                    resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
-                    continue
-                resultado.bonificacoes_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
-                continue
-
-            if _as_utc(existente.atualizado_em) >= _as_utc(item.atualizado_em):
-                resultado.conflitos.append(SyncConflito(
-                    entidade="bonificacao", uuid_cliente=item.uuid_cliente, id=existente.id,
-                    motivo="O servidor tem uma versão igual ou mais recente desta bonificação.",
-                    servidor_atualizado_em=existente.atualizado_em,
-                ))
-                continue
-
-            payload = BonificacaoUpdate(valor=item.valor, descricao=item.descricao)
-            try:
-                atualizar_bonificacao(bonificacao_id=existente.id, payload=payload, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
-                continue
-            resultado.bonificacoes_atualizadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
-
-    @staticmethod
-    def _push_troca(
-        db: Session,
-        current_user: User,
-        item: SyncTrocaItem,
-        resultado: SyncPushResponse,
-        uuid_para_plantao_id: dict,
-    ) -> None:
-        """Só cobre transferência manual (nome/telefone à mão) — troca/transferência via
-        seleção de amigo sempre exige rede e nunca passa por aqui. Sem rota de edição (ver
-        SyncTrocaItem): uma troca já existente e não marcada como deletada já está
-        sincronizada, não há nada a atualizar."""
-        existente = None
-        if item.id is not None:
-            existente = TrocaRepository.get_by_id(db, item.id)
-            if existente is not None and existente.usuario_id != current_user.id:
-                existente = None
-        if existente is None and item.uuid_cliente:
-            existente = TrocaRepository.get_by_uuid_cliente(db, item.uuid_cliente, current_user.id)
-
-        if item.deletado:
-            if existente is None:
-                return
-            if _as_utc(existente.atualizado_em) > _as_utc(item.atualizado_em):
-                resultado.conflitos.append(SyncConflito(
-                    entidade="troca", uuid_cliente=item.uuid_cliente, id=existente.id,
-                    motivo="O servidor tem uma versão mais recente desta troca.",
-                    servidor_atualizado_em=existente.atualizado_em,
-                ))
-                return
-            try:
-                deletar_troca(troca_id=existente.id, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
-                return
-            resultado.trocas_deletadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
-            return
-
-        if existente is not None:
-            return
-
-        plantao_transferido_id = item.plantao_transferido_id
-        if plantao_transferido_id is None and item.plantao_transferido_uuid_cliente is not None:
-            plantao_transferido_id = uuid_para_plantao_id.get(item.plantao_transferido_uuid_cliente)
-            if plantao_transferido_id is None:
-                plantao_existente = PlantaoRepository.get_by_uuid_cliente(
-                    db, item.plantao_transferido_uuid_cliente, current_user.id
-                )
-                plantao_transferido_id = plantao_existente.id if plantao_existente else None
-        if plantao_transferido_id is None:
-            resultado.erros.append(SyncErro(
-                entidade="troca", uuid_cliente=item.uuid_cliente,
-                detalhe="Plantão transferido (plantao_transferido_id ou plantao_transferido_uuid_cliente) não encontrado.",
-                status_code=404,
-            ))
-            return
-
-        payload = TrocaOperacaoCreate(
-            plantao_transferido_id=plantao_transferido_id,
-            transferido_para=PessoaTrocaCreate(
-                nome=item.nome_transferir,
-                telefone=item.telefone_transferir,
-                observacao=item.observacao_transferir,
-            ),
-            uuid_cliente=item.uuid_cliente,
-        )
-        try:
-            resposta = criar_troca(payload=payload, db=db, current_user=current_user)
-        except HTTPException as exc:
-            resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
-            return
-        resultado.trocas_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.troca_id))
 
     @staticmethod
     def pull(db: Session, current_user: User, desde: datetime | None) -> SyncPullResponse:

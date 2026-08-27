@@ -35,14 +35,14 @@ def push(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    resultado = SyncService.push(db, current_user, payload.locais, payload.plantoes, payload.trocas)
+    resultado = SyncService.push(db, current_user, payload.locais, payload.plantoes)
     logger.info(
-        "Sync push de %s: %s locais / %s plantões / %s trocas criados, %s/%s atualizados, "
-        "%s/%s/%s excluídos, %s conflitos, %s erros",
+        "Sync push de %s: %s locais / %s plantões criados, %s/%s atualizados, %s/%s excluídos, "
+        "%s conflitos, %s erros",
         current_user.email,
-        len(resultado.locais_criados), len(resultado.plantoes_criados), len(resultado.trocas_criadas),
+        len(resultado.locais_criados), len(resultado.plantoes_criados),
         len(resultado.locais_atualizados), len(resultado.plantoes_atualizados),
-        len(resultado.locais_deletados), len(resultado.plantoes_deletados), len(resultado.trocas_deletadas),
+        len(resultado.locais_deletados), len(resultado.plantoes_deletados),
         len(resultado.conflitos), len(resultado.erros),
     )
     return APIResponse(success=True, message="Sincronização enviada.", data=resultado)

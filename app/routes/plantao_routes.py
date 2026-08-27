@@ -1030,7 +1030,6 @@ def criar_troca(
             nome_receber=(payload.plantao_recebido.recebido_de.nome if payload.plantao_recebido else None),
             telefone_receber=(payload.plantao_recebido.recebido_de.telefone if payload.plantao_recebido else None),
             observacao_receber=(payload.plantao_recebido.recebido_de.observacao if payload.plantao_recebido else None),
-            uuid_cliente=payload.uuid_cliente,
         )
         db.add(troca)
         db.flush()
