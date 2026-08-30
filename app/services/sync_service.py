@@ -7,6 +7,7 @@ from app.models import User
 from app.repositories.plantao_repository import (
     AmigoConfiguracaoRepository,
     AmizadeRepository,
+    BonificacaoRepository,
     LocalRepository,
     PlantaoRepository,
     SolicitacaoTrocaRepository,
@@ -16,13 +17,18 @@ from app.repositories.plantao_repository import (
 from app.schemas.plantao_schema import (
     AmizadeAmigoResumo,
     AmizadeListItem,
+    BonificacaoCreate,
+    BonificacaoResponse,
+    BonificacaoUpdate,
     LocalCreate,
     LocalResponse,
     LocalUpdate,
     PessoaTrocaResumo,
     PlantaoCreate,
+    PlantaoRecebidoTrocaCreate,
     PlantaoUpdate,
     SolicitacaoTrocaListItem,
+    SyncBonificacaoItem,
     SyncConflito,
     SyncErro,
     SyncExclusaoItem,
@@ -31,6 +37,8 @@ from app.schemas.plantao_schema import (
     SyncPlantaoItem,
     SyncPullResponse,
     SyncPushResponse,
+    SyncTrocaItem,
+    TrocaOperacaoCreate,
     TrocaResponse,
 )
 
@@ -44,12 +52,17 @@ from app.routes.plantao_routes import (
     _plantao_recebido_troca_resumo,
     _plantao_troca_resumo,
     _serializar_amigo_configuracao,
+    atualizar_bonificacao,
     atualizar_local,
     atualizar_plantao,
+    criar_bonificacao,
     criar_local,
     criar_plantao,
+    criar_troca,
+    deletar_bonificacao,
     deletar_local,
     deletar_plantao,
+    deletar_troca,
 )
 
 
@@ -71,15 +84,31 @@ class SyncService:
     o contrato completo e a regra de conflito (last-write-wins por atualizado_em)."""
 
     @staticmethod
-    def push(db: Session, current_user: User, locais: list[SyncLocalItem], plantoes: list[SyncPlantaoItem]) -> SyncPushResponse:
+    def push(
+        db: Session,
+        current_user: User,
+        locais: list[SyncLocalItem],
+        plantoes: list[SyncPlantaoItem],
+        trocas: list[SyncTrocaItem] | None = None,
+        bonificacoes: list[SyncBonificacaoItem] | None = None,
+    ) -> SyncPushResponse:
         resultado = SyncPushResponse(servidor_timestamp=datetime.now(UTC))
         uuid_para_local_id: dict[str, int] = {}
+        uuid_para_plantao_id: dict[str, int] = {}
 
         for item in locais:
             SyncService._push_local(db, current_user, item, resultado, uuid_para_local_id)
 
         for item in plantoes:
-            SyncService._push_plantao(db, current_user, item, resultado, uuid_para_local_id)
+            SyncService._push_plantao(db, current_user, item, resultado, uuid_para_local_id, uuid_para_plantao_id)
+
+        # Trocas/bonificações são processadas por último de propósito: uma troca ou
+        # bonificação pode referenciar (via uuid_cliente) um plantão criado neste mesmo lote.
+        for item in trocas or []:
+            SyncService._push_troca(db, current_user, item, resultado, uuid_para_local_id, uuid_para_plantao_id)
+
+        for item in bonificacoes or []:
+            SyncService._push_bonificacao(db, current_user, item, resultado, uuid_para_plantao_id)
 
         resultado.servidor_timestamp = datetime.now(UTC)
         return resultado
@@ -166,12 +195,21 @@ class SyncService:
         resultado.locais_atualizados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
 
     @staticmethod
-    def _push_plantao(db: Session, current_user: User, item: SyncPlantaoItem, resultado: SyncPushResponse, uuid_para_local_id: dict) -> None:
+    def _push_plantao(
+        db: Session,
+        current_user: User,
+        item: SyncPlantaoItem,
+        resultado: SyncPushResponse,
+        uuid_para_local_id: dict,
+        uuid_para_plantao_id: dict,
+    ) -> None:
         existente = None
         if item.id is not None:
             existente = PlantaoRepository.get_by_id_and_user_incluindo_transferidos(db, item.id, current_user.id)
         if existente is None and item.uuid_cliente:
             existente = PlantaoRepository.get_by_uuid_cliente(db, item.uuid_cliente, current_user.id)
+        if existente is not None and item.uuid_cliente:
+            uuid_para_plantao_id[item.uuid_cliente] = existente.id
 
         if item.deletado:
             if existente is None:
@@ -223,6 +261,7 @@ class SyncService:
             except HTTPException as exc:
                 resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
                 return
+            uuid_para_plantao_id[item.uuid_cliente] = resposta.data.id
             resultado.plantoes_criados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
             return
 
@@ -255,6 +294,198 @@ class SyncService:
         resultado.plantoes_atualizados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
 
     @staticmethod
+    def _resolver_troca_existente(db: Session, current_user: User, item: SyncTrocaItem):
+        existente = None
+        if item.id is not None:
+            candidata = TrocaRepository.get_by_id(db, item.id)
+            if candidata is not None and candidata.usuario_id == current_user.id:
+                existente = candidata
+        if existente is None and item.uuid_cliente:
+            existente = TrocaRepository.get_by_uuid_cliente(db, item.uuid_cliente, current_user.id)
+        return existente
+
+    @staticmethod
+    def _push_troca(
+        db: Session,
+        current_user: User,
+        item: SyncTrocaItem,
+        resultado: SyncPushResponse,
+        uuid_para_local_id: dict,
+        uuid_para_plantao_id: dict,
+    ) -> None:
+        existente = SyncService._resolver_troca_existente(db, current_user, item)
+
+        if item.deletado:
+            if existente is None:
+                return
+            if _as_utc(existente.atualizado_em) > _as_utc(item.atualizado_em):
+                resultado.conflitos.append(SyncConflito(
+                    entidade="troca", uuid_cliente=item.uuid_cliente, id=existente.id,
+                    motivo="O servidor tem uma versão mais recente desta troca.",
+                    servidor_atualizado_em=existente.atualizado_em,
+                ))
+                return
+            try:
+                deletar_troca(troca_id=existente.id, db=db, current_user=current_user)
+            except HTTPException as exc:
+                resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+                return
+            resultado.trocas_deletadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
+            return
+
+        if existente is not None:
+            # Não existe rota de edição para trocas (ver docstring de SyncTrocaItem): um
+            # reenvio do mesmo uuid_cliente é o caso idempotente (retry após timeout de rede,
+            # por exemplo) — devolve o estado já persistido em vez de reexecutar o efeito
+            # colateral de transferência, que marcaria o plantão como transferido de novo e
+            # poderia criar um segundo "recebido" duplicado.
+            resultado.trocas_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
+            return
+
+        plantao_transferido_id = item.plantao_transferido_id
+        if plantao_transferido_id is None and item.plantao_transferido_uuid_cliente is not None:
+            plantao_transferido_id = uuid_para_plantao_id.get(item.plantao_transferido_uuid_cliente)
+            if plantao_transferido_id is None:
+                plantao_existente = PlantaoRepository.get_by_uuid_cliente(db, item.plantao_transferido_uuid_cliente, current_user.id)
+                plantao_transferido_id = plantao_existente.id if plantao_existente else None
+        if plantao_transferido_id is None:
+            resultado.erros.append(SyncErro(
+                entidade="troca", uuid_cliente=item.uuid_cliente,
+                detalhe="Plantão transferido (plantao_transferido_id ou plantao_transferido_uuid_cliente) não encontrado.",
+                status_code=404,
+            ))
+            return
+
+        plantao_recebido_payload = None
+        if item.plantao_recebido is not None:
+            recebido_item = item.plantao_recebido
+            local_id = recebido_item.local_id
+            if local_id is None and recebido_item.local_uuid_cliente is not None:
+                local_id = uuid_para_local_id.get(recebido_item.local_uuid_cliente)
+                if local_id is None:
+                    local_existente = LocalRepository.get_by_uuid_cliente(db, recebido_item.local_uuid_cliente, current_user.id)
+                    local_id = local_existente.id if local_existente else None
+            if local_id is None:
+                resultado.erros.append(SyncErro(
+                    entidade="troca", uuid_cliente=item.uuid_cliente,
+                    detalhe="Local do plantão recebido (local_id ou local_uuid_cliente) não encontrado.", status_code=404,
+                ))
+                return
+            plantao_recebido_payload = PlantaoRecebidoTrocaCreate(
+                local_id=local_id,
+                data_inicio=recebido_item.data_inicio,
+                horario_inicio=recebido_item.horario_inicio,
+                data_fim=recebido_item.data_fim,
+                horario_fim=recebido_item.horario_fim,
+                valor=recebido_item.valor,
+                sobreaviso=recebido_item.sobreaviso,
+                descricao=recebido_item.descricao,
+                recebido_de=recebido_item.recebido_de,
+                uuid_cliente=recebido_item.uuid_cliente,
+            )
+
+        payload = TrocaOperacaoCreate(
+            plantao_transferido_id=plantao_transferido_id,
+            transferido_para=item.transferido_para,
+            plantao_recebido=plantao_recebido_payload,
+            uuid_cliente=item.uuid_cliente,
+        )
+        try:
+            resposta = criar_troca(payload=payload, db=db, current_user=current_user)
+        except HTTPException as exc:
+            resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            return
+        if item.plantao_recebido is not None and item.plantao_recebido.uuid_cliente:
+            uuid_para_plantao_id[item.plantao_recebido.uuid_cliente] = resposta.data.plantao_recebido.id
+        resultado.trocas_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.troca_id))
+
+    @staticmethod
+    def _resolver_bonificacao_existente(db: Session, current_user: User, item: SyncBonificacaoItem):
+        existente = None
+        if item.id is not None:
+            candidata = BonificacaoRepository.get_by_id(db, item.id)
+            if candidata is not None:
+                plantao_dono = PlantaoRepository.get_by_id_and_user(db, candidata.plantao_id, current_user.id)
+                if plantao_dono is not None:
+                    existente = candidata
+        if existente is None and item.uuid_cliente:
+            existente = BonificacaoRepository.get_by_uuid_cliente(db, item.uuid_cliente, current_user.id)
+        return existente
+
+    @staticmethod
+    def _push_bonificacao(
+        db: Session,
+        current_user: User,
+        item: SyncBonificacaoItem,
+        resultado: SyncPushResponse,
+        uuid_para_plantao_id: dict,
+    ) -> None:
+        existente = SyncService._resolver_bonificacao_existente(db, current_user, item)
+
+        if item.deletado:
+            if existente is None:
+                return
+            if _as_utc(existente.atualizado_em) > _as_utc(item.atualizado_em):
+                resultado.conflitos.append(SyncConflito(
+                    entidade="bonificacao", uuid_cliente=item.uuid_cliente, id=existente.id,
+                    motivo="O servidor tem uma versão mais recente desta bonificação.",
+                    servidor_atualizado_em=existente.atualizado_em,
+                ))
+                return
+            try:
+                deletar_bonificacao(bonificacao_id=existente.id, db=db, current_user=current_user)
+            except HTTPException as exc:
+                resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+                return
+            resultado.bonificacoes_deletadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
+            return
+
+        plantao_id = item.plantao_id
+        if plantao_id is None and item.plantao_uuid_cliente is not None:
+            plantao_id = uuid_para_plantao_id.get(item.plantao_uuid_cliente)
+            if plantao_id is None:
+                plantao_existente = PlantaoRepository.get_by_uuid_cliente(db, item.plantao_uuid_cliente, current_user.id)
+                plantao_id = plantao_existente.id if plantao_existente else None
+        if plantao_id is None:
+            resultado.erros.append(SyncErro(
+                entidade="bonificacao", uuid_cliente=item.uuid_cliente,
+                detalhe="Plantão referenciado (plantao_id ou plantao_uuid_cliente) não encontrado.", status_code=404,
+            ))
+            return
+
+        if existente is None:
+            payload = BonificacaoCreate(
+                plantao_id=plantao_id,
+                local_id=item.local_id,
+                valor=item.valor,
+                descricao=item.descricao,
+                uuid_cliente=item.uuid_cliente,
+            )
+            try:
+                resposta = criar_bonificacao(payload=payload, db=db, current_user=current_user)
+            except HTTPException as exc:
+                resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+                return
+            resultado.bonificacoes_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
+            return
+
+        if _as_utc(existente.atualizado_em) >= _as_utc(item.atualizado_em):
+            resultado.conflitos.append(SyncConflito(
+                entidade="bonificacao", uuid_cliente=item.uuid_cliente, id=existente.id,
+                motivo="O servidor tem uma versão igual ou mais recente desta bonificação.",
+                servidor_atualizado_em=existente.atualizado_em,
+            ))
+            return
+
+        payload = BonificacaoUpdate(valor=item.valor, descricao=item.descricao)
+        try:
+            atualizar_bonificacao(bonificacao_id=existente.id, payload=payload, db=db, current_user=current_user)
+        except HTTPException as exc:
+            resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            return
+        resultado.bonificacoes_atualizadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
+
+    @staticmethod
     def pull(db: Session, current_user: User, desde: datetime | None) -> SyncPullResponse:
         # Filtragem em Python (não em SQL) de propósito: compara datetimes já normalizados
         # para UTC via _as_utc, evitando divergência entre o dialect de produção (Postgres,
@@ -285,8 +516,17 @@ class SyncService:
         ]
 
         trocas = TrocaRepository.list_by_usuario(db, current_user.id)
+        # Bug corrigido: filtrar por criado_em ignorava qualquer alteração feita depois da
+        # criação (nunca chegava a outro dispositivo) — atualizado_em é a mesma coluna
+        # usada como cursor de comparação em locais/plantões, e sempre está populada (default
+        # na criação, backfill de criado_em para linhas antigas na migração).
         trocas_alteradas = [
-            t for t in trocas if desde is None or (t.criado_em is not None and _as_utc(t.criado_em) > desde)
+            t for t in trocas if desde is None or _as_utc(t.atualizado_em) > desde
+        ]
+
+        bonificacoes = BonificacaoRepository.list_by_usuario(db, current_user.id)
+        bonificacoes_alteradas = [
+            b for b in bonificacoes if desde is None or (b.atualizado_em is not None and _as_utc(b.atualizado_em) > desde)
         ]
 
         exclusoes = [
@@ -337,6 +577,7 @@ class SyncService:
             amigo_configuracoes=[_serializar_amigo_configuracao(c) for c in configs_alteradas],
             solicitacoes_troca=itens_solicitacao,
             trocas=[TrocaResponse.model_validate(t) for t in trocas_alteradas],
+            bonificacoes=[BonificacaoResponse.model_validate(b) for b in bonificacoes_alteradas],
             exclusoes=[
                 SyncExclusaoItem(entidade=e.entidade, id=e.entidade_id, uuid_cliente=e.uuid_cliente, deletado_em=e.deletado_em)
                 for e in exclusoes

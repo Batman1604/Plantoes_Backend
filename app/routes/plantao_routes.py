@@ -32,6 +32,7 @@ from app.repositories.plantao_repository import (
     LocalRepository,
     PlantaoRepository,
     SolicitacaoTrocaRepository,
+    SyncRepository,
     TokenRevogadoRepository,
     BonificacaoRepository,
     TransferenciaRepository,
@@ -932,6 +933,7 @@ def deletar_bonificacao(
     plantao = PlantaoRepository.get_by_id_and_user(db, bonificacao.plantao_id, current_user.id)
     if plantao is None:
         raise HTTPException(status_code=403, detail="Sem permissão para deletar esta bonificação.")
+    SyncRepository.registrar_exclusao(db, current_user.id, "bonificacao", bonificacao.id, bonificacao.uuid_cliente)
     BonificacaoRepository.delete(db, bonificacao_id)
     FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
     return APIResponse(success=True, message="Bonificação deletada com sucesso.", data=None)
@@ -1015,6 +1017,7 @@ def criar_troca(
                 executado=False,
                 transferido=False,
                 recebido_via_transferencia=True,
+                uuid_cliente=recebido_payload.uuid_cliente,
             )
             db.add(recebido)
             db.flush()
@@ -1027,6 +1030,7 @@ def criar_troca(
             nome_transferir=payload.transferido_para.nome,
             telefone_transferir=payload.transferido_para.telefone,
             observacao_transferir=payload.transferido_para.observacao,
+            uuid_cliente=payload.uuid_cliente,
             nome_receber=(payload.plantao_recebido.recebido_de.nome if payload.plantao_recebido else None),
             telefone_receber=(payload.plantao_recebido.recebido_de.telefone if payload.plantao_recebido else None),
             observacao_receber=(payload.plantao_recebido.recebido_de.observacao if payload.plantao_recebido else None),

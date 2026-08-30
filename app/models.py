@@ -218,6 +218,11 @@ class Bonificacao(Base):
     local_id: Mapped[int | None] = mapped_column(ForeignKey("locais.id", ondelete="SET NULL"), nullable=True, index=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Ver comentário equivalente em Local.uuid_cliente.
+    uuid_cliente: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True, index=True)
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     plantao: Mapped["Plantao"] = relationship(back_populates="bonificacoes")
 
@@ -249,6 +254,11 @@ class Troca(Base):
     )
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    # Ver comentário equivalente em Local.uuid_cliente.
+    uuid_cliente: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True, index=True)
+    atualizado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
 
     local_rel: Mapped["Local | None"] = relationship(foreign_keys=[local_id])
