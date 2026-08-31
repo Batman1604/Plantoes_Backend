@@ -311,6 +311,16 @@ class LocalRepository:
         local = db.scalar(select(Local).where(Local.id == local_id, Local.usuario_id == usuario_id))
         if local is None:
             return False
+        # O cascade="all, delete-orphan" de Local.plantoes apaga os plantões no
+        # banco junto com o local, mas só na sessão do ORM — nunca passa por
+        # PlantaoRepository.delete_by_user, que é quem grava o tombstone de
+        # sync. Sem isso aqui, o /sync/pull incremental de outro dispositivo
+        # nunca fica sabendo que esses plantões sumiram (não aparecem nem como
+        # alterados, já que não existem mais, nem em "exclusões"), e ficam
+        # presos no calendário/cards de pagamento do cliente até um resync
+        # completo (novo login).
+        for plantao in local.plantoes:
+            SyncRepository.registrar_exclusao(db, usuario_id, "plantao", plantao.id, plantao.uuid_cliente)
         SyncRepository.registrar_exclusao(db, usuario_id, "local", local.id, local.uuid_cliente)
         db.delete(local)
         db.commit()

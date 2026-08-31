@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
 from app.core.rate_limiter import rate_limit
@@ -1721,10 +1722,15 @@ def atualizar_executado_plantao(
     "/plantoes/{plantao_id}",
     response_model=APIResponse[None],
     summary="Deletar plantão",
-    description="Remove um plantão pertencente ao usuário autenticado.",
+    description=(
+        "Remove um plantão pertencente ao usuário autenticado. Com "
+        "aplicar_em=este_e_futuros, remove também os plantões futuros da mesma "
+        "série recorrente (mesmo critério de série usado em PATCH /plantoes/:id)."
+    ),
 )
 def deletar_plantao(
     plantao_id: int,
+    aplicar_em: Literal["somente_este", "este_e_futuros"] = Query("somente_este"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -1736,11 +1742,25 @@ def deletar_plantao(
             status_code=409,
             detail="Este plantão foi transferido e não pode mais ser editado pelo dono original.",
         )
-    _sync_del = (plantao_del.local_id, plantao_del.data_inicio.month, plantao_del.data_inicio.year)
-    PlantaoRepository.delete_by_user(db, plantao_id, current_user.id)
-    FinanceiroRepository.sync_mes(db, *_sync_del)
 
-    logger.info("Plantão %s deletado por %s", plantao_id, current_user.email)
+    if aplicar_em == "somente_este":
+        plantoes_para_excluir = [plantao_del]
+    else:
+        # Mesmo critério de série do PATCH (list_futuros_da_serie): local +
+        # horário + recorrência + data_inicio >= a deste plantão. Já filtra
+        # transferido=False, então plantões já transferidos ficam de fora.
+        plantoes_para_excluir = PlantaoRepository.list_futuros_da_serie(db, plantao_del)
+
+    _meses_sync = {(p.local_id, p.data_inicio.month, p.data_inicio.year) for p in plantoes_para_excluir}
+    for p in plantoes_para_excluir:
+        PlantaoRepository.delete_by_user(db, p.id, current_user.id)
+    for local_id, mes, ano in _meses_sync:
+        FinanceiroRepository.sync_mes(db, local_id, mes, ano)
+
+    logger.info(
+        "Plantão %s deletado por %s (aplicar_em=%s, total=%d)",
+        plantao_id, current_user.email, aplicar_em, len(plantoes_para_excluir),
+    )
     return APIResponse(
         success=True,
         message="Plantão deletado com sucesso.",
@@ -2623,30 +2643,57 @@ def aceitar_solicitacao_troca(
         # ser um elif do bloco acima — numa troca real (tipo='trocar') ambos os lados
         # precisam ser processados, senão quem aceita nunca recebe o plantão do remetente
         # (bug: só o remetente ficava com os dois plantões após aceitar uma troca).
-        # É sempre um clone novo — o plantão original permanece com o remetente, só
-        # marcado transferido=True para histórico. Não fica vinculado a nenhum local
-        # próprio do destinatário; existe só como card do recebimento.
         recebido_destinatario = None
         if plantao_transferido is not None:
-            recebido_destinatario = Plantao(
-                usuario_id=solicitacao.destinatario_usuario_id,
-                local_id=plantao_transferido.local_id,
-                valor=plantao_transferido.valor,
-                data_inicio=plantao_transferido.data_inicio,
-                horario_inicio=plantao_transferido.horario_inicio,
-                data_fim=plantao_transferido.data_fim,
-                horario_fim=plantao_transferido.horario_fim,
-                sobreaviso=plantao_transferido.sobreaviso,
-                descricao=plantao_transferido.descricao,
-                recorrencia=None,
-                notificacao_ativa=True,
-                notificacao_antecedencia_minutos=60,
-                notificado=False,
-                executado=False,
-                transferido=False,
-                recebido_via_transferencia=True,
+            # Devolução: plantao_transferido é ele mesmo o lado "recebido" de uma troca
+            # anterior, e o plantão original daquela troca pertence a quem está aceitando
+            # agora — ou seja, o plantão está voltando pro dono original. Reaproveita essa
+            # linha original (só desmarcando transferido) em vez de criar mais um clone;
+            # senão o dono original ficava com dois cards pro mesmo plantão — o clone novo
+            # "recebido" e o original antigo, preso para sempre com transferido=True — e
+            # perdia recorrência/notificação/bonificações da linha original, que um clone
+            # em branco não carrega.
+            plantao_original = None
+            troca_origem = db.scalar(
+                select(Troca)
+                .where(Troca.plantao_id_recebido == plantao_transferido.id)
+                .order_by(Troca.id.desc())
             )
-            db.add(recebido_destinatario)
+            if troca_origem is not None and troca_origem.plantao_id_transferido is not None:
+                candidato = db.scalar(select(Plantao).where(Plantao.id == troca_origem.plantao_id_transferido))
+                if (
+                    candidato is not None
+                    and candidato.usuario_id == solicitacao.destinatario_usuario_id
+                    and candidato.transferido
+                ):
+                    plantao_original = candidato
+
+            if plantao_original is not None:
+                plantao_original.transferido = False
+                recebido_destinatario = plantao_original
+            else:
+                # É sempre um clone novo — o plantão original permanece com o remetente, só
+                # marcado transferido=True para histórico. Não fica vinculado a nenhum local
+                # próprio do destinatário; existe só como card do recebimento.
+                recebido_destinatario = Plantao(
+                    usuario_id=solicitacao.destinatario_usuario_id,
+                    local_id=plantao_transferido.local_id,
+                    valor=plantao_transferido.valor,
+                    data_inicio=plantao_transferido.data_inicio,
+                    horario_inicio=plantao_transferido.horario_inicio,
+                    data_fim=plantao_transferido.data_fim,
+                    horario_fim=plantao_transferido.horario_fim,
+                    sobreaviso=plantao_transferido.sobreaviso,
+                    descricao=plantao_transferido.descricao,
+                    recorrencia=None,
+                    notificacao_ativa=True,
+                    notificacao_antecedencia_minutos=60,
+                    notificado=False,
+                    executado=False,
+                    transferido=False,
+                    recebido_via_transferencia=True,
+                )
+                db.add(recebido_destinatario)
             db.flush()
 
         # Cada lado vira seu próprio registro Troca, para que cada plantão envolvido
