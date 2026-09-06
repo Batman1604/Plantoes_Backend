@@ -1,5 +1,8 @@
+import hashlib
+import hmac
+import json
 import logging
-import random
+import secrets
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
@@ -42,6 +45,10 @@ MSG_CODIGO_INVALIDO = (
     "Código inválido. Tente novamente ou envie *reiniciar* para recomeçar."
 )
 
+MSG_CODIGO_EXPIRADO_OU_ESGOTADO = (
+    "Esse código expirou ou você errou demais vezes. Envie seu e-mail novamente para receber um novo código."
+)
+
 MSG_EMAIL_NAO_ENCONTRADO = (
     "Não encontrei nenhuma conta com esse e-mail. "
     "Verifique o e-mail e tente novamente, ou acesse o aplicativo para criar uma conta."
@@ -59,7 +66,7 @@ MSG_APENAS_TEXTO = (
 
 def _gerar_codigo() -> str:
     """Gera um código de 6 dígitos para autenticação via WhatsApp."""
-    return str(random.randint(100000, 999999))
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 
 def _extrair_mensagem(payload: dict) -> tuple[str, str] | None:
@@ -93,6 +100,24 @@ def _responder(telefone: str, mensagem: str) -> None:
         logger.exception("Falha ao enviar resposta WhatsApp para %s", telefone)
 
 
+def _assinatura_valida(corpo: bytes, assinatura: str | None) -> bool:
+    """Confere a assinatura HMAC-SHA256 (header X-Hub-Signature-256) que a Meta envia em
+    todo webhook, usando o app secret configurado. Sem isso, qualquer requisição POST para
+    este endpoint público seria processada como se viesse do WhatsApp de qualquer número,
+    permitindo personificar a sessão autenticada de outro usuário.
+
+    Se WHATSAPP_APP_SECRET não estiver configurado, só deixa passar fora de produção (para
+    permitir testar localmente com curl) — em produção, um webhook mal configurado deve
+    falhar de forma visível, não aceitar tráfego não verificado silenciosamente."""
+    if not settings.whatsapp_app_secret:
+        return settings.environment != "production"
+    if not assinatura or not assinatura.startswith("sha256="):
+        return False
+    esperado = hmac.new(settings.whatsapp_app_secret.encode("utf-8"), corpo, hashlib.sha256).hexdigest()
+    recebido = assinatura.removeprefix("sha256=")
+    return hmac.compare_digest(esperado, recebido)
+
+
 @router.get("/webhook/whatsapp", response_class=PlainTextResponse)
 def verificar_webhook(
     hub_mode: str = Query(alias="hub.mode", default=""),
@@ -108,9 +133,16 @@ def verificar_webhook(
 
 @router.post("/webhook/whatsapp")
 async def receber_mensagem(request: Request, db: Session = Depends(get_db)):
+    corpo = await request.body()
+    if not _assinatura_valida(corpo, request.headers.get("X-Hub-Signature-256")):
+        logger.warning("Webhook WhatsApp: assinatura ausente ou inválida — requisição descartada.")
+        # 200 propositalmente: um 401/403 aqui só ajudaria alguém a testar assinaturas por
+        # tentativa e erro. Meta nunca vê isso porque as requisições dela sempre são assinadas.
+        return {"status": "ok"}
+
     # Meta exige 200 imediato — erros internos são logados, nunca devolvem 4xx/5xx
     try:
-        payload = await request.json()
+        payload = json.loads(corpo)
     except Exception:
         return {"status": "ok"}
 
@@ -161,10 +193,16 @@ async def receber_mensagem(request: Request, db: Session = Depends(get_db)):
         return {"status": "ok"}
 
     if sessao.estado == "aguardando_codigo":
+        if not WhatsappRepository.codigo_valido(sessao):
+            WhatsappRepository.resetar_sessao(db, sessao)
+            _responder(telefone, MSG_CODIGO_EXPIRADO_OU_ESGOTADO)
+            return {"status": "ok"}
+
         if texto.strip() == sessao.codigo_verificacao:
             WhatsappRepository.vincular_usuario(db, sessao, sessao.usuario_id)
             _responder(telefone, MSG_AUTENTICADO)
         else:
+            WhatsappRepository.registrar_tentativa_invalida(db, sessao)
             _responder(telefone, MSG_CODIGO_INVALIDO)
         return {"status": "ok"}
 

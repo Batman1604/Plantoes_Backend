@@ -1984,6 +1984,10 @@ def aceitar_transferencia(
     if plantao_original is None:
         raise HTTPException(status_code=404, detail="Plantão original não encontrado")
 
+    # Mesmo limite aplicado em POST /api/plantoes — sem isso, um usuário do plano free
+    # conseguia ultrapassar o limite recebendo plantões por transferência em vez de criá-los.
+    PlanoService.verificar_limite_serie(db, current_user, 1)
+
     pagamento_plantao = None
     if local.dia_pagamento is not None:
         pagamento_plantao = PagamentoService.calcular_data_pagamento_plantao(
@@ -2581,6 +2585,20 @@ def aceitar_solicitacao_troca(
         local = LocalRepository.get_by_id(db, solicitacao.plantao_recebido_local_id)
         if local is None or local.usuario_id != solicitacao.remetente_usuario_id:
             raise HTTPException(status_code=404, detail="Local do plantão recebido não encontrado.")
+
+    # Mesmo limite aplicado em POST /api/plantoes, calculado pelo ganho líquido de cada
+    # lado: numa troca de verdade (tipo='trocar') cada parte cede um plantão e recebe outro,
+    # então o saldo é zero e ninguém deveria ser bloqueado; só bloqueia quem efetivamente
+    # fica com mais plantões ativos ao final da operação (ex.: tipo='receber').
+    ganho_remetente = 1 if (plantao_alvo is not None or solicitacao.plantao_recebido_local_id is not None) else 0
+    perda_remetente = 1 if plantao_transferido is not None else 0
+    if ganho_remetente > perda_remetente:
+        PlanoService.verificar_limite_serie(db, remetente, ganho_remetente - perda_remetente)
+
+    ganho_destinatario = 1 if plantao_transferido is not None else 0
+    perda_destinatario = 1 if plantao_alvo is not None else 0
+    if ganho_destinatario > perda_destinatario:
+        PlanoService.verificar_limite_serie(db, destinatario, ganho_destinatario - perda_destinatario)
 
     try:
         if plantao_transferido is not None:

@@ -165,6 +165,10 @@ class WhatsappSessao(Base):
     estado: Mapped[str] = mapped_column(String(30), nullable=False, default="aguardando_email")
     historico: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     codigo_verificacao: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Sem expiração o código de autenticação ficava válido para sempre; sem contador de
+    # tentativas, dava para tentar adivinhar os 6 dígitos sem limite.
+    codigo_expira_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tentativas_codigo: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     atualizado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 

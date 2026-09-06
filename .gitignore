@@ -23,6 +23,9 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+# Bancos sqlite gerados pelos testes (tests/test_*.py criam um arquivo test_*.db cada) —
+# nunca devem ser commitados: ficam com schema desatualizado e quebram um clone limpo.
+test_*.db
 
 # IDEs
 .vscode/

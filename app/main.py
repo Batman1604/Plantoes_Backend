@@ -29,9 +29,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 if settings.jwt_secret_key == "change-me-in-production":
+    if settings.environment == "production":
+        raise RuntimeError("JWT_SECRET_KEY não pode usar o valor padrão em produção. Defina JWT_SECRET_KEY no .env.")
     logger.warning("JWT_SECRET_KEY está usando o valor padrão. Defina JWT_SECRET_KEY no .env antes de ir para produção.")
 
-if "DeusAbutre" in settings.database_url:
+if "changeme-local-dev" in settings.database_url:
+    if settings.environment == "production":
+        raise RuntimeError("DATABASE_URL não pode usar o valor padrão em produção. Defina DATABASE_URL no .env.")
     logger.warning("DATABASE_URL está usando credenciais padrão. Defina DATABASE_URL no .env antes de ir para produção.")
 
 Base.metadata.create_all(bind=engine)
@@ -1031,6 +1035,33 @@ def ensure_trocas_criado_em_column() -> None:
 
 ensure_trocas_criado_em_column()
 
+
+def ensure_whatsapp_sessoes_codigo_columns() -> None:
+    """codigo_expira_em + tentativas_codigo: sem eles o código de 6 dígitos do login via
+    WhatsApp (whatsapp_routes.py) ficava válido para sempre e sem limite de tentativas."""
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            cols = {c[1] for c in connection.execute(text("PRAGMA table_info(whatsapp_sessoes)")).fetchall()}
+            if "codigo_expira_em" not in cols:
+                connection.execute(text("ALTER TABLE whatsapp_sessoes ADD COLUMN codigo_expira_em DATETIME NULL"))
+            if "tentativas_codigo" not in cols:
+                connection.execute(
+                    text("ALTER TABLE whatsapp_sessoes ADD COLUMN tentativas_codigo INTEGER NOT NULL DEFAULT 0")
+                )
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE whatsapp_sessoes ADD COLUMN IF NOT EXISTS codigo_expira_em TIMESTAMPTZ NULL"
+            ))
+            connection.execute(text(
+                "ALTER TABLE whatsapp_sessoes ADD COLUMN IF NOT EXISTS tentativas_codigo INTEGER NOT NULL DEFAULT 0"
+            ))
+        return
+
+
+ensure_whatsapp_sessoes_codigo_columns()
 
 
 def backfill_contraparte_usuario_id_receber() -> None:

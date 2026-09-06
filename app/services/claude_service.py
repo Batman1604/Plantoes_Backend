@@ -3,12 +3,14 @@ import logging
 from datetime import datetime
 
 import anthropic
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.repositories.plantao_repository import LocalRepository, PlantaoRepository
+from app.repositories.plantao_repository import LocalRepository, PlantaoRepository, UserRepository
 from app.schemas.plantao_schema import PlantaoCreateWithUsuario
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
+from app.services.plano_service import PlanoService
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +160,16 @@ def _tool_listar_plantoes(db: Session, usuario_id: int) -> str:
 
 def _tool_criar_plantao(db: Session, usuario_id: int, inputs: dict) -> str:
     """Cria um novo plantão a partir dos parâmetros recebidos pela tool do assistente."""
+    usuario = UserRepository.get_by_id(db, usuario_id)
+    if usuario is None:
+        return "Usuário não encontrado."
+    try:
+        # Mesma checagem aplicada em POST /api/plantoes — sem isso, um usuário do plano
+        # free conseguia contornar o limite de plantões só conversando pelo WhatsApp.
+        PlanoService.limitar_plano_free(db, usuario)
+    except HTTPException as exc:
+        return str(exc.detail)
+
     local = LocalRepository.get_by_id(db, inputs["local_id"])
     if local is None or local.usuario_id != usuario_id:
         return "Local não encontrado ou não pertence ao usuário."

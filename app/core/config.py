@@ -6,8 +6,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Plantões Backend"
     environment: str = "development"
-    # database_url: str = "postgresql+psycopg://axelpalmeira:Adaj1982@localhost:5432/postgres"
-    database_url: str = "postgresql+psycopg://postgres:DeusAbutre@localhost:5432/plantoes"
+    # Valor padrão só serve para rodar localmente sem um .env — nunca deve ser usado em
+    # produção. app/main.py recusa subir com este valor quando environment=production.
+    database_url: str = "postgresql+psycopg://postgres:changeme-local-dev@localhost:5432/plantoes"
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
@@ -23,6 +24,10 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = "plantoes_whatsapp_verify"
+    # Chave secreta do app na Meta (App Dashboard > Configurações básicas), usada para
+    # validar a assinatura HMAC (header X-Hub-Signature-256) de cada webhook recebido —
+    # sem isso qualquer requisição POST /webhook/whatsapp seria aceita como se viesse da Meta.
+    whatsapp_app_secret: str = ""
     upgrade_webhook_secret: str = ""
     # Aceitam múltiplos valores separados por vírgula (ex.: client ID de iOS, Android e Web
     # do mesmo projeto Google, ou Service ID + Bundle ID da Apple).

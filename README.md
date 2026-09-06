@@ -25,7 +25,7 @@ API para armazenar usuários e seus plantões com:
    - A aplicação cria automaticamente essas foreign keys na inicialização.
 3. Configure as variáveis de ambiente:
    ```bash
-   export DATABASE_URL="postgresql+psycopg://postgres:Adaj1982@localhost:5432/plantoes"
+   export DATABASE_URL="INSIRA SUA SENHA DO BANCO"
    export JWT_SECRET_KEY="troque-essa-chave-em-producao"
    # opcional
    export JWT_EXPIRE_MINUTES="1440"

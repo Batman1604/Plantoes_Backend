@@ -30,12 +30,23 @@ class PlanoService:
             )
 
     @staticmethod
+    def _contar_plantoes_ativos(db: Session, usuario_id: int) -> int:
+        # Um plantão transferido "sai imediatamente da lista" de quem transferiu (ver
+        # transferir_plantao em plantao_routes.py) — não deve continuar ocupando vaga no
+        # limite do plano free de quem o cedeu.
+        return db.scalar(
+            select(func.count())
+            .select_from(Plantao)
+            .where(Plantao.usuario_id == usuario_id, Plantao.transferido.is_(False))
+        ) or 0
+
+    @staticmethod
     def limitar_plano_free(db: Session, usuario: User) -> None:
         """Verifica o limite de plantões do plano gratuito antes de criar novos plantões."""
         if PlanoService.obter_plano(usuario) != PlanoService.PLANO_FREE:
             return
 
-        total = db.scalar(select(func.count()).select_from(Plantao).where(Plantao.usuario_id == usuario.id)) or 0
+        total = PlanoService._contar_plantoes_ativos(db, usuario.id)
         if total >= PlanoService.LIMITE_PLANTOES_FREE:
             raise HTTPException(
                 status_code=403,
@@ -44,10 +55,14 @@ class PlanoService:
 
     @staticmethod
     def verificar_limite_serie(db: Session, usuario: User, novos: int) -> None:
-        """Valida se uma operação de série de plantões excede o limite do plano free."""
+        """Valida se uma operação que adiciona `novos` plantões ativos excede o limite do
+        plano free. `novos` deve refletir o ganho líquido da operação (ex.: numa troca onde o
+        usuário também cede um plantão ao mesmo tempo, o ganho líquido pode ser zero)."""
+        if novos <= 0:
+            return
         if PlanoService.obter_plano(usuario) != PlanoService.PLANO_FREE:
             return
-        total = db.scalar(select(func.count()).select_from(Plantao).where(Plantao.usuario_id == usuario.id)) or 0
+        total = PlanoService._contar_plantoes_ativos(db, usuario.id)
         if total + novos > PlanoService.LIMITE_PLANTOES_FREE:
             raise HTTPException(
                 status_code=403,
