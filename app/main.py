@@ -1037,8 +1037,7 @@ ensure_trocas_criado_em_column()
 
 
 def ensure_whatsapp_sessoes_codigo_columns() -> None:
-    """codigo_expira_em + tentativas_codigo: sem eles o código de 6 dígitos do login via
-    WhatsApp (whatsapp_routes.py) ficava válido para sempre e sem limite de tentativas."""
+    """Cria a expiração e o contador de tentativas do código de login por WhatsApp."""
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
             cols = {c[1] for c in connection.execute(text("PRAGMA table_info(whatsapp_sessoes)")).fetchall()}
@@ -1062,6 +1061,51 @@ def ensure_whatsapp_sessoes_codigo_columns() -> None:
 
 
 ensure_whatsapp_sessoes_codigo_columns()
+
+
+def ensure_sync_colunas_trocas_bonificacoes() -> None:
+    """Inclui os metadados necessários para sincronizar trocas e bonificações offline."""
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            trocas_cols = {c[1] for c in connection.execute(text("PRAGMA table_info(trocas)")).fetchall()}
+            if "uuid_cliente" not in trocas_cols:
+                connection.execute(text("ALTER TABLE trocas ADD COLUMN uuid_cliente VARCHAR(36) NULL"))
+            if "atualizado_em" not in trocas_cols:
+                connection.execute(text("ALTER TABLE trocas ADD COLUMN atualizado_em DATETIME NULL"))
+                connection.execute(text(
+                    "UPDATE trocas SET atualizado_em = COALESCE(criado_em, CURRENT_TIMESTAMP) "
+                    "WHERE atualizado_em IS NULL"
+                ))
+
+            bonificacoes_cols = {c[1] for c in connection.execute(text("PRAGMA table_info(bonificacoes)")).fetchall()}
+            if "uuid_cliente" not in bonificacoes_cols:
+                connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN uuid_cliente VARCHAR(36) NULL"))
+            if "atualizado_em" not in bonificacoes_cols:
+                connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN atualizado_em DATETIME NULL"))
+                connection.execute(text(
+                    "UPDATE bonificacoes SET atualizado_em = CURRENT_TIMESTAMP WHERE atualizado_em IS NULL"
+                ))
+
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_trocas_uuid_cliente ON trocas (uuid_cliente)"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_bonificacoes_uuid_cliente ON bonificacoes (uuid_cliente)"))
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE trocas ADD COLUMN IF NOT EXISTS uuid_cliente VARCHAR(36) NULL"))
+            connection.execute(text("ALTER TABLE trocas ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ NULL"))
+            connection.execute(text("UPDATE trocas SET atualizado_em = COALESCE(criado_em, now()) WHERE atualizado_em IS NULL"))
+            connection.execute(text("ALTER TABLE trocas ALTER COLUMN atualizado_em SET NOT NULL"))
+            connection.execute(text("ALTER TABLE trocas ALTER COLUMN atualizado_em SET DEFAULT now()"))
+            connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN IF NOT EXISTS uuid_cliente VARCHAR(36) NULL"))
+            connection.execute(text("ALTER TABLE bonificacoes ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_trocas_uuid_cliente ON trocas (uuid_cliente)"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_bonificacoes_uuid_cliente ON bonificacoes (uuid_cliente)"))
+        return
+
+
+ensure_sync_colunas_trocas_bonificacoes()
+
 
 
 def backfill_contraparte_usuario_id_receber() -> None:
