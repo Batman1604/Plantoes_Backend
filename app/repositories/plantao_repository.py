@@ -777,8 +777,24 @@ class BonificacaoRepository:
         return list(db.scalars(select(Bonificacao).where(Bonificacao.plantao_id == plantao_id)).all())
 
     @staticmethod
+    def list_by_usuario(db: Session, usuario_id: int) -> list[Bonificacao]:
+        return list(db.scalars(
+            select(Bonificacao)
+            .join(Plantao, Bonificacao.plantao_id == Plantao.id)
+            .where(Plantao.usuario_id == usuario_id)
+        ).all())
+
+    @staticmethod
     def get_by_id(db: Session, bonificacao_id: int) -> Bonificacao | None:
         return db.scalar(select(Bonificacao).where(Bonificacao.id == bonificacao_id))
+
+    @staticmethod
+    def get_by_uuid_cliente(db: Session, uuid_cliente: str, usuario_id: int) -> Bonificacao | None:
+        return db.scalar(
+            select(Bonificacao)
+            .join(Plantao, Bonificacao.plantao_id == Plantao.id)
+            .where(Bonificacao.uuid_cliente == uuid_cliente, Plantao.usuario_id == usuario_id)
+        )
 
     @staticmethod
     def update(db: Session, bonificacao_id: int, **kwargs) -> Bonificacao | None:
@@ -828,12 +844,18 @@ class TrocaRepository:
         return db.scalar(select(Troca).where(Troca.id == troca_id))
 
     @staticmethod
+    def get_by_uuid_cliente(db: Session, uuid_cliente: str, usuario_id: int) -> Troca | None:
+        return db.scalar(
+            select(Troca).where(Troca.uuid_cliente == uuid_cliente, Troca.usuario_id == usuario_id)
+        )
+
+    @staticmethod
     def delete(db: Session, troca_id: int) -> bool:
         troca = db.scalar(select(Troca).where(Troca.id == troca_id))
         if troca is None:
             return False
         if troca.usuario_id is not None:
-            SyncRepository.registrar_exclusao(db, troca.usuario_id, "troca", troca.id)
+            SyncRepository.registrar_exclusao(db, troca.usuario_id, "troca", troca.id, troca.uuid_cliente)
         db.delete(troca)
         db.commit()
         return True
