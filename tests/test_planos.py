@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 from uuid import uuid4
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_planos.db"
 
 from fastapi.testclient import TestClient
 

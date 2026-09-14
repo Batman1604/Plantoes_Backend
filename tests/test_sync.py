@@ -3,7 +3,6 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_sync.db"
 
 from fastapi.testclient import TestClient
 

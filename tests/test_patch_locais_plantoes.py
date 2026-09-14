@@ -4,7 +4,6 @@ from datetime import date, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_patch_locais_plantoes.db"
 
 from fastapi.testclient import TestClient
 

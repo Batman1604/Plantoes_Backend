@@ -1,0 +1,6 @@
+# Dependências usadas apenas para desenvolvimento e testes.
+# Instale com: pip install -r requirements.txt -r requirements-dev.txt
+#
+# Sem isto, um clone limpo instalava requirements.txt e a suíte não rodava —
+# `python -m pytest` respondia "No module named pytest".
+pytest==9.1.1

@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_cadastro_pendente.db"
 
 from fastapi.testclient import TestClient
 

@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_reset_senha.db"
 
 from fastapi.testclient import TestClient
 

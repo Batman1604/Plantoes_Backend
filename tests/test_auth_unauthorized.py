@@ -2,7 +2,6 @@ import os
 import unittest
 from pathlib import Path
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_auth_unauthorized.db"
 
 from fastapi.testclient import TestClient
 

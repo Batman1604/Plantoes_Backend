@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_trocas.db"
 
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError

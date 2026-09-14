@@ -32,7 +32,7 @@ API para armazenar usuários e seus plantões com:
    ```
 4. Instale dependências:
    ```bash
-   pip install -r requirement.txt
+   pip install -r requirements.txt -r requirements-dev.txt
    ```
 
 ## Rodar

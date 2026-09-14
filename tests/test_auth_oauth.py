@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_auth_oauth.db"
 os.environ["GOOGLE_CLIENT_ID"] = "test-google-client"
 os.environ["APPLE_CLIENT_ID"] = "test-apple-client"
 
