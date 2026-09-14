@@ -1189,3 +1189,18 @@ class SyncRepository:
         SyncService.pull (em Python, normalizado para UTC; ver _as_utc lá)."""
         stmt = select(SyncExclusao).where(SyncExclusao.usuario_id == usuario_id)
         return list(db.scalars(stmt.order_by(SyncExclusao.deletado_em.asc())).all())
+
+    @staticmethod
+    def foi_excluido(db: Session, usuario_id: int, entidade: str, uuid_cliente: str | None) -> bool:
+        """True se já existe um tombstone para este uuid_cliente nesta entidade — usado no
+        push para impedir que um dispositivo ainda com uma cópia local desatualizada
+        "ressuscite" (recrie) um registro que o usuário já excluiu deliberadamente em outro
+        lugar (ver SyncService._push_local/_push_plantao/_push_troca/_push_bonificacao)."""
+        if not uuid_cliente:
+            return False
+        stmt = select(SyncExclusao).where(
+            SyncExclusao.usuario_id == usuario_id,
+            SyncExclusao.entidade == entidade,
+            SyncExclusao.uuid_cliente == uuid_cliente,
+        )
+        return db.scalar(stmt) is not None

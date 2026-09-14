@@ -60,6 +60,7 @@ from app.schemas.plantao_schema import (
     AuthResponse,
     AuthStatusResponse,
     DeviceTokenUpdate,
+    ExcluirContaRequest,
     FeedbackCreate,
     FinanceiroData,
     GoogleAuthRequest,
@@ -764,10 +765,20 @@ def alterar_senha(
     description="Exclui permanentemente a conta do usuário autenticado e todos os seus dados.",
 )
 def deletar_conta(
+    payload: ExcluirContaRequest = ExcluirContaRequest(),
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # Contas com senha (email/senha, ou Google/Apple que também definiram senha) exigem
+    # confirmação da senha atual antes de excluir — um token JWT sozinho (ex.: roubado de um
+    # dispositivo desbloqueado) não deveria bastar para apagar a conta permanentemente.
+    # Contas 100% OAuth (senha_hash nulo) não têm senha para confirmar; o próprio token já é
+    # a única credencial que existe para elas.
+    if current_user.senha_hash:
+        if not payload.senha_atual or not verify_password(payload.senha_atual, current_user.senha_hash):
+            raise HTTPException(status_code=400, detail="Senha atual incorreta.")
+
     token_payload = decode_access_token(credentials.credentials)
     if token_payload:
         try:

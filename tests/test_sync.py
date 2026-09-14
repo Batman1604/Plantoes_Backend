@@ -573,5 +573,136 @@ class TestSync(unittest.TestCase):
         self.assertEqual(plantao_pull["bonificacoes"][0]["uuid_cliente"], "bonificacao-pull-1")
 
 
+    # ---------------------------------------------------------------
+    # push: ressurreição de registro excluído (bug corrigido nesta entrega — um dispositivo
+    # que ainda não processou o tombstone de exclusão de outro dispositivo não pode
+    # recriar o registro só porque ainda tem uma cópia local desatualizada dele)
+    # ---------------------------------------------------------------
+
+    def test_push_local_excluido_nao_ressuscita_via_reenvio_de_dispositivo_desatualizado(self):
+        headers, _ = self.criar_usuario("push_local_resurrect@example.com")
+        criacao = self.client.post("/api/sync/push", headers=headers, json={"locais": [{
+            "uuid_cliente": "local-resurrect-1",
+            "nome_local": "Hospital Fantasma",
+            "data_inicio": "2026-03-01",
+            "data_final": "2026-03-31",
+            "atualizado_em": _iso(datetime.now(UTC)),
+        }]})
+        self.assertEqual(criacao.status_code, 200, criacao.text)
+        local_id = criacao.json()["data"]["locais_criados"][0]["id"]
+
+        exclusao = self.client.post("/api/sync/push", headers=headers, json={"locais": [{
+            "uuid_cliente": "local-resurrect-1",
+            "id": local_id,
+            "nome_local": "Hospital Fantasma",
+            "data_final": "2026-03-31",
+            "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=1)),
+            "deletado": True,
+        }]})
+        self.assertEqual(exclusao.status_code, 200, exclusao.text)
+        self.assertEqual(len(exclusao.json()["data"]["locais_deletados"]), 1)
+
+        # Um segundo dispositivo, que ainda não processou o tombstone, reenvia o mesmo
+        # local (upsert, sem id — só conhece o uuid_cliente) achando que ainda precisa
+        # subir ao servidor.
+        reenvio = self.client.post("/api/sync/push", headers=headers, json={"locais": [{
+            "uuid_cliente": "local-resurrect-1",
+            "nome_local": "Hospital Fantasma",
+            "data_inicio": "2026-03-01",
+            "data_final": "2026-03-31",
+            "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=2)),
+        }]})
+        self.assertEqual(reenvio.status_code, 200, reenvio.text)
+        data = reenvio.json()["data"]
+        self.assertEqual(data["locais_criados"], [])
+        self.assertEqual(len(data["erros"]), 1)
+        self.assertEqual(data["erros"][0]["status_code"], 410)
+        self.assertEqual(data["erros"][0]["uuid_cliente"], "local-resurrect-1")
+
+        locais = self.client.get("/api/locais", headers=headers).json()["data"]
+        self.assertEqual(locais, [])
+
+    def test_push_plantao_excluido_nao_ressuscita_via_reenvio_de_dispositivo_desatualizado(self):
+        headers, _ = self.criar_usuario("push_plantao_resurrect@example.com")
+        local = self.criar_local(headers)
+
+        criacao = self.client.post("/api/sync/push", headers=headers, json={"plantoes": [{
+            "uuid_cliente": "plantao-resurrect-1",
+            "local_id": local["id"],
+            "data_inicio": "2026-04-05T08:00:00",
+            "data_fim": "2026-04-05T16:00:00",
+            "valor": "300.00",
+            "atualizado_em": _iso(datetime.now(UTC)),
+        }]})
+        self.assertEqual(criacao.status_code, 200, criacao.text)
+        plantao_id = criacao.json()["data"]["plantoes_criados"][0]["id"]
+
+        exclusao = self.client.post("/api/sync/push", headers=headers, json={"plantoes": [{
+            "uuid_cliente": "plantao-resurrect-1",
+            "id": plantao_id,
+            "local_id": local["id"],
+            "data_inicio": "2026-04-05T08:00:00",
+            "data_fim": "2026-04-05T16:00:00",
+            "valor": "300.00",
+            "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=1)),
+            "deletado": True,
+        }]})
+        self.assertEqual(exclusao.status_code, 200, exclusao.text)
+        self.assertEqual(len(exclusao.json()["data"]["plantoes_deletados"]), 1)
+
+        reenvio = self.client.post("/api/sync/push", headers=headers, json={"plantoes": [{
+            "uuid_cliente": "plantao-resurrect-1",
+            "local_id": local["id"],
+            "data_inicio": "2026-04-05T08:00:00",
+            "data_fim": "2026-04-05T16:00:00",
+            "valor": "300.00",
+            "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=2)),
+        }]})
+        self.assertEqual(reenvio.status_code, 200, reenvio.text)
+        data = reenvio.json()["data"]
+        self.assertEqual(data["plantoes_criados"], [])
+        self.assertEqual(len(data["erros"]), 1)
+        self.assertEqual(data["erros"][0]["status_code"], 410)
+        self.assertEqual(data["erros"][0]["uuid_cliente"], "plantao-resurrect-1")
+
+    def test_push_bonificacao_excluida_nao_ressuscita_via_reenvio_de_dispositivo_desatualizado(self):
+        headers, _ = self.criar_usuario("push_bonificacao_resurrect@example.com")
+        local = self.criar_local(headers)
+        plantao = self.criar_plantao(headers, local["id"])
+
+        criacao = self.client.post("/api/sync/push", headers=headers, json={"bonificacoes": [{
+            "uuid_cliente": "bonificacao-resurrect-1",
+            "plantao_id": plantao["id"],
+            "valor": "50.00",
+            "atualizado_em": _iso(datetime.now(UTC)),
+        }]})
+        self.assertEqual(criacao.status_code, 200, criacao.text)
+        bonificacao_id = criacao.json()["data"]["bonificacoes_criadas"][0]["id"]
+
+        exclusao = self.client.post("/api/sync/push", headers=headers, json={"bonificacoes": [{
+            "uuid_cliente": "bonificacao-resurrect-1",
+            "id": bonificacao_id,
+            "plantao_id": plantao["id"],
+            "valor": "50.00",
+            "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=1)),
+            "deletado": True,
+        }]})
+        self.assertEqual(exclusao.status_code, 200, exclusao.text)
+        self.assertEqual(len(exclusao.json()["data"]["bonificacoes_deletadas"]), 1)
+
+        reenvio = self.client.post("/api/sync/push", headers=headers, json={"bonificacoes": [{
+            "uuid_cliente": "bonificacao-resurrect-1",
+            "plantao_id": plantao["id"],
+            "valor": "50.00",
+            "atualizado_em": _iso(datetime.now(UTC) + timedelta(minutes=2)),
+        }]})
+        self.assertEqual(reenvio.status_code, 200, reenvio.text)
+        data = reenvio.json()["data"]
+        self.assertEqual(data["bonificacoes_criadas"], [])
+        self.assertEqual(len(data["erros"]), 1)
+        self.assertEqual(data["erros"][0]["status_code"], 410)
+        self.assertEqual(data["erros"][0]["uuid_cliente"], "bonificacao-resurrect-1")
+
+
 if __name__ == "__main__":
     unittest.main()

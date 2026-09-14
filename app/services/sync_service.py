@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import User
@@ -78,6 +79,19 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value
 
 
+def _erro_de_excecao(exc: HTTPException | IntegrityError) -> tuple[str, int]:
+    """Extrai (mensagem, status_code) de uma falha ao aplicar um item do lote de push.
+    IntegrityError não tem .detail/.status_code (não é um HTTPException) — cobre
+    principalmente uma corrida de uuid_cliente duplicado entre dois pushes quase
+    simultâneos do mesmo dispositivo (ex.: retry após timeout de rede colidindo com a
+    tentativa original ainda em voo). Sempre devolve algo serializável em SyncErro, para
+    que ESTE item vire um erro isolado (com retry pelo próprio SyncEngine no cliente) em
+    vez de derrubar o lote inteiro com um 500 — ver SyncRoutes.push."""
+    if isinstance(exc, HTTPException):
+        return str(exc.detail), exc.status_code
+    return "Conflito ao sincronizar este item (tente novamente).", 409
+
+
 class SyncService:
     """Sincronização offline: POST /api/sync/push (envia mudanças feitas no dispositivo) e
     GET /api/sync/pull (busca mudanças feitas na nuvem). Ver docstring dos schemas Sync* para
@@ -143,13 +157,26 @@ class SyncService:
                 return
             try:
                 deletar_local(local_id=existente.id, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            except (HTTPException, IntegrityError) as exc:
+                db.rollback()
+                detalhe, status_code = _erro_de_excecao(exc)
+                resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
             resultado.locais_deletados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
             return
 
         if existente is None:
+            if SyncRepository.foi_excluido(db, current_user.id, "local", item.uuid_cliente):
+                # Este uuid_cliente já foi excluído em outro dispositivo — não recria
+                # (ver docstring de _erro_de_excecao/foi_excluido). O cliente reconhece
+                # status_code=410 e converge para o estado "excluído" localmente também,
+                # sem exigir ação manual do usuário (ver SyncEngine._applyPushResponse).
+                resultado.erros.append(SyncErro(
+                    entidade="local", uuid_cliente=item.uuid_cliente,
+                    detalhe="Este local foi excluído permanentemente em outro dispositivo.",
+                    status_code=410,
+                ))
+                return
             payload = LocalCreate(
                 nome_local=item.nome_local,
                 data_inicio=item.data_inicio,
@@ -162,8 +189,10 @@ class SyncService:
             )
             try:
                 resposta = criar_local(payload=payload, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            except (HTTPException, IntegrityError) as exc:
+                db.rollback()
+                detalhe, status_code = _erro_de_excecao(exc)
+                resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
             uuid_para_local_id[item.uuid_cliente] = resposta.data.id
             resultado.locais_criados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
@@ -189,8 +218,10 @@ class SyncService:
         )
         try:
             atualizar_local(local_id=existente.id, payload=payload, db=db, current_user=current_user)
-        except HTTPException as exc:
-            resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+        except (HTTPException, IntegrityError) as exc:
+            db.rollback()
+            detalhe, status_code = _erro_de_excecao(exc)
+            resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
             return
         resultado.locais_atualizados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
 
@@ -223,8 +254,10 @@ class SyncService:
                 return
             try:
                 deletar_plantao(plantao_id=existente.id, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            except (HTTPException, IntegrityError) as exc:
+                db.rollback()
+                detalhe, status_code = _erro_de_excecao(exc)
+                resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
             resultado.plantoes_deletados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
             return
@@ -243,6 +276,13 @@ class SyncService:
             return
 
         if existente is None:
+            if SyncRepository.foi_excluido(db, current_user.id, "plantao", item.uuid_cliente):
+                resultado.erros.append(SyncErro(
+                    entidade="plantao", uuid_cliente=item.uuid_cliente,
+                    detalhe="Este plantão foi excluído permanentemente em outro dispositivo.",
+                    status_code=410,
+                ))
+                return
             payload = PlantaoCreate(
                 valor=item.valor,
                 data_inicio=item.data_inicio,
@@ -258,8 +298,10 @@ class SyncService:
             )
             try:
                 resposta = criar_plantao(payload=payload, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            except (HTTPException, IntegrityError) as exc:
+                db.rollback()
+                detalhe, status_code = _erro_de_excecao(exc)
+                resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
             uuid_para_plantao_id[item.uuid_cliente] = resposta.data.id
             resultado.plantoes_criados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
@@ -288,8 +330,10 @@ class SyncService:
         )
         try:
             atualizar_plantao(plantao_id=existente.id, payload=payload, db=db, current_user=current_user)
-        except HTTPException as exc:
-            resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+        except (HTTPException, IntegrityError) as exc:
+            db.rollback()
+            detalhe, status_code = _erro_de_excecao(exc)
+            resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
             return
         resultado.plantoes_atualizados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
 
@@ -327,8 +371,10 @@ class SyncService:
                 return
             try:
                 deletar_troca(troca_id=existente.id, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            except (HTTPException, IntegrityError) as exc:
+                db.rollback()
+                detalhe, status_code = _erro_de_excecao(exc)
+                resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
             resultado.trocas_deletadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
             return
@@ -340,6 +386,14 @@ class SyncService:
             # colateral de transferência, que marcaria o plantão como transferido de novo e
             # poderia criar um segundo "recebido" duplicado.
             resultado.trocas_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
+            return
+
+        if SyncRepository.foi_excluido(db, current_user.id, "troca", item.uuid_cliente):
+            resultado.erros.append(SyncErro(
+                entidade="troca", uuid_cliente=item.uuid_cliente,
+                detalhe="Esta troca foi excluída permanentemente em outro dispositivo.",
+                status_code=410,
+            ))
             return
 
         plantao_transferido_id = item.plantao_transferido_id
@@ -392,8 +446,10 @@ class SyncService:
         )
         try:
             resposta = criar_troca(payload=payload, db=db, current_user=current_user)
-        except HTTPException as exc:
-            resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+        except (HTTPException, IntegrityError) as exc:
+            db.rollback()
+            detalhe, status_code = _erro_de_excecao(exc)
+            resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
             return
         if item.plantao_recebido is not None and item.plantao_recebido.uuid_cliente:
             uuid_para_plantao_id[item.plantao_recebido.uuid_cliente] = resposta.data.plantao_recebido.id
@@ -434,8 +490,10 @@ class SyncService:
                 return
             try:
                 deletar_bonificacao(bonificacao_id=existente.id, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            except (HTTPException, IntegrityError) as exc:
+                db.rollback()
+                detalhe, status_code = _erro_de_excecao(exc)
+                resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
             resultado.bonificacoes_deletadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
             return
@@ -454,6 +512,13 @@ class SyncService:
             return
 
         if existente is None:
+            if SyncRepository.foi_excluido(db, current_user.id, "bonificacao", item.uuid_cliente):
+                resultado.erros.append(SyncErro(
+                    entidade="bonificacao", uuid_cliente=item.uuid_cliente,
+                    detalhe="Esta bonificação foi excluída permanentemente em outro dispositivo.",
+                    status_code=410,
+                ))
+                return
             payload = BonificacaoCreate(
                 plantao_id=plantao_id,
                 local_id=item.local_id,
@@ -463,8 +528,10 @@ class SyncService:
             )
             try:
                 resposta = criar_bonificacao(payload=payload, db=db, current_user=current_user)
-            except HTTPException as exc:
-                resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+            except (HTTPException, IntegrityError) as exc:
+                db.rollback()
+                detalhe, status_code = _erro_de_excecao(exc)
+                resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
             resultado.bonificacoes_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
             return
@@ -480,8 +547,10 @@ class SyncService:
         payload = BonificacaoUpdate(valor=item.valor, descricao=item.descricao)
         try:
             atualizar_bonificacao(bonificacao_id=existente.id, payload=payload, db=db, current_user=current_user)
-        except HTTPException as exc:
-            resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=str(exc.detail), status_code=exc.status_code))
+        except (HTTPException, IntegrityError) as exc:
+            db.rollback()
+            detalhe, status_code = _erro_de_excecao(exc)
+            resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
             return
         resultado.bonificacoes_atualizadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=existente.id))
 

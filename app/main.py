@@ -1158,6 +1158,14 @@ async def lifespan(app: FastAPI):
 
 _cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 
+if _cors_origins == ["*"]:
+    if settings.environment == "production":
+        raise RuntimeError(
+            "ALLOWED_ORIGINS não pode ficar em '*' em produção. Defina ALLOWED_ORIGINS "
+            "no .env com a lista real de origens (domínio do site/app admin, se houver)."
+        )
+    logger.warning("ALLOWED_ORIGINS está em '*'. Defina uma lista explícita antes de ir para produção.")
+
 _uploads_dir = Path("uploads/avatars")
 _uploads_dir.mkdir(parents=True, exist_ok=True)
 

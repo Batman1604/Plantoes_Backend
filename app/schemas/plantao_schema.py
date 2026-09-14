@@ -136,6 +136,13 @@ class AlterarSenhaRequest(BaseModel):
     nova_senha: str = Field(min_length=8, max_length=128)
 
 
+class ExcluirContaRequest(BaseModel):
+    # Opcional: contas criadas só via Google/Apple não têm senha (senha_hash nulo — ver
+    # User.senha_hash). Para contas email/senha, o endpoint exige e valida este campo antes
+    # de excluir, para que um token roubado sozinho não baste para apagar a conta.
+    senha_atual: str | None = Field(default=None, min_length=8, max_length=128)
+
+
 class DeviceTokenUpdate(BaseModel):
     device_token: str = Field(min_length=1, max_length=255)
 
