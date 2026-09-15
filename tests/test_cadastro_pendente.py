@@ -27,7 +27,19 @@ class TestCadastroPendente(unittest.TestCase):
             pass
 
     def _iniciar_cadastro(self, email, telefone="11999990000", codigo="123456"):
-        with patch("app.routes.plantao_routes.secrets.randbelow", return_value=int(codigo)):
+        # A entrega do código é simulada de propósito. Não há provedor de
+        # mensagens configurado em teste, e o envio real devolve False — o que
+        # faz a rota responder 502, corretamente. Antes, o stub de SMS retornava
+        # True sem enviar nada, e estes testes passavam apoiados nessa mentira
+        # (ver auditoria C-10). Declarar a suposição aqui deixa explícito o que
+        # está sendo testado: o fluxo de cadastro, não a entrega.
+        with (
+            patch("app.routes.plantao_routes.secrets.randbelow", return_value=int(codigo)),
+            patch(
+                "app.services.sms_service.SmsService.enviar_codigo_verificacao",
+                return_value=True,
+            ),
+        ):
             response = self.client.post(
                 "/api/auth/cadastro",
                 json={"nome": "Usuário Teste", "email": email, "telefone": telefone, "senha": "SenhaForte123"},
@@ -72,7 +84,14 @@ class TestCadastroPendente(unittest.TestCase):
         email = "reenvio@example.com"
         self._iniciar_cadastro(email, telefone="11955550000", codigo="111111")
 
-        with patch("app.routes.plantao_routes.secrets.randbelow", return_value=222222):
+        # Mesma suposição explícita de _iniciar_cadastro: a entrega é simulada.
+        with (
+            patch("app.routes.plantao_routes.secrets.randbelow", return_value=222222),
+            patch(
+                "app.services.sms_service.SmsService.enviar_codigo_verificacao",
+                return_value=True,
+            ),
+        ):
             reenviar = self.client.post("/api/auth/reenviar-cadastro", json={"email": email})
         self.assertEqual(reenviar.status_code, 200, reenviar.text)
 

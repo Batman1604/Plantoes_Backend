@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
+from app.core.mascaras import mascarar_telefone
 from app.core.rate_limiter import rate_limit
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
@@ -226,9 +227,9 @@ def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) 
         expira_em = datetime.now(UTC) + timedelta(minutes=1)
         VerificacaoTelefoneRepository.upsert(db, usuario_id, codigo, expira_em)
         SmsService.enviar_codigo_verificacao(telefone, codigo)
-        logger.info("Código de verificação enviado para %s", telefone)
+        logger.info("Código de verificação enviado para %s", mascarar_telefone(telefone))
     except Exception:
-        logger.warning("Falha ao enviar código de verificação para %s", telefone)
+        logger.warning("Falha ao enviar código de verificação para %s", mascarar_telefone(telefone))
 
 
 def _conflitos_cadastro(db: Session, email: str, telefone: str | None) -> list[str]:
@@ -286,7 +287,7 @@ def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_
             detail="Não foi possível enviar o código de verificação. Tente novamente.",
         )
 
-    logger.info("Cadastro iniciado, código de verificação enviado para %s", payload.telefone)
+    logger.info("Cadastro iniciado, código de verificação enviado para %s", mascarar_telefone(payload.telefone))
     return APIResponse(success=True, message="Código enviado para o seu WhatsApp.", data=None)
 
 

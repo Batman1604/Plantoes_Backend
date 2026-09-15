@@ -3,6 +3,7 @@ import smtplib
 from email.message import EmailMessage
 
 from app.core.config import settings
+from app.core.mascaras import mascarar_email
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 def _enviar_email(*, para: str, assunto: str, corpo: str) -> bool:
     """Função interna para enviar email usando SMTP configurado nas variáveis de ambiente."""
     if not settings.smtp_username or not settings.smtp_password:
-        logger.warning("Email não enviado (SMTP não configurado): %s -> %s", assunto, para)
+        logger.warning("Email não enviado (SMTP não configurado): %s -> %s", assunto, mascarar_email(para))
         return False
     msg = EmailMessage()
     msg["Subject"] = assunto
@@ -24,7 +25,7 @@ def _enviar_email(*, para: str, assunto: str, corpo: str) -> bool:
             smtp.ehlo()
         smtp.login(settings.smtp_username, settings.smtp_password)
         smtp.send_message(msg)
-    logger.info("Email enviado: %s -> %s", assunto, para)
+    logger.info("Email enviado: %s -> %s", assunto, mascarar_email(para))
     return True
 
 
@@ -77,9 +78,24 @@ class EmailService:
             corpo=corpo,
         )
         if not enviado:
-            # Sem SMTP configurado (ambiente local/dev) não há como o código chegar por
-            # email — loga aqui para permitir testar o fluxo manualmente. Só executa quando
-            # o envio de fato não aconteceu, então o código nunca aparece no log em produção
-            # com SMTP funcionando.
-            logger.warning("Email de reset não enviado (SMTP não configurado) — código para %s: %s", email, codigo)
+            # Sem SMTP configurado não há como o código chegar ao usuário. Em
+            # desenvolvimento, registrar o código permite testar o fluxo à mão.
+            #
+            # A guarda de ambiente NÃO é excesso de zelo: o raciocínio anterior
+            # era "só executa quando o envio falhou, então nunca aparece em
+            # produção com SMTP funcionando" — mas SMTP cai, e nesse momento o
+            # código de redefinição de senha de todo mundo passaria a ser
+            # escrito em texto puro no log, que é justamente onde ele não pode
+            # estar (mesma classe de problema da auditoria C-10).
+            if settings.environment != "production":
+                logger.warning(
+                    "Email de reset não enviado (SMTP não configurado) — código para %s: %s",
+                    mascarar_email(email),
+                    codigo,
+                )
+            else:
+                logger.error(
+                    "Email de reset NÃO enviado para %s: SMTP não configurado em produção.",
+                    mascarar_email(email),
+                )
         return enviado

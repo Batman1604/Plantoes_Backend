@@ -9,6 +9,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.mascaras import mascarar_telefone
 from app.core.database import get_db
 from app.repositories.plantao_repository import UserRepository
 from app.repositories.whatsapp_repository import WhatsappRepository
@@ -97,7 +98,7 @@ def _responder(telefone: str, mensagem: str) -> None:
     try:
         SmsService.enviar(telefone, mensagem, canal="whatsapp")
     except Exception:
-        logger.exception("Falha ao enviar resposta WhatsApp para %s", telefone)
+        logger.exception("Falha ao enviar resposta WhatsApp para %s", mascarar_telefone(telefone))
 
 
 def _assinatura_valida(corpo: bytes, assinatura: str | None) -> bool:
@@ -222,7 +223,7 @@ async def receber_mensagem(request: Request, db: Session = Depends(get_db)):
             WhatsappRepository.atualizar_historico(db, sessao, historico_atualizado)
             _responder(telefone, resposta)
         except Exception:
-            logger.exception("Erro ao processar mensagem Claude para %s", telefone)
+            logger.exception("Erro ao processar mensagem Claude para %s", mascarar_telefone(telefone))
             _responder(telefone, MSG_ERRO_GENERICO)
 
         return {"status": "ok"}
