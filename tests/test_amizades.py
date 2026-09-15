@@ -210,7 +210,10 @@ class TestAmizades(unittest.TestCase):
         self.assertEqual(len(itens_a), 1)
         self.assertEqual(itens_a[0]["amigo"]["id"], b_id)
         self.assertIn("criado_em", itens_a[0])
-        self.assertEqual(itens_a[0]["amigo"].get("telefone"), "11911112222")
+        # A solicitação de A para B está PENDENTE: B nunca consentiu, então o
+        # telefone dele não pode acompanhar a listagem (ver auditoria C-09).
+        # Esta asserção afirmava o contrário e, com isso, fixava o vazamento.
+        self.assertIsNone(itens_a[0]["amigo"].get("telefone"))
 
         ids_visiveis_por_a = {item["amigo"]["id"] for item in itens_a}
         self.assertNotIn(c_id, ids_visiveis_por_a)

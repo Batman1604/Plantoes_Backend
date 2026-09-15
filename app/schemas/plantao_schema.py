@@ -820,8 +820,14 @@ class AmizadeResponse(BaseModel):
 
 
 class AmizadeAmigoResumo(UsuarioResumo):
-    """Dados do outro usuário numa amizade/solicitação — inclui telefone porque, diferente da
-    busca genérica de usuários, aqui já existe uma amizade real (ou solicitação) entre as partes."""
+    """Dados do outro usuário numa amizade ou solicitação.
+
+    `telefone` só é preenchido quando a amizade está ACEITA — ver listar_amizades.
+    A versão anterior o incluía também em solicitações meramente pendentes, o que
+    abria uma varredura da base inteira: POST /api/amizades aceita qualquer
+    destinatario_usuario_id, então bastava criar uma solicitação para cada id e
+    ler a listagem para colher nome, email, telefone e avatar de todos os
+    usuários (ver auditoria C-09)."""
     telefone: Optional[str] = None
 
 

@@ -26,10 +26,28 @@ def _check(key: str, max_requests: int, window_seconds: int) -> bool:
         return True
 
 
+def esta_ativo() -> bool:
+    """Se o limitador deve agir. Por padrão, só em produção; RATE_LIMIT_ENABLED
+    força um dos dois lados, o que permite exercitá-lo em teste."""
+    configurado = settings.rate_limit_enabled.strip().lower()
+    if configurado in {"1", "true", "yes", "on"}:
+        return True
+    if configurado in {"0", "false", "no", "off"}:
+        return False
+    return settings.environment == "production"
+
+
+def reset() -> None:
+    """Zera os contadores. Usado entre testes — sem isto, um teste que estoura o
+    limite contamina o seguinte."""
+    with _lock:
+        _buckets.clear()
+
+
 def rate_limit(max_requests: int = 10, window_seconds: int = 60):
-    """Cria dependência FastAPI que limita chamadas por IP e rota em produção."""
+    """Cria dependência FastAPI que limita chamadas por IP e rota."""
     def dependency(request: Request) -> None:
-        if settings.environment != "production":
+        if not esta_ativo():
             return
         if request.client is None:
             return

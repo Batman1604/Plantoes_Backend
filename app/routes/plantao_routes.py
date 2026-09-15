@@ -1108,8 +1108,17 @@ def deletar_troca(
     troca = TrocaRepository.get_by_id(db, troca_id)
     if troca is None:
         raise HTTPException(status_code=404, detail="Troca não encontrada.")
-    local = LocalRepository.get_by_id(db, troca.local_id)
-    if local is None or local.usuario_id != current_user.id:
+    # Autoriza pelo dono da TROCA, não pelo dono do local que ela referencia.
+    #
+    # Os dois divergem sempre que há transferência: o plantão clonado para quem
+    # recebe mantém o local_id de quem enviou (ver aceitar_solicitacao_troca e
+    # aceitar_transferencia), então criar_troca grava usuario_id=quem registrou
+    # e local_id=um local da outra pessoa. Com a checagem antiga, quem era dono
+    # do LOCAL apagava a troca alheia, e o dono de verdade recebia 403 ao tentar
+    # apagar a própria. Pior: TrocaRepository.delete grava o tombstone contra
+    # troca.usuario_id, então a exclusão indevida ainda removia o registro do
+    # dispositivo da vítima na sincronização seguinte (ver auditoria C-08).
+    if troca.usuario_id != current_user.id:
         raise HTTPException(status_code=403, detail="Sem permissão para deletar esta troca.")
     TrocaRepository.delete(db, troca_id)
     return APIResponse(success=True, message="Troca deletada com sucesso.", data=None)
@@ -2116,10 +2125,15 @@ def _serializar_amigo_configuracao(config) -> AmigoConfiguracaoResponse:
     "exatamente um dos dois parâmetros.",
 )
 def buscar_usuarios(
-    email: str | None = Query(default=None, min_length=1, max_length=255),
+    # min_length=3 no email: com 1 caractere, percorrer os prefixos devolvia a
+    # tabela de usuários de 5 em 5 resultados. Três caracteres ainda servem a
+    # uma busca real (quem procura um contato sabe o começo do email dele) e
+    # tornam a varredura muito menos prática (ver auditoria C-09).
+    email: str | None = Query(default=None, min_length=3, max_length=255),
     telefone: str | None = Query(default=None, min_length=1, max_length=30),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    _=Depends(rate_limit(30, 60)),
 ):
     if (email is None) == (telefone is None):
         raise HTTPException(status_code=400, detail="Informe email ou telefone, nunca os dois nem nenhum.")
@@ -2146,6 +2160,12 @@ def criar_amizade(
     payload: AmizadeCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    # Segunda camada contra a varredura da base: o endpoint aceita qualquer
+    # destinatario_usuario_id, então sem limite bastava percorrer os ids em
+    # sequência para materializar uma amizade com todo mundo e depois ler a
+    # listagem (ver auditoria C-09). Esconder o telefone de pendentes reduz o
+    # que se colhe; o limite reduz a escala.
+    _=Depends(rate_limit(20, 60)),
 ):
     if payload.destinatario_usuario_id == current_user.id:
         raise HTTPException(status_code=400, detail="Não é possível adicionar a si mesmo.")
@@ -2197,12 +2217,19 @@ def listar_amizades(
             outro = amizade.solicitante
 
         config = configs_por_amigo.get(outro.id)
+        # Telefone é dado de contato, não de exibição: a lista mostra nome e
+        # avatar. Só acompanha a resposta depois que a outra parte ACEITOU —
+        # numa solicitação pendente, quem recebe nunca consentiu com nada (ver
+        # auditoria C-09).
+        amigo = AmizadeAmigoResumo.model_validate(outro)
+        if amizade.status != "aceito":
+            amigo.telefone = None
         itens.append(
             AmizadeListItem(
                 id=amizade.id,
                 status=amizade.status,
                 papel=papel,
-                amigo=AmizadeAmigoResumo.model_validate(outro),
+                amigo=amigo,
                 configuracao_id=config.id if config else None,
                 modo_visibilidade=config.modo_visibilidade if config else None,
                 mostrar_valores=config.mostrar_valores if config else None,

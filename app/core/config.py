@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_use_tls: bool = True
     allowed_origins: str = "*"
+    # Liga o limitador de requisições. Vazio = automático: ativo em produção,
+    # inativo fora dela. Existe como variável para que o limite possa ser
+    # exercitado em teste — antes ele era desligado por uma comparação fixa com
+    # "production", então nenhuma proteção de força bruta ou de varredura era
+    # verificada por nenhum teste (ver auditoria A-12/C-09).
+    rate_limit_enabled: str = ""
     log_level: str = "INFO"
     anthropic_api_key: str = ""
     whatsapp_token: str = ""
