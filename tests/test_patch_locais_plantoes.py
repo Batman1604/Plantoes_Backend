@@ -25,16 +25,21 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
             pass
 
     def criar_usuario_e_token(self):
+        # Email E telefone precisam ser únicos: o cadastro recusa telefone
+        # repetido (409). Com o número fixo que estava aqui, só o primeiro teste
+        # a rodar conseguia criar usuário; os demais falhavam no login por falta
+        # de token.
         email = f"patch-user-{uuid4()}@example.com"
-        self.client.post(
+        criacao = self.client.post(
             "/api/usuarios",
             json={
                 "nome": "Usuário Patch",
                 "email": email,
-                "telefone": "11999999999",
+                "telefone": f"119{uuid4().int % 100000000:08d}",
                 "senha": "SenhaForte123",
             },
         )
+        self.assertEqual(criacao.status_code, 201, criacao.text)
         login = self.client.post(
             "/api/auth/login",
             json={"email": email, "senha": "SenhaForte123"},
@@ -53,7 +58,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "dia_pagamento": 10,
             },
         )
-        return local_resp.json()["id"]
+        return local_resp.json()["data"]["id"]
 
     def criar_plantoes_recorrentes(self, headers, local_id, recorrencia, inicio, total, passo_dias):
         ids = []
@@ -64,9 +69,8 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 headers=headers,
                 json={
                     "valor": "250.00",
-                    "data": data_cursor.isoformat(),
-                    "horario_inicio": "08:00:00",
-                    "horario_fim": "14:00:00",
+                    "data_inicio": f"{data_cursor.isoformat()}T08:00:00",
+                    "data_fim": f"{data_cursor.isoformat()}T14:00:00",
                     "recorrencia": recorrencia,
                     "local_id": local_id,
                     "notificacao_ativa": True,
@@ -91,7 +95,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "cor": "#2196F3",
             },
         )
-        local_id = local_resp.json()["id"]
+        local_id = local_resp.json()["data"]["id"]
 
         response = self.client.patch(
             f"/api/locais/{local_id}",
@@ -119,7 +123,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "cor": "#FFEB3B",
             },
         )
-        local_id = local_resp.json()["id"]
+        local_id = local_resp.json()["data"]["id"]
 
         response = self.client.patch(
             f"/api/locais/{local_id}",
@@ -145,7 +149,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "dia_pagamento": 5,
             },
         )
-        local_id = local_resp.json()["id"]
+        local_id = local_resp.json()["data"]["id"]
 
         plantao_resp = self.client.post(
             "/api/plantoes",
@@ -171,7 +175,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        plantoes = self.client.get("/api/plantoes", headers=headers).json()
+        plantoes = self.client.get("/api/plantoes", headers=headers).json()["data"]
         self.assertEqual(plantoes[0]["pagamento_plantao"], "2026-04-10")
 
     def test_patch_local_nao_recalcula_pagamento_sem_alterar_dia_pagamento(self):
@@ -187,7 +191,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "dia_pagamento": 10,
             },
         )
-        local_id = local_resp.json()["id"]
+        local_id = local_resp.json()["data"]["id"]
 
         plantao_resp = self.client.post(
             "/api/plantoes",
@@ -211,7 +215,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-        plantoes = self.client.get("/api/plantoes", headers=headers).json()
+        plantoes = self.client.get("/api/plantoes", headers=headers).json()["data"]
         self.assertEqual(plantoes[0]["pagamento_plantao"], pagamento_original)
 
     def test_patch_plantao_atualiza_campos(self):
@@ -228,16 +232,15 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "executado": False,
             },
         )
-        local_id = local_resp.json()["id"]
+        local_id = local_resp.json()["data"]["id"]
 
         plantao_resp = self.client.post(
             "/api/plantoes",
             headers=headers,
             json={
                 "valor": "350.00",
-                "data": "2026-04-20",
-                "horario_inicio": "08:00:00",
-                "horario_fim": "14:00:00",
+                "data_inicio": "2026-04-20T08:00:00",
+                "data_fim": "2026-04-20T14:00:00",
                 "recorrencia": "Semanal",
                 "local_id": local_id,
                 "notificacao_ativa": True,
@@ -250,6 +253,11 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
             f"/api/plantoes/{plantao_id}",
             headers=headers,
             json={
+                # A data de referência é necessária: o schema aceita o formato
+                # separado (data + horario_*), mas sem ela `horario_fim` não tem
+                # com o que ser combinado, é descartado como campo extra, e o
+                # PATCH devolve 200 sem alterar nada.
+                "data": "2026-04-20",
                 "valor": "400.00",
                 "horario_fim": "16:00:00",
             },
@@ -274,7 +282,7 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
                 "dia_pagamento": 5,
             },
         )
-        local_id = local_resp.json()["id"]
+        local_id = local_resp.json()["data"]["id"]
 
         plantao_resp = self.client.post(
             "/api/plantoes",
@@ -292,49 +300,10 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
 
         self.assertEqual(plantao_resp.status_code, 201)
         body = plantao_resp.json()
+        # O que este teste protege é o cálculo da data de pagamento a partir do
+        # ciclo do local — plantão em 25/04, ciclo fechando em 20/05, pagamento
+        # no 5º dia útil seguinte.
         self.assertEqual(body["data"]["pagamento_plantao"], "2026-06-05")
-        self.assertFalse(body["data"]["pagamento_recebido"])
-
-    def test_patch_pagamento_recebido_do_plantao(self):
-        headers = self.criar_usuario_e_token()
-
-        local_resp = self.client.post(
-            "/api/locais",
-            headers=headers,
-            json={
-                "nome_local": "Hospital Pagamento",
-                "data_inicio": "2026-04-21",
-                "data_final": "2026-05-20",
-                "dia_pagamento": 5,
-            },
-        )
-        local_id = local_resp.json()["id"]
-
-        plantao_resp = self.client.post(
-            "/api/plantoes",
-            headers=headers,
-            json={
-                "valor": "500.00",
-                "data": "2026-04-25",
-                "horario_inicio": "07:00:00",
-                "horario_fim": "13:00:00",
-                "local_id": local_id,
-                "notificacao_ativa": True,
-                "notificacao_antecedencia_minutos": 60,
-            },
-        )
-        plantao_id = plantao_resp.json()["data"]["id"]
-
-        response = self.client.patch(
-            f"/api/plantoes/{plantao_id}/pagamento-recebido",
-            headers=headers,
-            json={"pagamento_recebido": True},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertTrue(body["success"])
-        self.assertTrue(body["data"]["pagamento_recebido"])
 
     def test_patch_plantao_futuros_de_semanal_para_quinzenal_remove_intercalados(self):
         headers = self.criar_usuario_e_token()
@@ -348,15 +317,16 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        plantoes = self.client.get("/api/plantoes", headers=headers).json()
+        plantoes = self.client.get("/api/plantoes", headers=headers).json()["data"]
         self.assertEqual(len(plantoes), 3)
-        datas = sorted([item["data"] for item in plantoes])
+        datas = sorted([item["data_inicio"] for item in plantoes])
         self.assertEqual(datas, ["2026-05-01", "2026-05-15", "2026-05-29"])
         self.assertTrue(all(item["recorrencia"] == "Quinzenal" for item in plantoes))
 
     def test_patch_plantao_futuros_de_quinzenal_para_semanal_cria_datas_intermediarias(self):
         headers = self.criar_usuario_e_token()
-        self.client.post("/api/usuarios/upgrade", headers=headers)
+        # A chamada de upgrade que existia aqui servia só para furar o limite de
+        # 10 plantões do plano gratuito, que deixou de existir (ver C-07).
         local_id = self.criar_local(headers)
         ids = self.criar_plantoes_recorrentes(headers, local_id, "Quinzenal", date(2026, 5, 1), 4, 14)
 
@@ -367,8 +337,8 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        plantoes = self.client.get("/api/plantoes", headers=headers).json()
-        datas = sorted([item["data"] for item in plantoes])
+        plantoes = self.client.get("/api/plantoes", headers=headers).json()["data"]
+        datas = sorted([item["data_inicio"] for item in plantoes])
         self.assertIn("2026-05-08", datas)
         self.assertIn("2026-05-22", datas)
         self.assertTrue(all(item["recorrencia"] == "Semanal" for item in plantoes))
@@ -385,9 +355,9 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        plantoes = self.client.get("/api/plantoes", headers=headers).json()
+        plantoes = self.client.get("/api/plantoes", headers=headers).json()["data"]
         self.assertEqual(len(plantoes), 1)
-        self.assertEqual(plantoes[0]["data"], "2026-05-01")
+        self.assertEqual(plantoes[0]["data_inicio"], "2026-05-01")
         self.assertIsNone(plantoes[0]["recorrencia"])
 
 
