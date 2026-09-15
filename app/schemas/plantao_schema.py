@@ -308,6 +308,34 @@ class PlantaoBase(BaseModel):
         default=None, max_length=36, description="Identificador gerado no dispositivo, usado para sincronização offline."
     )
 
+    @field_validator("data_inicio", "data_fim")
+    @classmethod
+    def recusar_fuso(cls, value: datetime) -> datetime:
+        """Recusa datetime com fuso em data_inicio/data_fim.
+
+        Estes campos são HORA DE PAREDE: "das 07:00 às 19:00 do dia 10/04".
+        Não descrevem um instante no tempo, e por isso são gravados em colunas
+        Date e Time separadas, com os componentes tomados como vieram
+        (ver criar_plantao: data_inicio.date() e .time()).
+
+        Aceitar um valor com fuso silenciosamente gravava o horário deslocado:
+        um cliente que enviasse 10:00Z para um plantão das 07:00 tinha 10:00
+        gravado. Misturar valores com e sem fuso também provocava
+        `TypeError: can't compare offset-naive and offset-aware datetimes` em
+        atualizar_plantao, que virava um 500 opaco.
+
+        Existia um teste guardando exatamente isto — test_rejeita_data_com_
+        horario_ou_fuso —, mas ele apontava para o campo `data`, que deixou de
+        existir quando virou data_inicio/data_fim. O teste passou a falhar por
+        outro motivo e a proteção sumiu sem ninguém notar.
+        """
+        if value.tzinfo is not None:
+            raise ValueError(
+                "data_inicio e data_fim não aceitam fuso horário: envie a hora local "
+                "do plantão (ex.: 2026-04-10T07:00:00), sem sufixo Z nem offset."
+            )
+        return value
+
     @field_validator("recorrencia", mode="before")
     @classmethod
     def normalizar_recorrencia(cls, value):

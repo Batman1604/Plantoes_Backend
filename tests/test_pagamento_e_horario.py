@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, time
+from datetime import date, datetime, time
 
 from pydantic import ValidationError
 
@@ -35,25 +35,52 @@ class TestPagamentoEHorario(unittest.TestCase):
         self.assertEqual(data_pagamento, date(2026, 5, 29))
 
     def test_permite_plantao_virando_a_madrugada(self):
+        # O modelo trocou o campo único `data` por data_inicio/data_fim
+        # explícitos; este teste continuava usando o campo antigo e falhava por
+        # isso, deixando o caso da madrugada sem cobertura.
         payload = PlantaoCreate(
             valor="200.00",
-            data=date(2026, 4, 10),
-            horario_inicio=time(12, 0),
-            horario_fim=time(0, 0),
+            data_inicio=datetime(2026, 4, 10, 22, 0),
+            data_fim=datetime(2026, 4, 11, 6, 0),
             local_id=1,
         )
-        self.assertEqual(payload.horario_inicio, time(12, 0))
-        self.assertEqual(payload.horario_fim, time(0, 0))
+        self.assertEqual(payload.data_inicio.date(), date(2026, 4, 10))
+        self.assertEqual(payload.data_inicio.time(), time(22, 0))
+        self.assertEqual(payload.data_fim.date(), date(2026, 4, 11))
+        self.assertEqual(payload.data_fim.time(), time(6, 0))
 
-    def test_rejeita_data_com_horario_ou_fuso(self):
-        with self.assertRaises(ValidationError):
-            PlantaoCreate(
-                valor="200.00",
-                data="2026-05-05T00:00:00.000Z",
-                horario_inicio=time(12, 0),
-                horario_fim=time(18, 0),
-                local_id=1,
-            )
+    def test_rejeita_data_com_fuso(self):
+        """data_inicio/data_fim são hora de parede e não aceitam fuso.
+
+        Este teste guardava o campo `data`, que deixou de existir. Ele passou a
+        falhar por falta dos campos novos — e, pior, o companheiro dele passou a
+        PASSAR pelo motivo errado: esperava ValidationError e recebia um, mas
+        por campo ausente, não pela rejeição de fuso. A proteção tinha sumido
+        sem ninguém notar (ver auditoria FUSO-01).
+        """
+        for valor_com_fuso in ("2026-05-05T08:00:00Z", "2026-05-05T08:00:00-03:00"):
+            with self.subTest(valor=valor_com_fuso):
+                with self.assertRaises(ValidationError):
+                    PlantaoCreate(
+                        valor="200.00",
+                        data_inicio=valor_com_fuso,
+                        data_fim="2026-05-05T18:00:00",
+                        local_id=1,
+                    )
+
+    def test_aceita_hora_de_parede_sem_fuso(self):
+        payload = PlantaoCreate(
+            valor="200.00",
+            data_inicio="2026-05-05T07:00:00",
+            data_fim="2026-05-05T19:00:00",
+            local_id=1,
+        )
+
+        # O horário chega e é guardado exatamente como enviado — é isto que o
+        # cliente depende para o plantão não mudar de hora ao sincronizar.
+        self.assertIsNone(payload.data_inicio.tzinfo)
+        self.assertEqual(payload.data_inicio.time(), time(7, 0))
+        self.assertEqual(payload.data_fim.time(), time(19, 0))
 
 
 if __name__ == "__main__":
