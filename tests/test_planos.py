@@ -1,12 +1,18 @@
-import os
-import unittest
-from pathlib import Path
-from uuid import uuid4
+"""Plano do usuário.
 
+A v1 é publicada sem restrição por plano — ver
+PlanoService.RESTRICOES_POR_PLANO_ATIVAS e a auditoria C-07. Estes testes fixam
+os dois lados disso: a coluna `plano` continua existindo e vindo no login, e
+nenhum recurso é bloqueado enquanto o interruptor estiver desligado.
+"""
+
+import unittest
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.plano_service import PlanoService
 
 
 class TestPlanos(unittest.TestCase):
@@ -14,30 +20,30 @@ class TestPlanos(unittest.TestCase):
     def setUpClass(cls):
         cls.client = TestClient(app)
 
-    @classmethod
-    def tearDownClass(cls):
-        db_file = Path("test_planos.db")
-        try:
-            if db_file.exists():
-                db_file.unlink()
-        except PermissionError:
-            pass
-
     def criar_usuario_e_token(self):
-        email = f"plan-user-{uuid4()}@example.com"
-        self.client.post(
+        # Email E telefone precisam ser únicos por usuário: o cadastro recusa
+        # telefone repetido (409). A versão anterior destes testes usava o
+        # mesmo número fixo em todos, então só o primeiro a rodar conseguia
+        # se cadastrar e os demais falhavam no login por falta de token.
+        sufixo = uuid4().hex[:8]
+        email = f"plan-user-{sufixo}@example.com"
+        telefone = f"119{uuid4().int % 100000000:08d}"
+        criacao = self.client.post(
             "/api/usuarios",
             json={
                 "nome": "Usuário Plano",
                 "email": email,
-                "telefone": "11999999999",
+                "telefone": telefone,
                 "senha": "SenhaForte123",
             },
         )
+        self.assertEqual(criacao.status_code, 201, criacao.text)
+
         login = self.client.post(
             "/api/auth/login",
             json={"email": email, "senha": "SenhaForte123"},
         )
+        self.assertEqual(login.status_code, 200, login.text)
         token = login.json()["data"]["access_token"]
         return login, {"Authorization": f"Bearer {token}"}
 
@@ -53,45 +59,28 @@ class TestPlanos(unittest.TestCase):
                 "executado": False,
             },
         )
-        return response.json()["id"]
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()["data"]["id"]
 
     def test_login_retorna_plano_free_por_padrao(self):
         login, _ = self.criar_usuario_e_token()
 
-        self.assertEqual(login.status_code, 200)
         self.assertEqual(login.json()["data"]["usuario"]["plano"], "free")
 
-    def test_financeiro_bloqueado_para_free_e_upgrade_libera(self):
+    def test_relatorio_financeiro_liberado_sem_premium(self):
         _, headers = self.criar_usuario_e_token()
 
-        bloqueado = self.client.get("/api/financeiro/anual?ano=2026", headers=headers)
-        self.assertEqual(bloqueado.status_code, 403)
-        self.assertEqual(
-            bloqueado.json(),
-            {
-                "success": False,
-                "message": "Funcionalidade exclusiva para usuários premium",
-            },
-        )
+        resposta = self.client.get("/api/financeiro/anual?ano=2026", headers=headers)
 
-        upgrade = self.client.post("/api/usuarios/upgrade", headers=headers)
-        self.assertEqual(upgrade.status_code, 200)
-        self.assertEqual(upgrade.json()["data"]["plano"], "premium")
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        self.assertTrue(resposta.json()["success"])
 
-        upgrade_idempotente = self.client.post("/api/usuarios/upgrade", headers=headers)
-        self.assertEqual(upgrade_idempotente.status_code, 200)
-        self.assertEqual(upgrade_idempotente.json()["message"], "Usuário já possui plano premium")
-        self.assertEqual(upgrade_idempotente.json()["data"]["plano"], "premium")
-
-        liberado = self.client.get("/api/financeiro/anual?ano=2026", headers=headers)
-        self.assertEqual(liberado.status_code, 200)
-        self.assertTrue(liberado.json()["success"])
-
-    def test_limite_de_10_plantoes_para_plano_free(self):
+    def test_sem_limite_de_plantoes_para_plano_free(self):
         _, headers = self.criar_usuario_e_token()
         local_id = self.criar_local(headers)
 
-        for i in range(10):
+        # Onze plantões: um a mais que o antigo limite do plano gratuito.
+        for i in range(PlanoService.LIMITE_PLANTOES_FREE + 1):
             resposta = self.client.post(
                 "/api/plantoes",
                 headers=headers,
@@ -105,30 +94,12 @@ class TestPlanos(unittest.TestCase):
                     "notificacao_antecedencia_minutos": 60,
                 },
             )
-            self.assertEqual(resposta.status_code, 201)
+            self.assertEqual(resposta.status_code, 201, f"plantão {i + 1}: {resposta.text}")
 
-        limite = self.client.post(
-            "/api/plantoes",
-            headers=headers,
-            json={
-                "valor": "300.00",
-                "data": "2026-04-20",
-                "horario_inicio": "13:00:00",
-                "horario_fim": "18:00:00",
-                "local_id": local_id,
-                "notificacao_ativa": True,
-                "notificacao_antecedencia_minutos": 60,
-            },
-        )
-
-        self.assertEqual(limite.status_code, 403)
-        self.assertEqual(
-            limite.json(),
-            {
-                "success": False,
-                "message": "Limite do plano gratuito atingido (10 plantões)",
-            },
-        )
+    def test_interruptor_de_plano_esta_desligado_na_v1(self):
+        # Guarda explícita: se alguém religar as restrições sem implementar a
+        # compra no aplicativo, o beco sem saída da auditoria C-07 volta.
+        self.assertFalse(PlanoService.RESTRICOES_POR_PLANO_ATIVAS)
 
 
 if __name__ == "__main__":
