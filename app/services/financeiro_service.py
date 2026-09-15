@@ -22,6 +22,45 @@ def _to_decimal(value) -> Decimal:
     return Decimal(str(value)) if value is not None else Decimal("0")
 
 
+def _plantoes_do_usuario(usuario_id: int):
+    """Predicado único de "plantões que entram na receita deste usuário".
+
+    Existe para impedir a divergência que a auditoria A-15 encontrou: o total
+    MENSAL filtrava apenas `transferido`, enquanto anual, gráfico e
+    mensal-por-local filtravam TAMBÉM `recebido_via_transferencia`. Bastava um
+    plantão recebido de um colega para a soma dos doze meses deixar de bater com
+    o total do ano — na tela em que o usuário confere quanto ganhou.
+
+    A regra, agora única: plantão cedido a outra pessoa sai da receita
+    (`transferido`); plantão recebido de outra pessoa ENTRA, porque quem recebeu
+    vai trabalhá-lo e ser pago por ele. Quanto dessa receita veio de recebidos é
+    informado à parte (ver `_soma_recebidos`), nunca somado duas vezes.
+    """
+    return (
+        Plantao.usuario_id == usuario_id,
+        Plantao.transferido.is_(False),
+    )
+
+
+def _soma_recebidos(db: Session, *filtros_extras, usuario_id: int) -> tuple[Decimal, int]:
+    """Parcela da receita que veio de plantões recebidos de outra pessoa.
+
+    É um RECORTE do total, não uma parcela a somar: o total já os inclui (ver
+    `_plantoes_do_usuario`). Serve para o relatório exibir "deste valor, X veio
+    de plantões recebidos" sem que a interface some duas vezes.
+    """
+    stmt = select(
+        func.coalesce(func.sum(Plantao.valor), 0),
+        func.coalesce(func.count(Plantao.id), 0),
+    ).where(
+        *_plantoes_do_usuario(usuario_id),
+        Plantao.recebido_via_transferencia.is_(True),
+        *filtros_extras,
+    )
+    valor, quantidade = db.execute(stmt).one()
+    return _to_decimal(valor), int(quantidade)
+
+
 class FinanceiroService:
     @staticmethod
     def calcular_total_mensal(db: Session, usuario_id: int, mes: int, ano: int) -> dict:
@@ -34,8 +73,7 @@ class FinanceiroService:
             )
             .outerjoin(bon, bon.c.plantao_id == Plantao.id)
             .where(
-                Plantao.usuario_id == usuario_id,
-                Plantao.transferido.is_(False),
+                *_plantoes_do_usuario(usuario_id),
                 extract("month", Plantao.data_inicio) == mes,
                 extract("year", Plantao.data_inicio) == ano,
             )
@@ -43,11 +81,19 @@ class FinanceiroService:
         r = db.execute(stmt).one()
         total = _to_decimal(r.total)
         total_bon = _to_decimal(r.total_bonificacoes)
+        recebidos, qtd_recebidos = _soma_recebidos(
+            db,
+            extract("month", Plantao.data_inicio) == mes,
+            extract("year", Plantao.data_inicio) == ano,
+            usuario_id=usuario_id,
+        )
         return {
             "total": total,
             "total_bonificacoes": total_bon,
             "total_com_bonificacoes": total + total_bon,
             "quantidade_plantoes": int(r.quantidade_plantoes),
+            "total_recebidos": recebidos,
+            "quantidade_recebidos": qtd_recebidos,
         }
 
     @staticmethod
@@ -61,20 +107,25 @@ class FinanceiroService:
             )
             .outerjoin(bon, bon.c.plantao_id == Plantao.id)
             .where(
-                Plantao.usuario_id == usuario_id,
-                Plantao.transferido.is_(False),
-                Plantao.recebido_via_transferencia.is_(False),
+                *_plantoes_do_usuario(usuario_id),
                 extract("year", Plantao.data_inicio) == ano,
             )
         )
         r = db.execute(stmt).one()
         total = _to_decimal(r.total)
         total_bon = _to_decimal(r.total_bonificacoes)
+        recebidos, qtd_recebidos = _soma_recebidos(
+            db,
+            extract("year", Plantao.data_inicio) == ano,
+            usuario_id=usuario_id,
+        )
         return {
             "total": total,
             "total_bonificacoes": total_bon,
             "total_com_bonificacoes": total + total_bon,
             "quantidade_plantoes": int(r.quantidade_plantoes),
+            "total_recebidos": recebidos,
+            "quantidade_recebidos": qtd_recebidos,
         }
 
     @staticmethod
@@ -89,9 +140,7 @@ class FinanceiroService:
             )
             .outerjoin(bon, bon.c.plantao_id == Plantao.id)
             .where(
-                Plantao.usuario_id == usuario_id,
-                Plantao.transferido.is_(False),
-                Plantao.recebido_via_transferencia.is_(False),
+                *_plantoes_do_usuario(usuario_id),
                 extract("year", Plantao.data_inicio) == ano,
             )
             .group_by(extract("month", Plantao.data_inicio))
@@ -133,10 +182,8 @@ class FinanceiroService:
             )
             .outerjoin(bon, bon.c.plantao_id == Plantao.id)
             .where(
-                Plantao.usuario_id == usuario_id,
+                *_plantoes_do_usuario(usuario_id),
                 Plantao.local_id == local_id,
-                Plantao.transferido.is_(False),
-                Plantao.recebido_via_transferencia.is_(False),
                 extract("month", Plantao.data_inicio) == mes,
                 extract("year", Plantao.data_inicio) == ano,
             )
@@ -144,9 +191,18 @@ class FinanceiroService:
         r = db.execute(stmt).one()
         total = _to_decimal(r.total)
         total_bon = _to_decimal(r.total_bonificacoes)
+        recebidos, qtd_recebidos = _soma_recebidos(
+            db,
+            Plantao.local_id == local_id,
+            extract("month", Plantao.data_inicio) == mes,
+            extract("year", Plantao.data_inicio) == ano,
+            usuario_id=usuario_id,
+        )
         return {
             "total": total,
             "total_bonificacoes": total_bon,
             "total_com_bonificacoes": total + total_bon,
             "quantidade_plantoes": int(r.quantidade_plantoes),
+            "total_recebidos": recebidos,
+            "quantidade_recebidos": qtd_recebidos,
         }

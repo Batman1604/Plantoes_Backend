@@ -771,6 +771,11 @@ class FinanceiroData(BaseModel):
     quantidade_plantoes: int
     total_bonificacoes: Decimal = Decimal("0")
     total_com_bonificacoes: Decimal = Decimal("0")
+    # Parcela de `total` que veio de plantões recebidos de outra pessoa por
+    # transferência. É um RECORTE, não um valor a somar: `total` já os inclui.
+    # Serve para o relatório mostrar "deste valor, X veio de plantões recebidos".
+    total_recebidos: Decimal = Decimal("0")
+    quantidade_recebidos: int = 0
 
 
 class FinanceiroResponse(APIResponse[FinanceiroData]):

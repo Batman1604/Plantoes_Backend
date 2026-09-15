@@ -55,8 +55,16 @@ import pytest  # noqa: E402
 
 @pytest.fixture(autouse=True, scope="module")
 def _banco_limpo_por_modulo():
-    """Zera todas as tabelas antes de cada módulo de teste."""
+    """Garante o schema e zera todas as tabelas antes de cada módulo de teste."""
     from app.core.database import Base, engine
+    from app import models  # noqa: F401  (registra as tabelas em Base.metadata)
+
+    # create_all antes de limpar: um módulo que não importa app.main (como
+    # test_financeiro_service, que exercita o serviço direto) roda sem nenhuma
+    # tabela criada quando executado isoladamente, e a limpeza falhava com
+    # "no such table". Era mais uma dependência da ordem de coleta — o módulo
+    # só funcionava se OUTRO tivesse importado app.main antes dele.
+    Base.metadata.create_all(bind=engine)
 
     with engine.begin() as conn:
         # Ordem reversa de criação respeita as chaves estrangeiras.
