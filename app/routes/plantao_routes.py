@@ -60,7 +60,6 @@ from app.schemas.plantao_schema import (
     PerfilUpdate,
     AuthResponse,
     AuthStatusResponse,
-    DeviceTokenUpdate,
     ExcluirContaRequest,
     FeedbackCreate,
     FinanceiroData,
@@ -795,20 +794,6 @@ def deletar_conta(
     UserRepository.delete(db, current_user.id)
     logger.info("Conta excluída: %s", current_user.email)
     return APIResponse(success=True, message="Conta excluída com sucesso.", data=None)
-
-
-@router.put(
-    "/usuarios/device-token",
-    response_model=APIResponse[None],
-    summary="Registrar device token para push notifications",
-)
-def registrar_device_token(
-    payload: DeviceTokenUpdate,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    UserRepository.update_device_token(db, current_user.id, payload.device_token)
-    return APIResponse(success=True, message="Device token registrado.", data=None)
 
 
 @router.patch(

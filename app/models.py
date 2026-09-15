@@ -32,7 +32,6 @@ class User(Base):
     telefone_verificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     avatar: Mapped[str | None] = mapped_column(String(255), nullable=True)
     profissao: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    device_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
     theme_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="light")
 
     locais: Mapped[list["Local"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")

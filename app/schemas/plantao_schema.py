@@ -143,10 +143,6 @@ class ExcluirContaRequest(BaseModel):
     senha_atual: str | None = Field(default=None, min_length=8, max_length=128)
 
 
-class DeviceTokenUpdate(BaseModel):
-    device_token: str = Field(min_length=1, max_length=255)
-
-
 class FeedbackCreate(BaseModel):
     mensagem: str = Field(min_length=5, max_length=2000, example="Sugestão: adicionar filtro por local na tela de plantões.")
 

@@ -442,7 +442,12 @@ def ensure_indexes() -> None:
 ensure_indexes()
 
 
-def ensure_email_verificado_e_device_token_columns() -> None:
+def ensure_colunas_perfil_usuario() -> None:
+    """email_verificado, avatar e profissao. A criação de `device_token` foi
+    removida daqui junto com o resto do push (ver o comentário em models.py):
+    a coluna sobrevive em bancos já existentes até a primeira migração do
+    Alembic removê-la, e não voltar a criá-la impede que um banco novo nasça
+    com ela."""
     if engine.dialect.name == "sqlite":
         with engine.begin() as connection:
             cols = connection.execute(text("PRAGMA table_info(usuarios)")).all()
@@ -450,10 +455,6 @@ def ensure_email_verificado_e_device_token_columns() -> None:
             if "email_verificado" not in col_names:
                 connection.execute(
                     text("ALTER TABLE usuarios ADD COLUMN email_verificado BOOLEAN NOT NULL DEFAULT 0")
-                )
-            if "device_token" not in col_names:
-                connection.execute(
-                    text("ALTER TABLE usuarios ADD COLUMN device_token VARCHAR(255) NULL")
                 )
             if "avatar" not in col_names:
                 connection.execute(text("ALTER TABLE usuarios ADD COLUMN avatar VARCHAR(255) NULL"))
@@ -473,16 +474,6 @@ def ensure_email_verificado_e_device_token_columns() -> None:
                 connection.execute(
                     text("ALTER TABLE usuarios ADD COLUMN email_verificado BOOLEAN NOT NULL DEFAULT FALSE")
                 )
-            dt_exists = connection.execute(
-                text(
-                    "SELECT 1 FROM information_schema.columns "
-                    "WHERE table_name = 'usuarios' AND column_name = 'device_token'"
-                )
-            ).scalar() is not None
-            if not dt_exists:
-                connection.execute(
-                    text("ALTER TABLE usuarios ADD COLUMN device_token VARCHAR(255) NULL")
-                )
             connection.execute(text(
                 "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS avatar VARCHAR(255) NULL"
             ))
@@ -492,7 +483,7 @@ def ensure_email_verificado_e_device_token_columns() -> None:
         return
 
 
-ensure_email_verificado_e_device_token_columns()
+ensure_colunas_perfil_usuario()
 
 
 def ensure_theme_mode_column() -> None:

@@ -246,13 +246,6 @@ class UserRepository:
             db.commit()
 
     @staticmethod
-    def update_device_token(db: Session, user_id: int, device_token: str) -> None:
-        user = db.scalar(select(User).where(User.id == user_id))
-        if user:
-            user.device_token = device_token
-            db.commit()
-
-    @staticmethod
     def update_perfil(db: Session, user_id: int, **kwargs) -> User | None:
         user = db.scalar(select(User).where(User.id == user_id))
         if user is None:
