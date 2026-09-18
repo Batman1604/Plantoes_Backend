@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime, time
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Time, UniqueConstraint
 
 # Definição dos modelos de domínio persistidos no banco de dados.
 # Cada classe corresponde a uma tabela e usa SQLAlchemy ORM para mapeamento.
@@ -66,6 +66,18 @@ class Local(Base):
 
 class Plantao(Base):
     __tablename__ = "plantoes"
+    __table_args__ = (
+        # Índice composto que serve a consulta principal do app: os plantões de
+        # um usuário, em ordem de data. Os índices separados de usuario_id e
+        # data_inicio não cobrem isso bem.
+        #
+        # Ele era criado por ensure_indexes() em main.py, sem estar declarado
+        # aqui — então autogerar a migração inicial a partir dos modelos o teria
+        # perdido em silêncio, e a consulta mais quente do produto passaria a
+        # varrer a tabela. Declarado aqui, o modelo volta a ser a única fonte
+        # da verdade do schema.
+        Index("ix_plantoes_usuario_data_inicio", "usuario_id", "data_inicio"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)

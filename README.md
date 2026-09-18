@@ -35,6 +35,29 @@ API para armazenar usuários e seus plantões com:
    pip install -r requirements.txt -r requirements-dev.txt
    ```
 
+## Migrar o banco
+
+O schema é versionado pelo Alembic. Rode ANTES de subir a aplicação, e a cada
+atualização do código:
+
+```bash
+alembic upgrade head
+```
+
+A aplicação confere isso na inicialização: em produção ela recusa subir se o
+banco não estiver na última migração, porque uma coluna que falta não dá erro
+na hora — aparece como UndefinedColumn no meio de uma requisição do usuário.
+Fora de produção, apenas avisa.
+
+Para criar uma migração depois de alterar `app/models.py`:
+
+```bash
+alembic revision --autogenerate -m "descrição curta"
+```
+
+Revise o arquivo gerado antes de aplicar: o autogenerate acerta colunas e
+índices, mas não adivinha renomeação nem migração de dados.
+
 ## Rodar
 ```bash
 uvicorn app.main:app --reload

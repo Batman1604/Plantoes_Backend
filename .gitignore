@@ -35,3 +35,7 @@ test_*.db
 # OS
 .DS_Store
 Thumbs.db
+
+# Cache do Alembic
+migrations/__pycache__/
+migrations/versions/__pycache__/
