@@ -145,17 +145,13 @@ def get_current_user(
     return user
 
 
-def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
-    """Serializa o contrato de plantão, incluindo o vínculo de troca quando existir."""
+def _serializar_plantao(plantao: Plantao, troca: Troca | None) -> PlantaoResponse:
+    """Monta o contrato de plantão a partir de uma troca JÁ resolvida.
+
+    Separado da busca para que a listagem possa resolver todas as trocas de uma
+    vez — ver _plantoes_com_troca.
+    """
     result = PlantaoResponse.model_validate(plantao).model_dump()
-    troca = db.scalar(
-        select(Troca).where(
-            or_(
-                Troca.plantao_id_transferido == plantao.id,
-                Troca.plantao_id_recebido == plantao.id,
-            )
-        ).order_by(Troca.id.desc())
-    )
     if troca is None:
         return PlantaoResponse.model_validate(result)
 
@@ -182,6 +178,57 @@ def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
             "plantao_relacionado_id": troca.plantao_id_transferido,
         }
     return PlantaoResponse.model_validate(result)
+
+
+def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
+    """Serializa UM plantão, buscando a troca vinculada. Para listas, use
+    _plantoes_com_troca: esta função faz uma consulta por chamada."""
+    troca = db.scalar(
+        select(Troca).where(
+            or_(
+                Troca.plantao_id_transferido == plantao.id,
+                Troca.plantao_id_recebido == plantao.id,
+            )
+        ).order_by(Troca.id.desc())
+    )
+    return _serializar_plantao(plantao, troca)
+
+
+def _plantoes_com_troca(db: Session, plantoes: list[Plantao]) -> list[PlantaoResponse]:
+    """Serializa uma lista de plantões com UMA consulta de trocas, não uma por
+    plantão.
+
+    A listagem chamava _plantao_com_troca em laço, o que dava uma consulta por
+    plantão: medido em 205 consultas para 200 plantões em GET /api/plantoes, e
+    o mesmo padrão em GET /api/sync/pull — que o cliente chama de forma
+    recorrente (ver auditoria A-03).
+    """
+    if not plantoes:
+        return []
+
+    ids = [p.id for p in plantoes]
+    # Ordenado por id crescente para que, ao montar o dicionário, a troca de id
+    # MAIOR sobrescreva a menor — mesmo resultado do order_by(id.desc()) seguido
+    # de "pega o primeiro" que a versão por plantão fazia.
+    trocas = db.scalars(
+        select(Troca)
+        .where(
+            or_(
+                Troca.plantao_id_transferido.in_(ids),
+                Troca.plantao_id_recebido.in_(ids),
+            )
+        )
+        .order_by(Troca.id.asc())
+    ).all()
+
+    troca_por_plantao: dict[int, Troca] = {}
+    for troca in trocas:
+        if troca.plantao_id_transferido is not None:
+            troca_por_plantao[troca.plantao_id_transferido] = troca
+        if troca.plantao_id_recebido is not None:
+            troca_por_plantao[troca.plantao_id_recebido] = troca
+
+    return [_serializar_plantao(p, troca_por_plantao.get(p.id)) for p in plantoes]
 
 
 @router.post(
@@ -1436,7 +1483,7 @@ def listar_plantoes(
     return APIResponse(
         success=True,
         message="Plantões listados com sucesso.",
-        data=[_plantao_com_troca(db, p) for p in plantoes],
+        data=_plantoes_com_troca(db, plantoes),
     )
 
 

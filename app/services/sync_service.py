@@ -49,7 +49,7 @@ from app.schemas.plantao_schema import (
 # valores padrão e são ignorados quando db/current_user são passados explicitamente. Isso
 # evita reimplementar essas regras (e desalinhar sync do restante do sistema).
 from app.routes.plantao_routes import (
-    _plantao_com_troca,
+    _plantoes_com_troca,
     _plantao_recebido_troca_resumo,
     _plantao_troca_resumo,
     _serializar_amigo_configuracao,
@@ -641,7 +641,7 @@ class SyncService:
         return SyncPullResponse(
             servidor_timestamp=datetime.now(UTC),
             locais=[LocalResponse.model_validate(l) for l in locais_alterados],
-            plantoes=[_plantao_com_troca(db, p) for p in plantoes_alterados],
+            plantoes=_plantoes_com_troca(db, plantoes_alterados),
             amizades=itens_amizade,
             amigo_configuracoes=[_serializar_amigo_configuracao(c) for c in configs_alteradas],
             solicitacoes_troca=itens_solicitacao,
