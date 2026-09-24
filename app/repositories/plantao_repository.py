@@ -5,6 +5,7 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.database import instante_para_o_banco
 from app.core.security import hash_password, verify_password
 from app.models import (
     Amizade,
@@ -273,9 +274,13 @@ class LocalRepository:
         return db.scalar(select(Local).where(Local.id == local_id))
 
     @staticmethod
-    def list_by_user(db: Session, usuario_id: int) -> list[Local]:
-        stmt = select(Local).where(Local.usuario_id == usuario_id).order_by(Local.data_inicio.desc())
-        return db.scalars(stmt).all()
+    def list_by_user(db: Session, usuario_id: int, desde: datetime | None = None) -> list[Local]:
+        # `desde` filtra em SQL, não em Python: sem isso o pull carregava todas as
+        # linhas do usuário a cada chamada, mesmo quando nada tinha mudado (A-04).
+        stmt = select(Local).where(Local.usuario_id == usuario_id)
+        if desde is not None:
+            stmt = stmt.where(Local.atualizado_em > instante_para_o_banco(desde))
+        return db.scalars(stmt.order_by(Local.data_inicio.desc())).all()
 
     @staticmethod
     def list_all(db: Session) -> list[Local]:
@@ -359,15 +364,21 @@ class PlantaoRepository:
         return plantao
 
     @staticmethod
-    def list_by_user(db: Session, usuario_id: int) -> list[Plantao]:
-        """Retorna todos os plantões do usuário, incluindo os transferidos para histórico."""
+    def list_by_user(db: Session, usuario_id: int, desde: datetime | None = None) -> list[Plantao]:
+        """Retorna os plantões do usuário, incluindo os transferidos para histórico.
+
+        Com `desde`, apenas os alterados depois desse instante.
+        """
+        # `desde` filtra em SQL, não em Python: sem isso o pull carregava todas as
+        # linhas do usuário a cada chamada, mesmo quando nada tinha mudado (A-04).
         stmt = (
             select(Plantao)
             .where(Plantao.usuario_id == usuario_id)
             .options(selectinload(Plantao.bonificacoes), selectinload(Plantao.local))
-            .order_by(Plantao.id.desc())
         )
-        return db.scalars(stmt).all()
+        if desde is not None:
+            stmt = stmt.where(Plantao.atualizado_em > instante_para_o_banco(desde))
+        return db.scalars(stmt.order_by(Plantao.id.desc())).all()
 
     @staticmethod
     def list_by_user_e_locais(db: Session, usuario_id: int, local_ids: list[int]) -> list[Plantao]:
@@ -770,12 +781,22 @@ class BonificacaoRepository:
         return list(db.scalars(select(Bonificacao).where(Bonificacao.plantao_id == plantao_id)).all())
 
     @staticmethod
-    def list_by_usuario(db: Session, usuario_id: int) -> list[Bonificacao]:
-        return list(db.scalars(
+    def list_by_usuario(db: Session, usuario_id: int, desde: datetime | None = None) -> list[Bonificacao]:
+        # `desde` filtra em SQL, não em Python: sem isso o pull carregava todas as
+        # linhas do usuário a cada chamada, mesmo quando nada tinha mudado (A-04).
+        stmt = (
             select(Bonificacao)
             .join(Plantao, Bonificacao.plantao_id == Plantao.id)
             .where(Plantao.usuario_id == usuario_id)
-        ).all())
+        )
+        if desde is not None:
+            # atualizado_em é nulável aqui; linha sem data nunca conta como alterada,
+            # que é o mesmo que o filtro em Python fazia.
+            stmt = stmt.where(
+                Bonificacao.atualizado_em.isnot(None),
+                Bonificacao.atualizado_em > instante_para_o_banco(desde),
+            )
+        return list(db.scalars(stmt).all())
 
     @staticmethod
     def get_by_id(db: Session, bonificacao_id: int) -> Bonificacao | None:
@@ -825,12 +846,13 @@ class TrocaRepository:
         return list(db.scalars(select(Troca).where(Troca.local_id == local_id)).all())
 
     @staticmethod
-    def list_by_usuario(db: Session, usuario_id: int) -> list[Troca]:
-        return list(db.scalars(
-            select(Troca)
-            .where(Troca.usuario_id == usuario_id)
-            .order_by(Troca.id.desc())
-        ).all())
+    def list_by_usuario(db: Session, usuario_id: int, desde: datetime | None = None) -> list[Troca]:
+        # `desde` filtra em SQL, não em Python: sem isso o pull carregava todas as
+        # linhas do usuário a cada chamada, mesmo quando nada tinha mudado (A-04).
+        stmt = select(Troca).where(Troca.usuario_id == usuario_id)
+        if desde is not None:
+            stmt = stmt.where(Troca.atualizado_em > instante_para_o_banco(desde))
+        return list(db.scalars(stmt.order_by(Troca.id.desc())).all())
 
     @staticmethod
     def get_by_id(db: Session, troca_id: int) -> Troca | None:
@@ -1177,10 +1199,16 @@ class SyncRepository:
         )
 
     @staticmethod
-    def list_exclusoes(db: Session, usuario_id: int) -> list[SyncExclusao]:
-        """Retorna todos os tombstones do usuário — o filtro por `since` é feito em
-        SyncService.pull (em Python, normalizado para UTC; ver _as_utc lá)."""
+    def list_exclusoes(db: Session, usuario_id: int, desde: datetime | None = None) -> list[SyncExclusao]:
+        """Tombstones do usuário; com `desde`, só os posteriores a esse instante.
+
+        Esta é a lista que mais se beneficia do filtro em SQL: tombstones nunca
+        são removidos, então a tabela cresce para sempre e era carregada inteira
+        a cada pull (ver auditoria A-04 e A-05).
+        """
         stmt = select(SyncExclusao).where(SyncExclusao.usuario_id == usuario_id)
+        if desde is not None:
+            stmt = stmt.where(SyncExclusao.deletado_em > instante_para_o_banco(desde))
         return list(db.scalars(stmt.order_by(SyncExclusao.deletado_em.asc())).all())
 
     @staticmethod

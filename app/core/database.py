@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -38,6 +40,30 @@ engine = create_engine(
     ),
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+def instante_para_o_banco(valor: datetime | None) -> datetime | None:
+    """Ajusta um instante UTC ao formato que o dialeto em uso guarda nas colunas.
+
+    Existe para permitir filtrar por data em SQL. As colunas são declaradas
+    DateTime(timezone=True): o Postgres devolve e compara valores com fuso, mas
+    o SQLite — usado pela suíte de testes — não tem tipo de data e guarda tudo
+    naive. Comparar um valor com fuso contra uma coluna naive falha ou dá
+    resultado errado, dependendo do caminho.
+
+    Era justamente essa divergência que levava SyncService.pull a carregar todas
+    as linhas do usuário e filtrar em Python. O custo disso cresce com o
+    histórico inteiro, mesmo quando nada mudou: medido em 22 ms para 300
+    plantões e 52 ms para 1.500, devolvendo zero itens nos dois casos (ver
+    auditoria A-04).
+    """
+    if valor is None:
+        return None
+    if valor.tzinfo is None:
+        valor = valor.replace(tzinfo=UTC)
+    if engine.dialect.name == "postgresql":
+        return valor
+    return valor.astimezone(UTC).replace(tzinfo=None)
 
 
 def get_db():

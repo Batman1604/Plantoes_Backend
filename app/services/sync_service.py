@@ -556,18 +556,25 @@ class SyncService:
 
     @staticmethod
     def pull(db: Session, current_user: User, desde: datetime | None) -> SyncPullResponse:
-        # Filtragem em Python (não em SQL) de propósito: compara datetimes já normalizados
-        # para UTC via _as_utc, evitando divergência entre o dialect de produção (Postgres,
-        # aware) e o de teste/alguns ambientes de desenvolvimento (SQLite, naive) — ver
-        # _as_utc para detalhes. Os volumes por usuário aqui são naturalmente pequenos.
+        # O filtro por `desde` acontece em SQL, não mais em Python. A versão
+        # anterior carregava TODAS as linhas do usuário em toda chamada e
+        # descartava em memória — custo proporcional ao histórico inteiro mesmo
+        # quando nada tinha mudado, e o cliente chama isto a cada poucos minutos
+        # (ver auditoria A-04). A divergência de fuso entre Postgres e SQLite,
+        # que era o motivo original de filtrar em Python, é resolvida por
+        # instante_para_o_banco, no repositório.
         desde = _as_utc(desde)
 
-        locais = LocalRepository.list_by_user(db, current_user.id)
-        locais_alterados = [l for l in locais if desde is None or _as_utc(l.atualizado_em) > desde]
+        locais_alterados = LocalRepository.list_by_user(db, current_user.id, desde=desde)
+        plantoes_alterados = PlantaoRepository.list_by_user(db, current_user.id, desde=desde)
+        trocas_alteradas = TrocaRepository.list_by_usuario(db, current_user.id, desde=desde)
+        bonificacoes_alteradas = BonificacaoRepository.list_by_usuario(db, current_user.id, desde=desde)
+        exclusoes = SyncRepository.list_exclusoes(db, current_user.id, desde=desde)
 
-        plantoes = PlantaoRepository.list_by_user(db, current_user.id)
-        plantoes_alterados = [p for p in plantoes if desde is None or _as_utc(p.atualizado_em) > desde]
-
+        # Estas três seguem filtradas em Python porque a condição envolve DUAS
+        # colunas (criado_em/atualizado_em; criado_em/respondido_em), e são
+        # listas naturalmente curtas: amizades e configurações por amigo não
+        # crescem com o uso do app, ao contrário de plantões e tombstones.
         amizades = AmizadeRepository.list_by_usuario(db, current_user.id)
         amizades_alteradas = [
             a for a in amizades
@@ -582,25 +589,6 @@ class SyncService:
             s for s in solicitacoes
             if desde is None or _as_utc(s.criado_em) > desde
             or (s.respondido_em is not None and _as_utc(s.respondido_em) > desde)
-        ]
-
-        trocas = TrocaRepository.list_by_usuario(db, current_user.id)
-        # Bug corrigido: filtrar por criado_em ignorava qualquer alteração feita depois da
-        # criação (nunca chegava a outro dispositivo) — atualizado_em é a mesma coluna
-        # usada como cursor de comparação em locais/plantões, e sempre está populada (default
-        # na criação, backfill de criado_em para linhas antigas na migração).
-        trocas_alteradas = [
-            t for t in trocas if desde is None or _as_utc(t.atualizado_em) > desde
-        ]
-
-        bonificacoes = BonificacaoRepository.list_by_usuario(db, current_user.id)
-        bonificacoes_alteradas = [
-            b for b in bonificacoes if desde is None or (b.atualizado_em is not None and _as_utc(b.atualizado_em) > desde)
-        ]
-
-        exclusoes = [
-            e for e in SyncRepository.list_exclusoes(db, current_user.id)
-            if desde is None or _as_utc(e.deletado_em) > desde
         ]
 
         itens_amizade = []
