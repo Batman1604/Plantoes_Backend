@@ -1128,11 +1128,16 @@ def backfill_financeiro() -> None:
     from app.repositories.plantao_repository import FinanceiroRepository
 
     with SessionLocal() as db:
+        # mes/ano aqui são sempre o mês de PAGAMENTO (ver
+        # FinanceiroRepository.sync_mes), não o mês em que o plantão foi
+        # trabalhado — cai pra data_inicio só pra plantões sem
+        # pagamento_plantao calculado ainda.
+        data_pagamento = func.coalesce(models.Plantao.pagamento_plantao, models.Plantao.data_inicio)
         combos = db.execute(
             select(
                 models.Plantao.local_id,
-                func.extract("month", models.Plantao.data_inicio).label("mes"),
-                func.extract("year", models.Plantao.data_inicio).label("ano"),
+                func.extract("month", data_pagamento).label("mes"),
+                func.extract("year", data_pagamento).label("ano"),
             ).distinct()
         ).fetchall()
 

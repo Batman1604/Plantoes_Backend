@@ -25,14 +25,19 @@ class TestPagamentoEHorario(unittest.TestCase):
         )
         self.assertEqual(data_pagamento, date(2026, 5, 7))
 
-    def test_calcula_data_pagamento_no_mes_de_fechamento_quando_dia_util_apos_fechamento(self):
+    def test_pagamento_nunca_cai_no_mes_de_fechamento_mesmo_com_dia_util_apos_fechamento(self):
+        # Ciclo 21/abr → 20/mai cobre o plantão de 22/04 (cruza mês: fecha em maio).
+        # Pagamento é sempre no mês SEGUINTE ao fechamento (maio) — ou seja, junho —
+        # nunca no próprio mês de fechamento, mesmo quando o dia útil pedido (22º)
+        # cai depois do dia de fechamento dentro do mês de fechamento.
         data_pagamento = PagamentoService.calcular_data_pagamento_plantao(
             data_plantao=date(2026, 4, 22),
             indice_dia_pagamento=22,
             data_inicio_ciclo=date(2026, 4, 21),
             data_final_ciclo=date(2026, 5, 20),
         )
-        self.assertEqual(data_pagamento, date(2026, 5, 29))
+        self.assertEqual(data_pagamento.month, 6)
+        self.assertEqual(data_pagamento, date(2026, 6, 30))
 
     def test_permite_plantao_virando_a_madrugada(self):
         payload = PlantaoCreate(

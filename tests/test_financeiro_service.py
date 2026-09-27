@@ -36,7 +36,8 @@ class TestFinanceiroService(unittest.TestCase):
             usuario_id=1,
             local_id=1,
             valor=Decimal("100.50"),
-            data=date(2000, 1, 10),
+            data_inicio=date(2000, 1, 10),
+            data_fim=date(2000, 1, 10),
             horario_inicio=time(10, 0),
             horario_fim=time(12, 0),
         )
@@ -44,7 +45,8 @@ class TestFinanceiroService(unittest.TestCase):
             usuario_id=1,
             local_id=1,
             valor=Decimal("200.00"),
-            data=date(2000, 1, 11),
+            data_inicio=date(2000, 1, 11),
+            data_fim=date(2000, 1, 11),
             horario_inicio=time(11, 0),
             horario_fim=time(13, 0),
         )
@@ -52,7 +54,8 @@ class TestFinanceiroService(unittest.TestCase):
             usuario_id=2,
             local_id=1,
             valor=Decimal("50.00"),
-            data=date(2000, 1, 11),
+            data_inicio=date(2000, 1, 11),
+            data_fim=date(2000, 1, 11),
             horario_inicio=time(11, 0),
             horario_fim=time(13, 0),
         )
@@ -67,7 +70,8 @@ class TestFinanceiroService(unittest.TestCase):
             usuario_id=1,
             local_id=1,
             valor=Decimal("120.00"),
-            data=date(2000, 1, 10),
+            data_inicio=date(2000, 1, 10),
+            data_fim=date(2000, 1, 10),
             horario_inicio=time(10, 0),
             horario_fim=time(12, 0),
         )
@@ -75,7 +79,8 @@ class TestFinanceiroService(unittest.TestCase):
             usuario_id=1,
             local_id=1,
             valor=Decimal("180.00"),
-            data=date(2000, 1, 11),
+            data_inicio=date(2000, 1, 11),
+            data_fim=date(2000, 1, 11),
             horario_inicio=time(11, 0),
             horario_fim=time(13, 0),
         )
@@ -83,7 +88,8 @@ class TestFinanceiroService(unittest.TestCase):
             usuario_id=2,
             local_id=1,
             valor=Decimal("75.00"),
-            data=date(2000, 1, 11),
+            data_inicio=date(2000, 1, 11),
+            data_fim=date(2000, 1, 11),
             horario_inicio=time(11, 0),
             horario_fim=time(13, 0),
         )

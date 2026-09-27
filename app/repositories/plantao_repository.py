@@ -679,13 +679,17 @@ class CadastroPendenteRepository:
 class FinanceiroRepository:
     @staticmethod
     def sync_mes(db: Session, local_id: int, mes: int, ano: int) -> None:
-        """Recalcula e persiste o total financeiro de um local/mês a partir dos plantões e bonificações."""
+        """Recalcula e persiste o total financeiro de um local/mês a partir dos plantões e
+        bonificações — `mes`/`ano` aqui são sempre o MÊS DE PAGAMENTO (ver
+        PaymentScheduleCalculator no app: mês seguinte ao fechamento do ciclo), não o mês em
+        que o plantão foi trabalhado. Os chamadores já passam pagamento_plantao.month/year."""
+        data_pagamento = func.coalesce(Plantao.pagamento_plantao, Plantao.data_inicio)
         total_plantoes = db.scalar(
             select(func.coalesce(func.sum(Plantao.valor), 0))
             .where(
                 Plantao.local_id == local_id,
-                func.extract("month", Plantao.data_inicio) == mes,
-                func.extract("year", Plantao.data_inicio) == ano,
+                func.extract("month", data_pagamento) == mes,
+                func.extract("year", data_pagamento) == ano,
             )
         ) or 0
 
@@ -694,8 +698,8 @@ class FinanceiroRepository:
             .join(Plantao, Plantao.id == Bonificacao.plantao_id)
             .where(
                 Plantao.local_id == local_id,
-                func.extract("month", Plantao.data_inicio) == mes,
-                func.extract("year", Plantao.data_inicio) == ano,
+                func.extract("month", data_pagamento) == mes,
+                func.extract("year", data_pagamento) == ano,
             )
         ) or 0
 

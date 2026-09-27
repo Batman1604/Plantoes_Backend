@@ -82,40 +82,23 @@ class PagamentoService:
             elif data_plantao.day < dia_inicio_mes_plantao:
                 ano_fechamento, mes_fechamento = PagamentoService._ajustar_ano_mes(ano_fechamento, mes_fechamento, -1)
 
-        dia_final_mes_fechamento = PagamentoService._dia_do_ciclo_no_mes(ano_fechamento, mes_fechamento, dia_final)
-        data_fechamento = PagamentoService._data_com_dia_do_mes(
-            ano_fechamento,
-            mes_fechamento,
-            dia_final_mes_fechamento,
-        )
-
+        # Pagamento é sempre no mês SEGUINTE ao fechamento do ciclo — nunca no
+        # mesmo mês (regra de negócio: o pagamento referente aos plantões de
+        # um mês cai no mês que vem, sem exceção). Mesma regra do
+        # PaymentScheduleCalculator no app (ver calculatePaymentDate).
+        ano_pagamento, mes_pagamento = PagamentoService._ajustar_ano_mes(ano_fechamento, mes_fechamento, 1)
         if util_corrido:
             data_pagamento = PagamentoService.calcular_data_dia_util_do_mes(
-                ano_fechamento,
-                mes_fechamento,
+                ano_pagamento,
+                mes_pagamento,
                 indice_dia_pagamento,
             )
         else:
             data_pagamento = PagamentoService._data_com_dia_do_mes(
-                ano_fechamento,
-                mes_fechamento,
+                ano_pagamento,
+                mes_pagamento,
                 indice_dia_pagamento,
             )
-
-        if data_pagamento <= data_fechamento:
-            ano_pagamento, mes_pagamento = PagamentoService._ajustar_ano_mes(ano_fechamento, mes_fechamento, 1)
-            if util_corrido:
-                data_pagamento = PagamentoService.calcular_data_dia_util_do_mes(
-                    ano_pagamento,
-                    mes_pagamento,
-                    indice_dia_pagamento,
-                )
-            else:
-                data_pagamento = PagamentoService._data_com_dia_do_mes(
-                    ano_pagamento,
-                    mes_pagamento,
-                    indice_dia_pagamento,
-                )
 
         return data_pagamento
 

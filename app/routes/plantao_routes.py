@@ -145,6 +145,16 @@ def get_current_user(
     return user
 
 
+def _mes_ano_pagamento(plantao: Plantao) -> tuple[int, int]:
+    """Mês/ano usados para indexar o registro financeiro de um plantão —
+    sempre o mês de PAGAMENTO (mês seguinte ao fechamento do ciclo, ver
+    PaymentScheduleCalculator no app), nunca o mês em que o plantão foi
+    trabalhado. Cai para data_inicio só pra plantões antigos sem
+    pagamento_plantao calculado."""
+    referencia = plantao.pagamento_plantao or plantao.data_inicio
+    return referencia.month, referencia.year
+
+
 def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
     """Serializa o contrato de plantão, incluindo o vínculo de troca quando existir."""
     result = PlantaoResponse.model_validate(plantao).model_dump()
@@ -906,7 +916,7 @@ def criar_bonificacao(
     if plantao is None:
         raise HTTPException(status_code=404, detail="Plantão não encontrado.")
     bonificacao = BonificacaoRepository.create(db, payload)
-    FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
+    FinanceiroRepository.sync_mes(db, plantao.local_id, *_mes_ano_pagamento(plantao))
     return APIResponse(success=True, message="Bonificação criada com sucesso.", data=BonificacaoResponse.model_validate(bonificacao))
 
 
@@ -947,7 +957,7 @@ def deletar_bonificacao(
         raise HTTPException(status_code=403, detail="Sem permissão para deletar esta bonificação.")
     SyncRepository.registrar_exclusao(db, current_user.id, "bonificacao", bonificacao.id, bonificacao.uuid_cliente)
     BonificacaoRepository.delete(db, bonificacao_id)
-    FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
+    FinanceiroRepository.sync_mes(db, plantao.local_id, *_mes_ano_pagamento(plantao))
     return APIResponse(success=True, message="Bonificação deletada com sucesso.", data=None)
 
 
@@ -973,7 +983,7 @@ def atualizar_bonificacao(
     if not dados:
         raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
     bonificacao = BonificacaoRepository.update(db, bonificacao_id, **dados)
-    FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
+    FinanceiroRepository.sync_mes(db, plantao.local_id, *_mes_ano_pagamento(plantao))
     return APIResponse(success=True, message="Bonificação atualizada com sucesso.", data=BonificacaoResponse.model_validate(bonificacao))
 
 
@@ -1415,7 +1425,7 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
                 uuid_cliente=payload.uuid_cliente,
             ),
         )
-        FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
+        FinanceiroRepository.sync_mes(db, plantao.local_id, *_mes_ano_pagamento(plantao))
         logger.info("Plantão criado para usuário %s no local %s", current_user.email, payload.local_id)
         return APIResponse(
             success=True,
@@ -1522,7 +1532,7 @@ def atualizar_plantao(
             result["horario_fim"] = dados["data_fim"].time()
         return result
 
-    _meses_sync: set[tuple[int, int, int]] = {(plantao_atual.local_id, plantao_atual.data_inicio.month, plantao_atual.data_inicio.year)}
+    _meses_sync: set[tuple[int, int, int]] = {(plantao_atual.local_id, *_mes_ano_pagamento(plantao_atual))}
     _novos_plantoes_criados: list = []
 
     try:
@@ -1533,7 +1543,7 @@ def atualizar_plantao(
         else:
             plantoes_futuros = PlantaoRepository.list_futuros_da_serie(db, plantao_atual)
             for _p_fut in plantoes_futuros:
-                _meses_sync.add((_p_fut.local_id, _p_fut.data_inicio.month, _p_fut.data_inicio.year))
+                _meses_sync.add((_p_fut.local_id, *_mes_ano_pagamento(_p_fut)))
             if not plantoes_futuros:
                 raise HTTPException(status_code=404, detail="Série de plantões não encontrada")
 
@@ -1692,9 +1702,9 @@ def atualizar_plantao(
         raise HTTPException(status_code=500, detail="Erro ao atualizar plantão") from exc
 
     logger.info("Plantão %s atualizado por %s", plantao_id, current_user.email)
-    _meses_sync.add((plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year))
+    _meses_sync.add((plantao.local_id, *_mes_ano_pagamento(plantao)))
     for _p_novo in _novos_plantoes_criados:
-        _meses_sync.add((_p_novo.local_id, _p_novo.data_inicio.month, _p_novo.data_inicio.year))
+        _meses_sync.add((_p_novo.local_id, *_mes_ano_pagamento(_p_novo)))
     for _local_s, _mes_s, _ano_s in _meses_sync:
         FinanceiroRepository.sync_mes(db, _local_s, _mes_s, _ano_s)
     return APIResponse(
@@ -1766,7 +1776,7 @@ def deletar_plantao(
         # transferido=False, então plantões já transferidos ficam de fora.
         plantoes_para_excluir = PlantaoRepository.list_futuros_da_serie(db, plantao_del)
 
-    _meses_sync = {(p.local_id, p.data_inicio.month, p.data_inicio.year) for p in plantoes_para_excluir}
+    _meses_sync = {(p.local_id, *_mes_ano_pagamento(p)) for p in plantoes_para_excluir}
     for p in plantoes_para_excluir:
         PlantaoRepository.delete_by_user(db, p.id, current_user.id)
     for local_id, mes, ano in _meses_sync:

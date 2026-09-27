@@ -22,6 +22,15 @@ def _to_decimal(value) -> Decimal:
     return Decimal(str(value)) if value is not None else Decimal("0")
 
 
+def _data_pagamento():
+    """Data usada para agrupar/filtrar por mês nos resumos financeiros —
+    SEMPRE a data de pagamento (mês seguinte ao fechamento do ciclo, ver
+    PaymentScheduleCalculator no app), nunca a data em que o plantão foi
+    trabalhado. Cai para data_inicio só para plantões antigos que nunca
+    tiveram pagamento_plantao calculado (coluna nullable)."""
+    return func.coalesce(Plantao.pagamento_plantao, Plantao.data_inicio)
+
+
 class FinanceiroService:
     @staticmethod
     def calcular_total_mensal(db: Session, usuario_id: int, mes: int, ano: int) -> dict:
@@ -36,8 +45,8 @@ class FinanceiroService:
             .where(
                 Plantao.usuario_id == usuario_id,
                 Plantao.transferido.is_(False),
-                extract("month", Plantao.data_inicio) == mes,
-                extract("year", Plantao.data_inicio) == ano,
+                extract("month", _data_pagamento()) == mes,
+                extract("year", _data_pagamento()) == ano,
             )
         )
         r = db.execute(stmt).one()
@@ -64,7 +73,7 @@ class FinanceiroService:
                 Plantao.usuario_id == usuario_id,
                 Plantao.transferido.is_(False),
                 Plantao.recebido_via_transferencia.is_(False),
-                extract("year", Plantao.data_inicio) == ano,
+                extract("year", _data_pagamento()) == ano,
             )
         )
         r = db.execute(stmt).one()
@@ -82,7 +91,7 @@ class FinanceiroService:
         bon = _bon_subquery()
         stmt = (
             select(
-                extract("month", Plantao.data_inicio).label("mes"),
+                extract("month", _data_pagamento()).label("mes"),
                 func.coalesce(func.sum(Plantao.valor), 0).label("total"),
                 func.coalesce(func.sum(bon.c.total_bon), 0).label("total_bonificacoes"),
                 func.coalesce(func.count(Plantao.id), 0).label("quantidade_plantoes"),
@@ -92,9 +101,9 @@ class FinanceiroService:
                 Plantao.usuario_id == usuario_id,
                 Plantao.transferido.is_(False),
                 Plantao.recebido_via_transferencia.is_(False),
-                extract("year", Plantao.data_inicio) == ano,
+                extract("year", _data_pagamento()) == ano,
             )
-            .group_by(extract("month", Plantao.data_inicio))
+            .group_by(extract("month", _data_pagamento()))
         )
 
         rows = {int(r.mes): r for r in db.execute(stmt).all()}
@@ -137,8 +146,8 @@ class FinanceiroService:
                 Plantao.local_id == local_id,
                 Plantao.transferido.is_(False),
                 Plantao.recebido_via_transferencia.is_(False),
-                extract("month", Plantao.data_inicio) == mes,
-                extract("year", Plantao.data_inicio) == ano,
+                extract("month", _data_pagamento()) == mes,
+                extract("year", _data_pagamento()) == ano,
             )
         )
         r = db.execute(stmt).one()
