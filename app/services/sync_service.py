@@ -43,25 +43,27 @@ from app.schemas.plantao_schema import (
     TrocaResponse,
 )
 
-# Reutiliza a lógica de negócio já validada dos endpoints normais (limite do plano free,
-# recálculo de pagamento, série recorrente, etc.) chamando as próprias
-# funções de rota como funções Python comuns — os parâmetros com Depends(...) são apenas
-# valores padrão e são ignorados quando db/current_user são passados explicitamente. Isso
-# evita reimplementar essas regras (e desalinhar sync do restante do sistema).
+from app.services.erros import ErroDeDominio
+from app.services.local_service import LocalService
+
+# As entidades ainda não extraídas para um serviço próprio continuam sendo
+# atendidas chamando os handlers de rota como funções Python comuns. A intenção
+# original — não reimplementar a regra de negócio e não desalinhar o sync do
+# resto do sistema — é correta; o meio é que está invertido, com a camada de
+# serviço dependendo da de apresentação (ver auditoria A-13). `Local` já migrou
+# para LocalService acima; plantão, troca e bonificação seguem por aqui até
+# receberem o mesmo tratamento.
 from app.routes.plantao_routes import (
     _plantoes_com_troca,
     _plantao_recebido_troca_resumo,
     _plantao_troca_resumo,
     _serializar_amigo_configuracao,
     atualizar_bonificacao,
-    atualizar_local,
     atualizar_plantao,
     criar_bonificacao,
-    criar_local,
     criar_plantao,
     criar_troca,
     deletar_bonificacao,
-    deletar_local,
     deletar_plantao,
     deletar_troca,
 )
@@ -79,7 +81,7 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value
 
 
-def _erro_de_excecao(exc: HTTPException | IntegrityError) -> tuple[str, int]:
+def _erro_de_excecao(exc: "HTTPException | IntegrityError | ErroDeDominio") -> tuple[str, int]:
     """Extrai (mensagem, status_code) de uma falha ao aplicar um item do lote de push.
     IntegrityError não tem .detail/.status_code (não é um HTTPException) — cobre
     principalmente uma corrida de uuid_cliente duplicado entre dois pushes quase
@@ -87,6 +89,8 @@ def _erro_de_excecao(exc: HTTPException | IntegrityError) -> tuple[str, int]:
     tentativa original ainda em voo). Sempre devolve algo serializável em SyncErro, para
     que ESTE item vire um erro isolado (com retry pelo próprio SyncEngine no cliente) em
     vez de derrubar o lote inteiro com um 500 — ver SyncRoutes.push."""
+    if isinstance(exc, ErroDeDominio):
+        return exc.mensagem, exc.status_http
     if isinstance(exc, HTTPException):
         return str(exc.detail), exc.status_code
     return "Conflito ao sincronizar este item (tente novamente).", 409
@@ -156,8 +160,8 @@ class SyncService:
                 ))
                 return
             try:
-                deletar_local(local_id=existente.id, db=db, current_user=current_user)
-            except (HTTPException, IntegrityError) as exc:
+                LocalService.deletar(db, current_user, existente.id)
+            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -188,14 +192,14 @@ class SyncService:
                 uuid_cliente=item.uuid_cliente,
             )
             try:
-                resposta = criar_local(payload=payload, db=db, current_user=current_user)
-            except (HTTPException, IntegrityError) as exc:
+                criado = LocalService.criar(db, current_user, payload)
+            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
-            uuid_para_local_id[item.uuid_cliente] = resposta.data.id
-            resultado.locais_criados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
+            uuid_para_local_id[item.uuid_cliente] = criado.id
+            resultado.locais_criados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=criado.id))
             return
 
         uuid_para_local_id[item.uuid_cliente] = existente.id
@@ -217,8 +221,8 @@ class SyncService:
             endereco_local=item.endereco_local,
         )
         try:
-            atualizar_local(local_id=existente.id, payload=payload, db=db, current_user=current_user)
-        except (HTTPException, IntegrityError) as exc:
+            LocalService.atualizar(db, current_user, existente.id, payload)
+        except (ErroDeDominio, HTTPException, IntegrityError) as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))

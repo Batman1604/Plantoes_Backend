@@ -68,7 +68,6 @@ from app.schemas.plantao_schema import (
     UpgradeWebhookRequest,
     IniciarCadastroRequest,
     LocalCreate,
-    LocalCreateWithUsuario,
     LocalResponse,
     LocalUpdate,
     PlantaoCreate,
@@ -109,12 +108,23 @@ from app.core.config import settings
 from app.services.oauth_service import OAuthService, OAuthTokenError, parse_bool_claim
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 from app.services.plano_service import PlanoService
+from app.services.erros import ErroDeDominio
+from app.services.local_service import LocalService
 from app.services.sms_service import SmsService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["plantoes"])
 security = HTTPBearer(auto_error=False)
+
+
+def http_de_erro_de_dominio(erro: ErroDeDominio) -> HTTPException:
+    """Traduz uma recusa da regra de negócio para HTTP.
+
+    É o único ponto onde erro de domínio vira status HTTP. Os serviços não
+    conhecem FastAPI; as rotas não conhecem regra de negócio.
+    """
+    return HTTPException(status_code=erro.status_http, detail=erro.mensagem)
 
 
 def unauthorized_exception() -> HTTPException:
@@ -1226,10 +1236,7 @@ def upgrade_usuario(
     description="Cria um local para o usuário autenticado. O usuário não pode ser informado no corpo da requisição.",
 )
 def criar_local(payload: LocalCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    local_data = payload.model_dump()
-    local_data["usuario_id"] = current_user.id
-    local = LocalRepository.create(db, LocalCreateWithUsuario.model_validate(local_data))
-    logger.info("Local criado para usuário %s: %s", current_user.email, local.nome_local)
+    local = LocalService.criar(db, current_user, payload)
     return APIResponse(success=True, message="Local criado com sucesso.", data=LocalResponse.model_validate(local))
 
 
@@ -1259,55 +1266,18 @@ def atualizar_local(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    dados_atualizacao = payload.model_dump(exclude_unset=True)
-    if not dados_atualizacao:
-        raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
-
-    local_atual = LocalRepository.get_by_id(db, local_id)
-    if local_atual is None or local_atual.usuario_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Local não encontrado")
-    dia_pagamento_anterior = local_atual.dia_pagamento
-    dia_pagamento_novo = dados_atualizacao.get("dia_pagamento", dia_pagamento_anterior)
-    util_corrido_anterior = local_atual.util_corrido
-    util_corrido_novo = dados_atualizacao.get("util_corrido", util_corrido_anterior)
-    recalcular_pagamento = (dia_pagamento_novo != dia_pagamento_anterior) or (util_corrido_novo != util_corrido_anterior)
-
     try:
-        for key, value in dados_atualizacao.items():
-            if hasattr(local_atual, key):
-                setattr(local_atual, key, value)
-
-        if recalcular_pagamento and dia_pagamento_novo is not None:
-            plantoes = PlantaoRepository.list_ids_e_datas_por_local(db, local_id)
-            if plantoes:
-                atualizacoes = [
-                    {
-                        "id": plantao_id,
-                        "pagamento_plantao": PagamentoService.calcular_data_pagamento_por_dia_mes(
-                            data_plantao=data_plantao,
-                            dia_pagamento=dia_pagamento_novo,
-                            util_corrido=util_corrido_novo,
-                        ),
-                        # bulk_update_mappings ignora o onupdate do ORM — sem isto, esses
-                        # plantões ficariam com atualizado_em desatualizado e o pagamento
-                        # recalculado não apareceria em GET /api/sync/pull.
-                        "atualizado_em": datetime.now(UTC),
-                    }
-                    for plantao_id, data_plantao in plantoes
-                ]
-                db.bulk_update_mappings(Plantao, atualizacoes)
-
-        db.commit()
-        db.refresh(local_atual)
+        local = LocalService.atualizar(db, current_user, local_id, payload)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
     except Exception as exc:
-        db.rollback()
+        logger.exception("Falha ao atualizar local %s", local_id)
         raise HTTPException(status_code=500, detail="Erro ao atualizar local") from exc
 
-    logger.info("Local %s atualizado por %s", local_id, current_user.email)
     return APIResponse(
         success=True,
         message="Local atualizado com sucesso.",
-        data=LocalResponse.model_validate(local_atual),
+        data=LocalResponse.model_validate(local),
     )
 
 
@@ -1322,11 +1292,11 @@ def deletar_local(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    deletado = LocalRepository.delete_by_user(db, local_id, current_user.id)
-    if not deletado:
-        raise HTTPException(status_code=404, detail="Local não encontrado")
+    try:
+        LocalService.deletar(db, current_user, local_id)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
 
-    logger.info("Local %s deletado por %s", local_id, current_user.email)
     return APIResponse(
         success=True,
         message="Local deletado com sucesso.",

@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     # Valor padrão só serve para rodar localmente sem um .env — nunca deve ser usado em
     # produção. app/main.py recusa subir com este valor quando environment=production.
-    database_url: str = "postgresql+psycopg://postgres:changeme-local-dev@localhost:5432/plantoes"
+    database_url: str = "postgresql+psycopg://postgres:DeusAbutre@localhost:5432/plantoes"
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
