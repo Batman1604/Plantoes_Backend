@@ -34,7 +34,6 @@ from app.repositories.plantao_repository import (
     LocalRepository,
     PlantaoRepository,
     SolicitacaoTrocaRepository,
-    SyncRepository,
     TokenRevogadoRepository,
     BonificacaoRepository,
     TransferenciaRepository,
@@ -108,6 +107,7 @@ from app.core.config import settings
 from app.services.oauth_service import OAuthService, OAuthTokenError, parse_bool_claim
 from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
 from app.services.plano_service import PlanoService
+from app.services.bonificacao_service import BonificacaoService
 from app.services.erros import ErroDeDominio
 from app.services.local_service import LocalService
 from app.services.sms_service import SmsService
@@ -945,11 +945,10 @@ def criar_bonificacao(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    plantao = PlantaoRepository.get_by_id_and_user(db, payload.plantao_id, current_user.id)
-    if plantao is None:
-        raise HTTPException(status_code=404, detail="Plantão não encontrado.")
-    bonificacao = BonificacaoRepository.create(db, payload)
-    FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
+    try:
+        bonificacao = BonificacaoService.criar(db, current_user, payload)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
     return APIResponse(success=True, message="Bonificação criada com sucesso.", data=BonificacaoResponse.model_validate(bonificacao))
 
 
@@ -982,15 +981,10 @@ def deletar_bonificacao(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    bonificacao = BonificacaoRepository.get_by_id(db, bonificacao_id)
-    if bonificacao is None:
-        raise HTTPException(status_code=404, detail="Bonificação não encontrada.")
-    plantao = PlantaoRepository.get_by_id_and_user(db, bonificacao.plantao_id, current_user.id)
-    if plantao is None:
-        raise HTTPException(status_code=403, detail="Sem permissão para deletar esta bonificação.")
-    SyncRepository.registrar_exclusao(db, current_user.id, "bonificacao", bonificacao.id, bonificacao.uuid_cliente)
-    BonificacaoRepository.delete(db, bonificacao_id)
-    FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
+    try:
+        BonificacaoService.deletar(db, current_user, bonificacao_id)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
     return APIResponse(success=True, message="Bonificação deletada com sucesso.", data=None)
 
 
@@ -1006,17 +1000,10 @@ def atualizar_bonificacao(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    bonificacao = BonificacaoRepository.get_by_id(db, bonificacao_id)
-    if bonificacao is None:
-        raise HTTPException(status_code=404, detail="Bonificação não encontrada.")
-    plantao = PlantaoRepository.get_by_id_and_user(db, bonificacao.plantao_id, current_user.id)
-    if plantao is None:
-        raise HTTPException(status_code=403, detail="Sem permissão para editar esta bonificação.")
-    dados = payload.model_dump(exclude_unset=True)
-    if not dados:
-        raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
-    bonificacao = BonificacaoRepository.update(db, bonificacao_id, **dados)
-    FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
+    try:
+        bonificacao = BonificacaoService.atualizar(db, current_user, bonificacao_id, payload)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
     return APIResponse(success=True, message="Bonificação atualizada com sucesso.", data=BonificacaoResponse.model_validate(bonificacao))
 
 

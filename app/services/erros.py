@@ -46,3 +46,16 @@ class RequisicaoInvalida(ErroDeDominio):
     """Entrada aceita pelo schema, mas sem sentido para a regra de negócio."""
 
     status_http = 400
+
+
+class SemPermissao(ErroDeDominio):
+    """O recurso existe, mas não pertence a quem pediu.
+
+    Usado apenas onde o comportamento atual já devolvia 403 — bonificação, por
+    exemplo, responde 404 ao criar sobre plantão alheio e 403 ao editar ou
+    apagar. A inconsistência é anterior a esta refatoração e foi preservada de
+    propósito: mudar status de resposta quebraria o cliente. Em código novo,
+    prefira NaoEncontrado, que não revela a existência do recurso.
+    """
+
+    status_http = 403

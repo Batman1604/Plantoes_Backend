@@ -43,6 +43,7 @@ from app.schemas.plantao_schema import (
     TrocaResponse,
 )
 
+from app.services.bonificacao_service import BonificacaoService
 from app.services.erros import ErroDeDominio
 from app.services.local_service import LocalService
 
@@ -58,12 +59,9 @@ from app.routes.plantao_routes import (
     _plantao_recebido_troca_resumo,
     _plantao_troca_resumo,
     _serializar_amigo_configuracao,
-    atualizar_bonificacao,
     atualizar_plantao,
-    criar_bonificacao,
     criar_plantao,
     criar_troca,
-    deletar_bonificacao,
     deletar_plantao,
     deletar_troca,
 )
@@ -258,7 +256,7 @@ class SyncService:
                 return
             try:
                 deletar_plantao(plantao_id=existente.id, db=db, current_user=current_user)
-            except (HTTPException, IntegrityError) as exc:
+            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -302,7 +300,7 @@ class SyncService:
             )
             try:
                 resposta = criar_plantao(payload=payload, db=db, current_user=current_user)
-            except (HTTPException, IntegrityError) as exc:
+            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -334,7 +332,7 @@ class SyncService:
         )
         try:
             atualizar_plantao(plantao_id=existente.id, payload=payload, db=db, current_user=current_user)
-        except (HTTPException, IntegrityError) as exc:
+        except (ErroDeDominio, HTTPException, IntegrityError) as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -375,7 +373,7 @@ class SyncService:
                 return
             try:
                 deletar_troca(troca_id=existente.id, db=db, current_user=current_user)
-            except (HTTPException, IntegrityError) as exc:
+            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -450,7 +448,7 @@ class SyncService:
         )
         try:
             resposta = criar_troca(payload=payload, db=db, current_user=current_user)
-        except (HTTPException, IntegrityError) as exc:
+        except (ErroDeDominio, HTTPException, IntegrityError) as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -493,8 +491,8 @@ class SyncService:
                 ))
                 return
             try:
-                deletar_bonificacao(bonificacao_id=existente.id, db=db, current_user=current_user)
-            except (HTTPException, IntegrityError) as exc:
+                BonificacaoService.deletar(db, current_user, existente.id)
+            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -531,13 +529,13 @@ class SyncService:
                 uuid_cliente=item.uuid_cliente,
             )
             try:
-                resposta = criar_bonificacao(payload=payload, db=db, current_user=current_user)
-            except (HTTPException, IntegrityError) as exc:
+                criada = BonificacaoService.criar(db, current_user, payload)
+            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
-            resultado.bonificacoes_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
+            resultado.bonificacoes_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=criada.id))
             return
 
         if _as_utc(existente.atualizado_em) >= _as_utc(item.atualizado_em):
@@ -550,8 +548,8 @@ class SyncService:
 
         payload = BonificacaoUpdate(valor=item.valor, descricao=item.descricao)
         try:
-            atualizar_bonificacao(bonificacao_id=existente.id, payload=payload, db=db, current_user=current_user)
-        except (HTTPException, IntegrityError) as exc:
+            BonificacaoService.atualizar(db, current_user, existente.id, payload)
+        except (ErroDeDominio, HTTPException, IntegrityError) as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
