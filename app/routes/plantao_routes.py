@@ -109,6 +109,7 @@ from app.services.pagamento_service import PagamentoService, ajustar_fim_interva
 from app.services.plano_service import PlanoService
 from app.services.bonificacao_service import BonificacaoService
 from app.services.erros import ErroDeDominio
+from app.services.troca_service import TrocaService
 from app.services.local_service import LocalService
 from app.services.sms_service import SmsService
 
@@ -1019,79 +1020,27 @@ def criar_troca(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    plantao = db.scalar(select(Plantao).where(Plantao.id == payload.plantao_transferido_id))
-    if plantao is None:
-        raise HTTPException(status_code=404, detail="Plantão transferido não encontrado.")
-    if plantao.usuario_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Plantão não pertence ao usuário autenticado.")
-    if plantao.transferido:
-        raise HTTPException(status_code=400, detail="Este plantão já foi transferido e não pode ser transferido novamente.")
-
-    recebido = None
-    if payload.plantao_recebido is not None:
-        recebido_payload = payload.plantao_recebido
-        local = LocalRepository.get_by_id(db, recebido_payload.local_id)
-        if local is None:
-            raise HTTPException(status_code=404, detail="Local do plantão recebido não encontrado.")
-        if local.usuario_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Local do plantão recebido não pertence ao usuário autenticado.")
-
     try:
-        # Não chame repositórios que executam commit aqui: as três gravações precisam
-        # confirmar juntas ou serem revertidas juntas.
-        plantao.transferido = True
-        if payload.plantao_recebido is not None:
-            recebido_payload = payload.plantao_recebido
-            recebido = Plantao(
-                usuario_id=current_user.id,
-                local_id=recebido_payload.local_id,
-                valor=recebido_payload.valor,
-                data_inicio=recebido_payload.data_inicio,
-                horario_inicio=recebido_payload.horario_inicio,
-                data_fim=recebido_payload.data_fim,
-                horario_fim=recebido_payload.horario_fim,
-                sobreaviso=recebido_payload.sobreaviso,
-                descricao=recebido_payload.descricao,
-                recorrencia=None,
-                notificacao_ativa=True,
-                notificacao_antecedencia_minutos=60,
-                notificado=False,
-                executado=False,
-                transferido=False,
-                recebido_via_transferencia=True,
-                uuid_cliente=recebido_payload.uuid_cliente,
-            )
-            db.add(recebido)
-            db.flush()
-
-        troca = Troca(
-            usuario_id=current_user.id,
-            local_id=recebido.local_id if recebido is not None else plantao.local_id,
-            plantao_id_transferido=plantao.id,
-            plantao_id_recebido=recebido.id if recebido is not None else None,
-            nome_transferir=payload.transferido_para.nome,
-            telefone_transferir=payload.transferido_para.telefone,
-            observacao_transferir=payload.transferido_para.observacao,
-            uuid_cliente=payload.uuid_cliente,
-            nome_receber=(payload.plantao_recebido.recebido_de.nome if payload.plantao_recebido else None),
-            telefone_receber=(payload.plantao_recebido.recebido_de.telefone if payload.plantao_recebido else None),
-            observacao_receber=(payload.plantao_recebido.recebido_de.observacao if payload.plantao_recebido else None),
-        )
-        db.add(troca)
-        db.flush()
-        db.commit()
+        resultado = TrocaService.registrar(db, current_user, payload)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
     except SQLAlchemyError as exc:
-        db.rollback()
-        logger.exception("Falha transacional ao registrar troca")
-        raise HTTPException(status_code=500, detail="Não foi possível registrar a troca; nenhuma alteração foi salva.") from exc
+        raise HTTPException(
+            status_code=500,
+            detail="Não foi possível registrar a troca; nenhuma alteração foi salva.",
+        ) from exc
 
     return APIResponse(
         success=True,
         message="Troca registrada com sucesso.",
         data=TrocaOperacaoData(
-            troca_id=troca.id,
-            plantao_transferido=_plantao_com_troca(db, plantao),
-            plantao_recebido=_plantao_com_troca(db, recebido) if recebido is not None else None,
+            troca_id=resultado.troca.id,
+            plantao_transferido=_plantao_com_troca(db, resultado.plantao_transferido),
+            plantao_recebido=(
+                _plantao_com_troca(db, resultado.plantao_recebido)
+                if resultado.plantao_recebido is not None
+                else None
+            ),
         ),
     )
 
@@ -1135,22 +1084,11 @@ def deletar_troca(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    troca = TrocaRepository.get_by_id(db, troca_id)
-    if troca is None:
-        raise HTTPException(status_code=404, detail="Troca não encontrada.")
-    # Autoriza pelo dono da TROCA, não pelo dono do local que ela referencia.
-    #
-    # Os dois divergem sempre que há transferência: o plantão clonado para quem
-    # recebe mantém o local_id de quem enviou (ver aceitar_solicitacao_troca e
-    # aceitar_transferencia), então criar_troca grava usuario_id=quem registrou
-    # e local_id=um local da outra pessoa. Com a checagem antiga, quem era dono
-    # do LOCAL apagava a troca alheia, e o dono de verdade recebia 403 ao tentar
-    # apagar a própria. Pior: TrocaRepository.delete grava o tombstone contra
-    # troca.usuario_id, então a exclusão indevida ainda removia o registro do
-    # dispositivo da vítima na sincronização seguinte (ver auditoria C-08).
-    if troca.usuario_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Sem permissão para deletar esta troca.")
-    TrocaRepository.delete(db, troca_id)
+    try:
+        TrocaService.deletar(db, current_user, troca_id)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
+
     return APIResponse(success=True, message="Troca deletada com sucesso.", data=None)
 
 

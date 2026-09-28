@@ -45,6 +45,7 @@ from app.schemas.plantao_schema import (
 
 from app.services.bonificacao_service import BonificacaoService
 from app.services.erros import ErroDeDominio
+from app.services.troca_service import TrocaService
 from app.services.local_service import LocalService
 
 # As entidades ainda não extraídas para um serviço próprio continuam sendo
@@ -61,9 +62,7 @@ from app.routes.plantao_routes import (
     _serializar_amigo_configuracao,
     atualizar_plantao,
     criar_plantao,
-    criar_troca,
     deletar_plantao,
-    deletar_troca,
 )
 
 
@@ -372,7 +371,7 @@ class SyncService:
                 ))
                 return
             try:
-                deletar_troca(troca_id=existente.id, db=db, current_user=current_user)
+                TrocaService.deletar(db, current_user, existente.id)
             except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
@@ -447,15 +446,15 @@ class SyncService:
             uuid_cliente=item.uuid_cliente,
         )
         try:
-            resposta = criar_troca(payload=payload, db=db, current_user=current_user)
+            registrada = TrocaService.registrar(db, current_user, payload)
         except (ErroDeDominio, HTTPException, IntegrityError) as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
             return
         if item.plantao_recebido is not None and item.plantao_recebido.uuid_cliente:
-            uuid_para_plantao_id[item.plantao_recebido.uuid_cliente] = resposta.data.plantao_recebido.id
-        resultado.trocas_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.troca_id))
+            uuid_para_plantao_id[item.plantao_recebido.uuid_cliente] = registrada.plantao_recebido.id
+        resultado.trocas_criadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=registrada.troca.id))
 
     @staticmethod
     def _resolver_bonificacao_existente(db: Session, current_user: User, item: SyncBonificacaoItem):
