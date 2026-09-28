@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, date, datetime, time
+from uuid import uuid4
 
 from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Time, UniqueConstraint
 
@@ -119,7 +120,18 @@ class Plantao(Base):
     recebido_via_transferencia: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     descricao: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Ver comentário equivalente em Local.uuid_cliente.
-    uuid_cliente: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True, index=True)
+    #
+    # O `default` cobre o plantão que nasce NO SERVIDOR, sem dispositivo por
+    # trás para gerar o identificador: aceitar uma transferência e aceitar uma
+    # solicitação de troca criam o plantão do destinatário. Esses caminhos
+    # gravavam uuid_cliente nulo e o app, recebendo nulo no pull, inventava um
+    # aleatório NOVO a cada ciclo — trocando a identidade da linha e deixando
+    # presa na fila qualquer edição feita no plantão recebido. O default
+    # dispara inclusive quando o campo é passado explicitamente como None,
+    # que é o caso de TrocaService quando o payload não traz o uuid.
+    uuid_cliente: Mapped[str | None] = mapped_column(
+        String(36), unique=True, nullable=True, index=True, default=lambda: str(uuid4())
+    )
     atualizado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
