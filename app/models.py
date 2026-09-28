@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, date, datetime, time
 
 from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Time, UniqueConstraint
@@ -6,7 +7,22 @@ from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, Foreign
 # Cada classe corresponde a uma tabela e usa SQLAlchemy ORM para mapeamento.
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from sqlalchemy import event
+
 from app.core.database import Base
+
+
+def normalizar_telefone(telefone: str | None) -> str | None:
+    """Reduz um telefone a apenas dígitos e remove o DDI 55 quando presente.
+
+    Permite comparar números digitados com ou sem máscara e com ou sem DDI.
+    """
+    if not telefone:
+        return None
+    digitos = re.sub(r"\D", "", telefone)
+    if len(digitos) > 11 and digitos.startswith("55"):
+        digitos = digitos[2:]
+    return digitos or None
 
 
 class User(Base):
@@ -20,6 +36,11 @@ class User(Base):
     nome: Mapped[str] = mapped_column(String(120), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     telefone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Só dígitos, sem DDI — mantido em sincronia com `telefone` pelos eventos
+    # logo abaixo, e indexado para que a busca por telefone seja uma consulta
+    # indexada em vez de uma varredura da tabela de usuários inteira em memória
+    # (ver auditoria A-22).
+    telefone_normalizado: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     senha_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Identificadores estáveis ('sub') devolvidos pelo Google/Apple. Nulos para contas
     # email/senha puras; uma conta pode ter os dois preenchidos se o usuário vincular ambos.
@@ -393,3 +414,14 @@ class SyncExclusao(Base):
     deletado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), index=True
     )
+
+
+# O telefone normalizado é derivado, nunca preenchido à mão. Um listener em vez
+# de atribuição nos pontos de escrita porque existem três lugares que criam
+# usuário e mais um que edita o perfil: esquecer um deles não daria erro, só
+# faria a pessoa sumir da busca por telefone — falha silenciosa, difícil de
+# associar à causa.
+@event.listens_for(User, "before_insert")
+@event.listens_for(User, "before_update")
+def _sincronizar_telefone_normalizado(mapper, connection, alvo: User) -> None:
+    alvo.telefone_normalizado = normalizar_telefone(alvo.telefone)

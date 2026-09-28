@@ -1,4 +1,3 @@
-import re
 from datetime import UTC, date, datetime
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -8,6 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.database import instante_para_o_banco
 from app.core.security import hash_password, verify_password
 from app.models import (
+    normalizar_telefone,
     Amizade,
     AmigoConfiguracao,
     AmigoLocalPermitido,
@@ -26,15 +26,6 @@ from app.models import (
     VerificacaoTelefone,
 )
 from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
-
-
-def _normalizar_telefone(telefone: str) -> str:
-    """Reduz um telefone a apenas dígitos e remove o DDI 55 quando presente, permitindo
-    comparar números digitados com ou sem máscara/DDI."""
-    digitos = re.sub(r"\D", "", telefone or "")
-    if len(digitos) > 11 and digitos.startswith("55"):
-        digitos = digitos[2:]
-    return digitos
 
 
 def _ids_excluidos_busca_amigo(db: Session, usuario_id: int) -> set[int]:
@@ -127,20 +118,29 @@ class UserRepository:
 
     @staticmethod
     def buscar_por_telefone(db: Session, telefone: str, excluir_usuario_id: int) -> list[User]:
-        """Busca usuários cujo telefone, depois de normalizado (apenas dígitos, sem DDI 55),
-        bate com o telefone informado (também normalizado). Exclui o próprio usuário e
-        qualquer usuário que já tenha amizade pendente ou aceita com ele. O telefone não é
-        armazenado de forma normalizada, então a comparação é feita em Python após carregar
-        os usuários com telefone cadastrado."""
-        alvo = _normalizar_telefone(telefone)
+        """Busca usuários cujo telefone, normalizado (só dígitos, sem DDI 55), bate com o
+        informado. Exclui o próprio usuário e quem já tem amizade pendente ou aceita com ele.
+
+        A comparação acontece em SQL, contra a coluna indexada telefone_normalizado. Antes
+        ela era feita em Python: a consulta trazia TODOS os usuários com telefone cadastrado
+        e filtrava em memória — medido em 4.001 usuários carregados e 50 ms numa base de
+        4.000, para devolver no máximo 5 resultados. O custo crescia com o total de usuários
+        do app, ou seja, piorava exatamente à medida que o produto desse certo
+        (ver auditoria A-22).
+        """
+        alvo = normalizar_telefone(telefone)
         if not alvo:
             return []
 
         ids_excluir = _ids_excluidos_busca_amigo(db, excluir_usuario_id)
 
-        stmt = select(User).where(User.telefone.isnot(None), User.id.notin_(ids_excluir)).order_by(User.email)
-        candidatos = db.scalars(stmt).all()
-        return [u for u in candidatos if _normalizar_telefone(u.telefone) == alvo][:5]
+        stmt = (
+            select(User)
+            .where(User.telefone_normalizado == alvo, User.id.notin_(ids_excluir))
+            .order_by(User.email)
+            .limit(5)
+        )
+        return list(db.scalars(stmt).all())
 
     @staticmethod
     def _find_or_create_oauth(
