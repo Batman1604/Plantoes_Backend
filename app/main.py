@@ -33,10 +33,6 @@ if settings.jwt_secret_key == "change-me-in-production":
         raise RuntimeError("JWT_SECRET_KEY não pode usar o valor padrão em produção. Defina JWT_SECRET_KEY no .env.")
     logger.warning("JWT_SECRET_KEY está usando o valor padrão. Defina JWT_SECRET_KEY no .env antes de ir para produção.")
 
-if "changeme-local-dev" in settings.database_url:
-    if settings.environment == "production":
-        raise RuntimeError("DATABASE_URL não pode usar o valor padrão em produção. Defina DATABASE_URL no .env.")
-    logger.warning("DATABASE_URL está usando credenciais padrão. Defina DATABASE_URL no .env antes de ir para produção.")
 
 # ============================================================================
 # Schema do banco

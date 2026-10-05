@@ -6,9 +6,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Plantões Backend"
     environment: str = "development"
-    # Valor padrão só serve para rodar localmente sem um .env — nunca deve ser usado em
-    # produção. app/main.py recusa subir com este valor quando environment=production.
-    database_url: str = "postgresql+psycopg://postgres:DeusAbutre@localhost:5432/plantoes"
+    # SEM valor padrão, de propósito: o default anterior trazia a senha real do
+    # Postgres de desenvolvimento no código-fonte, e portanto no histórico do
+    # git. Pior, a guarda de produção em app/main.py procurava o sentinela
+    # "changeme-local-dev", que havia sido substituído por essa senha — então
+    # a proteção nunca disparava e um deploy sem DATABASE_URL subiria tentando
+    # credenciais de desenvolvimento.
+    #
+    # Obrigatório significa que a ausência falha no import, em qualquer
+    # ambiente, nomeando o campo que falta — em vez de seguir em frente com um
+    # valor que ninguém escolheu.
+    database_url: str
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
