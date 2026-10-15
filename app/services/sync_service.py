@@ -191,6 +191,10 @@ class SyncService:
 
         if item.deletado:
             if existente is None:
+                # AUD-014 (contrato K2): excluir o que não existe (nunca subiu,
+                # já excluído aqui ou em outro aparelho) é idempotente. Sem
+                # resposta nenhuma, o cliente reenviava a entrada para sempre.
+                resultado.locais_deletados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=item.id))
                 return
             if _as_utc(existente.atualizado_em) > _as_utc(item.atualizado_em):
                 resultado.conflitos.append(SyncConflito(
@@ -290,6 +294,10 @@ class SyncService:
 
         if item.deletado:
             if existente is None:
+                # AUD-014 (contrato K2): excluir o que não existe (nunca subiu,
+                # já excluído aqui ou em outro aparelho) é idempotente. Sem
+                # resposta nenhuma, o cliente reenviava a entrada para sempre.
+                resultado.plantoes_deletados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=item.id))
                 return
             if _as_utc(existente.atualizado_em) > _as_utc(item.atualizado_em):
                 resultado.conflitos.append(SyncConflito(
@@ -412,6 +420,10 @@ class SyncService:
 
         if item.deletado:
             if existente is None:
+                # AUD-014 (contrato K2): excluir o que não existe (nunca subiu,
+                # já excluído aqui ou em outro aparelho) é idempotente. Sem
+                # resposta nenhuma, o cliente reenviava a entrada para sempre.
+                resultado.trocas_deletadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=item.id))
                 return
             if _as_utc(existente.atualizado_em) > _as_utc(item.atualizado_em):
                 resultado.conflitos.append(SyncConflito(
@@ -536,6 +548,10 @@ class SyncService:
 
         if item.deletado:
             if existente is None:
+                # AUD-014 (contrato K2): excluir o que não existe (nunca subiu,
+                # já excluído aqui ou em outro aparelho) é idempotente. Sem
+                # resposta nenhuma, o cliente reenviava a entrada para sempre.
+                resultado.bonificacoes_deletadas.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=item.id))
                 return
             if _as_utc(existente.atualizado_em) > _as_utc(item.atualizado_em):
                 resultado.conflitos.append(SyncConflito(

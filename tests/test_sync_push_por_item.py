@@ -67,5 +67,41 @@ class TestFusoNaEdicao(unittest.TestCase):
         self.assertEqual(resposta.status_code, 422, resposta.text)
 
 
+class TestExclusaoIdempotente(unittest.TestCase):
+    """AUD-014 (contrato K2): exclusão de item desconhecido volta em *_deletados
+    para as quatro entidades (o caso do plantão está também na auditoria)."""
+
+    def test_exclusao_de_desconhecidos_volta_em_deletados(self):
+        client = TestClient(app)
+        headers = _usuario_direto_no_banco()
+        agora = datetime.now(UTC).isoformat()
+        resposta = client.post("/api/sync/push", headers=headers, json={
+            "locais": [{**_local("k2-local"), "deletado": True}],
+            "trocas": [{"uuid_cliente": "k2-troca", "transferido_para": {"nome": "X", "telefone": "1"},
+                        "atualizado_em": agora, "deletado": True}],
+            "bonificacoes": [{"uuid_cliente": "k2-bon", "valor": "1.00", "atualizado_em": agora, "deletado": True}],
+        })
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        dados = resposta.json()["data"]
+        self.assertEqual(
+            ([r["uuid_cliente"] for r in dados["locais_deletados"]],
+             [r["uuid_cliente"] for r in dados["trocas_deletadas"]],
+             [r["uuid_cliente"] for r in dados["bonificacoes_deletadas"]],
+             dados["erros"]),
+            (["k2-local"], ["k2-troca"], ["k2-bon"], []),
+        )
+
+    def test_segunda_exclusao_do_mesmo_local_tambem_volta_em_deletados(self):
+        client = TestClient(app)
+        headers = _usuario_direto_no_banco()
+        criado = client.post("/api/sync/push", headers=headers, json={"locais": [_local("k2-dup")]}).json()["data"]
+        local_id = criado["locais_criados"][0]["id"]
+        for _ in range(2):
+            excluir = {**_local("k2-dup"), "id": local_id, "deletado": True,
+                       "atualizado_em": datetime.now(UTC).isoformat()}
+            dados = client.post("/api/sync/push", headers=headers, json={"locais": [excluir]}).json()["data"]
+            self.assertEqual([r["uuid_cliente"] for r in dados["locais_deletados"]], ["k2-dup"])
+
+
 if __name__ == "__main__":
     unittest.main()

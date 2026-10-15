@@ -1077,7 +1077,9 @@ class SyncPushRequest(BaseModel):
 
 class SyncItemResultado(BaseModel):
     uuid_cliente: str
-    id: int
+    # Nulo só em `*_deletados` de item que o servidor não conhece (AUD-014): a
+    # exclusão é confirmada pelo uuid_cliente, que é o que o cliente usa.
+    id: Optional[int] = None
 
 
 class SyncConflito(BaseModel):
