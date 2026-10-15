@@ -254,7 +254,11 @@ class SyncService:
                 ))
                 return
             try:
-                deletar_plantao(plantao_id=existente.id, db=db, current_user=current_user)
+                # AUD-001: `aplicar_em` explícito. Chamado como função Python, o
+                # default da rota é o objeto `Query("somente_este")`, que é !=
+                # "somente_este" — e a exclusão caía no ramo "este e futuros",
+                # levando junto todo plantão do mesmo local e horário.
+                deletar_plantao(plantao_id=existente.id, aplicar_em="somente_este", db=db, current_user=current_user)
             except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
