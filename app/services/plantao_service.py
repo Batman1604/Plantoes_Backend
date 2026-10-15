@@ -166,11 +166,19 @@ class PlantaoService:
                 )
             return None
 
+        # AUD-028: a data de pagamento só é recalculada quando o que a
+        # determina muda (a data do plantão ou o local) e o pedido não traz
+        # uma. Antes todo PATCH recalculava — corrigir só o valor apagava a
+        # data escolhida à mão.
+        muda_data = "data_inicio" in dados_atualizacao and inicio_dt.date() != plantao_atual.data_inicio
+        muda_local = local_destino_id != plantao_atual.local_id
+        recalcular_pagamento = payload.pagamento_plantao is None and (muda_data or muda_local)
         if payload.pagamento_plantao is not None:
-            nova_data_pagamento = payload.pagamento_plantao
+            dados_atualizacao["pagamento_plantao"] = payload.pagamento_plantao
+        elif recalcular_pagamento:
+            dados_atualizacao["pagamento_plantao"] = _calcular_data_pagamento(inicio_dt.date())
         else:
-            nova_data_pagamento = _calcular_data_pagamento(inicio_dt.date())
-        dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
+            dados_atualizacao.pop("pagamento_plantao", None)
 
         def _decompor_datetimes(dados: dict) -> dict:
             result = {k: v for k, v in dados.items() if k not in ("data_inicio", "data_fim")}
@@ -227,7 +235,8 @@ class PlantaoService:
                     plantao_item.horario_fim = new_time_fim
                     if forcar_recorrencia is not None:
                         plantao_item.recorrencia = forcar_recorrencia
-                    plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.data_inicio)
+                    if recalcular_pagamento:  # AUD-028
+                        plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.data_inicio)
 
                 if "recorrencia" in dados_atualizacao and nova_recorrencia is None:
                     for p in plantoes_futuros[1:]:

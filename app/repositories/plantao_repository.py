@@ -554,10 +554,11 @@ class PlantaoRepository:
         return True
 
     @staticmethod
-    def list_ids_e_datas_por_local(db: Session, local_id: int, usuario_id: int) -> list[tuple[int, date]]:
+    def list_ids_e_datas_por_local(db: Session, local_id: int, usuario_id: int) -> list[tuple[int, date, date | None]]:
+        """(id, data_inicio, pagamento_plantao) dos plantões do local."""
         # AUD-006: só os plantões do DONO do local. O plantão recebido por
         # outro usuário aponta para este local, mas não é de quem o edita.
-        stmt = select(Plantao.id, Plantao.data_inicio).where(
+        stmt = select(Plantao.id, Plantao.data_inicio, Plantao.pagamento_plantao).where(
             Plantao.local_id == local_id, Plantao.usuario_id == usuario_id
         )
         return db.execute(stmt).all()

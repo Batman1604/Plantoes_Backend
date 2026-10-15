@@ -12,7 +12,8 @@ Quem traduz para HTTP é a rota; quem traduz para SyncErro é o SyncService.
 """
 
 import logging
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,34 @@ from app.services.erros import NaoEncontrado, RequisicaoInvalida
 from app.services.pagamento_service import PagamentoService
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ConfigDePagamento:
+    """O que determina a data de pagamento de um plantão do local."""
+
+    dia: int | None
+    util_corrido: bool
+    inicio_ciclo: date
+    fim_ciclo: date
+
+    def datas_automaticas(self, data_plantao: date) -> set[date]:
+        """Datas que esta configuração teria gravado sozinha (AUD-024)."""
+        if self.dia is None:
+            return set()
+        return {
+            PagamentoService.calcular_data_pagamento_plantao(
+                data_plantao=data_plantao,
+                indice_dia_pagamento=self.dia,
+                data_inicio_ciclo=self.inicio_ciclo,
+                data_final_ciclo=self.fim_ciclo,
+                util_corrido=self.util_corrido,
+            ),
+            # Regra do recálculo antigo, que pode já estar gravada.
+            PagamentoService.calcular_data_pagamento_por_dia_mes(
+                data_plantao=data_plantao, dia_pagamento=self.dia, util_corrido=self.util_corrido,
+            ),
+        }
 
 
 class LocalService:
@@ -50,22 +79,26 @@ class LocalService:
 
         local = LocalService.obter_do_usuario(db, usuario, local_id)
 
-        # Mudar o dia de pagamento ou o modo (dia útil x dia corrido) altera a
-        # data de pagamento de TODOS os plantões daquele local, não só dos
-        # futuros — por isso o recálculo em lote abaixo.
-        dia_anterior = local.dia_pagamento
-        dia_novo = dados.get("dia_pagamento", dia_anterior)
-        util_anterior = local.util_corrido
-        util_novo = dados.get("util_corrido", util_anterior)
-        recalcular = (dia_novo != dia_anterior) or (util_novo != util_anterior)
+        # Mudar o dia de pagamento, o modo (dia útil x dia corrido) ou o ciclo
+        # altera a data de pagamento dos plantões daquele local — por isso o
+        # recálculo em lote abaixo. O ciclo entra desde o AUD-024: a regra da
+        # criação depende dele.
+        anterior = _ConfigDePagamento(local.dia_pagamento, local.util_corrido, local.data_inicio, local.data_final)
+        novo = _ConfigDePagamento(
+            dados.get("dia_pagamento", anterior.dia),
+            dados.get("util_corrido", anterior.util_corrido),
+            dados.get("data_inicio", anterior.inicio_ciclo),
+            dados.get("data_final", anterior.fim_ciclo),
+        )
+        recalcular = novo != anterior
 
         try:
             for campo, valor in dados.items():
                 if hasattr(local, campo):
                     setattr(local, campo, valor)
 
-            if recalcular and dia_novo is not None:
-                LocalService._recalcular_pagamentos(db, local, dia_novo, util_novo)
+            if recalcular and novo.dia is not None:
+                LocalService._recalcular_pagamentos(db, local, anterior)
 
             db.commit()
             db.refresh(local)
@@ -77,7 +110,19 @@ class LocalService:
         return local
 
     @staticmethod
-    def _recalcular_pagamentos(db: Session, local: Local, dia_pagamento: int, util_corrido: bool) -> None:
+    def _recalcular_pagamentos(db: Session, local: Local, anterior: "_ConfigDePagamento") -> None:
+        """AUD-024: recalcula com a MESMA regra da criação
+        (calcular_data_pagamento_plantao, com o ciclo do local). Antes usava
+        calcular_data_pagamento_por_dia_mes — dia N corrido do mês seguinte ao
+        plantão —, e a data mudava para um valor diferente do que um plantão
+        novo teria.
+
+        Só reescreve a data que era AUTOMÁTICA: nula, ou igual à que a
+        configuração anterior do local produziria (pela regra da criação ou
+        pela do recálculo antigo, que já pode estar gravada). Qualquer outra é
+        data escolhida à mão e fica. Linhas cuja data não muda não são tocadas,
+        para não carimbar atualizado_em à toa.
+        """
         # AUD-006: só os plantões do dono do local. O clone que outro usuário
         # recebeu aponta para este local, mas editar o local não pode alterar
         # a data de pagamento nem o atualizado_em do plantão de outra pessoa.
@@ -85,24 +130,30 @@ class LocalService:
         if not plantoes:
             return
 
-        db.bulk_update_mappings(
-            Plantao,
-            [
-                {
-                    "id": plantao_id,
-                    "pagamento_plantao": PagamentoService.calcular_data_pagamento_por_dia_mes(
-                        data_plantao=data_plantao,
-                        dia_pagamento=dia_pagamento,
-                        util_corrido=util_corrido,
-                    ),
-                    # bulk_update_mappings ignora o onupdate do ORM — sem isto, esses
-                    # plantões ficariam com atualizado_em desatualizado e o pagamento
-                    # recalculado não apareceria em GET /api/sync/pull.
-                    "atualizado_em": datetime.now(UTC),
-                }
-                for plantao_id, data_plantao in plantoes
-            ],
-        )
+        agora = datetime.now(UTC)
+        mudancas = []
+        for plantao_id, data_plantao, pagamento_atual in plantoes:
+            if pagamento_atual is not None and pagamento_atual not in anterior.datas_automaticas(data_plantao):
+                continue
+            novo_pagamento = PagamentoService.calcular_data_pagamento_plantao(
+                data_plantao=data_plantao,
+                indice_dia_pagamento=local.dia_pagamento,
+                data_inicio_ciclo=local.data_inicio,
+                data_final_ciclo=local.data_final,
+                util_corrido=local.util_corrido,
+            )
+            if novo_pagamento == pagamento_atual:
+                continue
+            mudancas.append({
+                "id": plantao_id,
+                "pagamento_plantao": novo_pagamento,
+                # bulk_update_mappings ignora o onupdate do ORM — sem isto, esses
+                # plantões ficariam com atualizado_em desatualizado e o pagamento
+                # recalculado não apareceria em GET /api/sync/pull.
+                "atualizado_em": agora,
+            })
+        if mudancas:
+            db.bulk_update_mappings(Plantao, mudancas)
 
     @staticmethod
     def deletar(db: Session, usuario: User, local_id: int) -> None:

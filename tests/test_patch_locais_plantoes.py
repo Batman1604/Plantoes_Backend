@@ -176,7 +176,10 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         plantoes = self.client.get("/api/plantoes", headers=headers).json()["data"]
-        self.assertEqual(plantoes[0]["pagamento_plantao"], "2026-04-10")
+        # AUD-024: mesma regra da criação — 10º dia útil do mês seguinte ao
+        # fechamento do ciclo. O valor antigo, "2026-04-10", vinha da regra
+        # divergente do recálculo (dia 10 corrido do mês seguinte).
+        self.assertEqual(plantoes[0]["pagamento_plantao"], "2026-04-14")
 
     def test_patch_local_nao_recalcula_pagamento_sem_alterar_dia_pagamento(self):
         headers = self.criar_usuario_e_token()
