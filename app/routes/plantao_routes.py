@@ -11,7 +11,7 @@ from app.core.mascaras import mascarar_telefone
 from app.core.rate_limiter import rate_limit
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -70,7 +70,6 @@ from app.schemas.plantao_schema import (
     LocalResponse,
     LocalUpdate,
     PlantaoCreate,
-    PlantaoCreateWithUsuario,
     PlantaoExecutadoUpdate,
     PlantaoResponse,
     PlantaoUpdate,
@@ -83,7 +82,6 @@ from app.schemas.plantao_schema import (
     SolicitacaoTrocaListItem,
     SolicitacaoTrocaResponse,
     PessoaTrocaResumo,
-    PlantaoTrocaResumo,
     TransferenciaAceitar,
     TransferenciaCreate,
     TransferenciaResponse,
@@ -105,12 +103,22 @@ from app.services.feedback_service import FeedbackService
 from app.services.financeiro_service import FinanceiroService
 from app.core.config import settings
 from app.services.oauth_service import OAuthService, OAuthTokenError, parse_bool_claim
-from app.services.pagamento_service import PagamentoService, ajustar_fim_intervalo
+from app.services.pagamento_service import PagamentoService
 from app.services.plano_service import PlanoService
 from app.services.bonificacao_service import BonificacaoService
 from app.services.erros import ErroDeDominio
 from app.services.troca_service import TrocaService
 from app.services.local_service import LocalService
+from app.services.plantao_service import PlantaoService
+# A-13 (4/4): a serialização morava aqui até o SyncService precisar dela; agora
+# rota e sync importam do mesmo módulo de serviço.
+from app.services.serializacao import (
+    _plantao_com_troca,
+    _plantao_recebido_troca_resumo,
+    _plantao_troca_resumo,
+    _plantoes_com_troca,
+    _serializar_amigo_configuracao,
+)
 from app.services.sms_service import SmsService
 
 logger = logging.getLogger(__name__)
@@ -155,91 +163,6 @@ def get_current_user(
 
     return user
 
-
-def _serializar_plantao(plantao: Plantao, troca: Troca | None) -> PlantaoResponse:
-    """Monta o contrato de plantão a partir de uma troca JÁ resolvida.
-
-    Separado da busca para que a listagem possa resolver todas as trocas de uma
-    vez — ver _plantoes_com_troca.
-    """
-    result = PlantaoResponse.model_validate(plantao).model_dump()
-    if troca is None:
-        return PlantaoResponse.model_validate(result)
-
-    if troca.plantao_id_transferido == plantao.id:
-        result["tipo_troca"] = "transferido"
-        result["troca"] = {
-            "id": troca.id,
-            "papel": "transferido",
-            "contraparte_nome": troca.nome_transferir or "",
-            "contraparte_telefone": troca.telefone_transferir or "",
-            "contraparte_observacao": troca.observacao_transferir,
-            "contraparte_usuario_id": troca.contraparte_usuario_id,
-            "plantao_relacionado_id": troca.plantao_id_recebido,
-        }
-    else:
-        result["tipo_troca"] = "recebido"
-        result["troca"] = {
-            "id": troca.id,
-            "papel": "recebido",
-            "contraparte_nome": troca.nome_receber or "",
-            "contraparte_telefone": troca.telefone_receber or "",
-            "contraparte_observacao": troca.observacao_receber,
-            "contraparte_usuario_id": troca.contraparte_usuario_id_receber,
-            "plantao_relacionado_id": troca.plantao_id_transferido,
-        }
-    return PlantaoResponse.model_validate(result)
-
-
-def _plantao_com_troca(db: Session, plantao: Plantao) -> PlantaoResponse:
-    """Serializa UM plantão, buscando a troca vinculada. Para listas, use
-    _plantoes_com_troca: esta função faz uma consulta por chamada."""
-    troca = db.scalar(
-        select(Troca).where(
-            or_(
-                Troca.plantao_id_transferido == plantao.id,
-                Troca.plantao_id_recebido == plantao.id,
-            )
-        ).order_by(Troca.id.desc())
-    )
-    return _serializar_plantao(plantao, troca)
-
-
-def _plantoes_com_troca(db: Session, plantoes: list[Plantao]) -> list[PlantaoResponse]:
-    """Serializa uma lista de plantões com UMA consulta de trocas, não uma por
-    plantão.
-
-    A listagem chamava _plantao_com_troca em laço, o que dava uma consulta por
-    plantão: medido em 205 consultas para 200 plantões em GET /api/plantoes, e
-    o mesmo padrão em GET /api/sync/pull — que o cliente chama de forma
-    recorrente (ver auditoria A-03).
-    """
-    if not plantoes:
-        return []
-
-    ids = [p.id for p in plantoes]
-    # Ordenado por id crescente para que, ao montar o dicionário, a troca de id
-    # MAIOR sobrescreva a menor — mesmo resultado do order_by(id.desc()) seguido
-    # de "pega o primeiro" que a versão por plantão fazia.
-    trocas = db.scalars(
-        select(Troca)
-        .where(
-            or_(
-                Troca.plantao_id_transferido.in_(ids),
-                Troca.plantao_id_recebido.in_(ids),
-            )
-        )
-        .order_by(Troca.id.asc())
-    ).all()
-
-    troca_por_plantao: dict[int, Troca] = {}
-    for troca in trocas:
-        if troca.plantao_id_transferido is not None:
-            troca_por_plantao[troca.plantao_id_transferido] = troca
-        if troca.plantao_id_recebido is not None:
-            troca_por_plantao[troca.plantao_id_recebido] = troca
-
-    return [_serializar_plantao(p, troca_por_plantao.get(p.id)) for p in plantoes]
 
 
 @router.post(
@@ -1296,72 +1219,19 @@ def atualizar_em_atraso(
     description="Cria um plantão para o usuário autenticado, validando duração e horários.",
 )
 def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    PlanoService.limitar_plano_free(db, current_user)
-
-    local = LocalRepository.get_by_id(db, payload.local_id)
-    if local is None:
-        raise HTTPException(status_code=404, detail="Local não encontrado")
-    if local.usuario_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Local não pertence ao usuário autenticado")
-
-    inicio_dt = payload.data_inicio
-    fim_dt = ajustar_fim_intervalo(inicio_dt, payload.data_fim)
-
-    max_duration_hours = 48
-    duration = fim_dt - inicio_dt
-    if duration.total_seconds() > max_duration_hours * 3600:
-        raise HTTPException(
-            status_code=400,
-            detail=f"A duração do plantão não pode ser maior que {max_duration_hours} horas.",
-        )
-
-    recorrencia = payload.recorrencia if payload.recorrencia != "Unico" else None
-    if payload.pagamento_plantao is not None:
-        pagamento_plantao = payload.pagamento_plantao
-    elif local.dia_pagamento is not None:
-        pagamento_plantao = PagamentoService.calcular_data_pagamento_plantao(
-            data_plantao=payload.data_inicio.date(),
-            indice_dia_pagamento=local.dia_pagamento,
-            data_inicio_ciclo=local.data_inicio,
-            data_final_ciclo=local.data_final,
-            util_corrido=local.util_corrido,
-        )
-    else:
-        pagamento_plantao = None
-
     try:
-        plantao = PlantaoRepository.create(
-            db,
-            PlantaoCreateWithUsuario(
-                usuario_id=current_user.id,
-                local_id=payload.local_id,
-                valor=payload.valor if payload.valor is not None else Decimal("0"),
-                data_inicio=inicio_dt.date(),
-                data_fim=fim_dt.date(),
-                horario_inicio=inicio_dt.time(),
-                horario_fim=fim_dt.time(),
-                recorrencia=recorrencia,
-                sobreaviso=payload.sobreaviso,
-                descricao=payload.descricao,
-                notificacao_ativa=payload.notificacao_ativa,
-                notificacao_antecedencia_minutos=payload.notificacao_antecedencia_minutos,
-                executado=False,
-                pagamento_plantao=pagamento_plantao,
-
-                transferido=False,
-                uuid_cliente=payload.uuid_cliente,
-            ),
-        )
-        FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
-        logger.info("Plantão criado para usuário %s no local %s", current_user.email, payload.local_id)
-        return APIResponse(
-            success=True,
-            message="Plantão criado com sucesso.",
-            data=PlantaoResponse.model_validate(plantao),
-        )
+        plantao = PlantaoService.criar(db, current_user, payload)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
+    except HTTPException:
+        raise
     except Exception as exc:
-        db.rollback()
         raise HTTPException(status_code=500, detail="Erro ao criar plantão") from exc
+    return APIResponse(
+        success=True,
+        message="Plantão criado com sucesso.",
+        data=PlantaoResponse.model_validate(plantao),
+    )
 
 
 @router.get(
@@ -1394,246 +1264,14 @@ def atualizar_plantao(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    dados_atualizacao = payload.model_dump(exclude_unset=True)
-    if not dados_atualizacao:
-        raise HTTPException(status_code=400, detail="Nenhum campo enviado para atualização.")
-
-    aplicar_em = dados_atualizacao.pop("aplicar_em", "somente_este")
-    if dados_atualizacao.get("recorrencia") == "Unico":
-        dados_atualizacao["recorrencia"] = None
-
-    plantao_atual = PlantaoRepository.get_by_id_and_user_incluindo_transferidos(db, plantao_id, current_user.id)
-    if plantao_atual is None:
-        raise HTTPException(status_code=404, detail="Plantão não encontrado")
-    if plantao_atual.transferido:
-        raise HTTPException(
-            status_code=409,
-            detail="Este plantão foi transferido e não pode mais ser editado pelo dono original.",
-        )
-
-    local_destino_id = dados_atualizacao.get("local_id", plantao_atual.local_id)
-    local = LocalRepository.get_by_id(db, local_destino_id)
-    if local is None or local.usuario_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Local não encontrado")
-
-    inicio_dt_atual = datetime.combine(plantao_atual.data_inicio, plantao_atual.horario_inicio)
-    fim_dt_atual = datetime.combine(plantao_atual.data_fim, plantao_atual.horario_fim)
-
-    inicio_dt = dados_atualizacao["data_inicio"] if "data_inicio" in dados_atualizacao else inicio_dt_atual
-    fim_dt = dados_atualizacao["data_fim"] if "data_fim" in dados_atualizacao else fim_dt_atual
-    fim_dt = ajustar_fim_intervalo(inicio_dt, fim_dt)
-
-    # Persist adjusted values so _decompor_datetimes sees the correct dates
-    if "data_inicio" in dados_atualizacao:
-        dados_atualizacao["data_inicio"] = inicio_dt
-    if "data_fim" in dados_atualizacao:
-        dados_atualizacao["data_fim"] = fim_dt
-
-    if (fim_dt - inicio_dt).total_seconds() > 48 * 3600:
-        raise HTTPException(status_code=400, detail="A duração do plantão não pode ser maior que 48 horas.")
-
-    def _calcular_data_pagamento(data_plantao):
-        if local.dia_pagamento is not None:
-            return PagamentoService.calcular_data_pagamento_plantao(
-                data_plantao=data_plantao,
-                indice_dia_pagamento=local.dia_pagamento,
-                data_inicio_ciclo=local.data_inicio,
-                data_final_ciclo=local.data_final,
-                util_corrido=local.util_corrido,
-            )
-        return None
-
-    if payload.pagamento_plantao is not None:
-        nova_data_pagamento = payload.pagamento_plantao
-    else:
-        nova_data_pagamento = _calcular_data_pagamento(inicio_dt.date())
-    dados_atualizacao["pagamento_plantao"] = nova_data_pagamento
-
-    def _decompor_datetimes(dados: dict) -> dict:
-        result = {k: v for k, v in dados.items() if k not in ("data_inicio", "data_fim")}
-        if "data_inicio" in dados and dados["data_inicio"] is not None:
-            result["data_inicio"] = dados["data_inicio"].date()
-            result["horario_inicio"] = dados["data_inicio"].time()
-        if "data_fim" in dados and dados["data_fim"] is not None:
-            result["data_fim"] = dados["data_fim"].date()
-            result["horario_fim"] = dados["data_fim"].time()
-        return result
-
-    _meses_sync: set[tuple[int, int, int]] = {(plantao_atual.local_id, plantao_atual.data_inicio.month, plantao_atual.data_inicio.year)}
-    _novos_plantoes_criados: list = []
-
     try:
-        if aplicar_em == "somente_este":
-            plantao = PlantaoRepository.update_by_user(db, plantao_id, current_user.id, **_decompor_datetimes(dados_atualizacao))
-            if plantao is None:
-                raise HTTPException(status_code=404, detail="Plantão não encontrado")
-        else:
-            plantoes_futuros = PlantaoRepository.list_futuros_da_serie(db, plantao_atual)
-            for _p_fut in plantoes_futuros:
-                _meses_sync.add((_p_fut.local_id, _p_fut.data_inicio.month, _p_fut.data_inicio.year))
-            if not plantoes_futuros:
-                raise HTTPException(status_code=404, detail="Série de plantões não encontrada")
-
-            nova_recorrencia = dados_atualizacao.get("recorrencia", plantao_atual.recorrencia)
-            data_ancora = plantao_atual.data_inicio
-            delta_data = None
-            if "data_inicio" in dados_atualizacao:
-                delta_data = dados_atualizacao["data_inicio"].date() - data_ancora
-            plantoes_por_data = {p.data_inicio: p for p in plantoes_futuros}
-            plantao_selecionado = plantoes_futuros[0]
-
-            def _aplicar_updates(plantao_item: Plantao, data_referencia, forcar_recorrencia=None):
-                for chave, valor in dados_atualizacao.items():
-                    if chave in ("data_inicio", "data_fim"):
-                        continue
-                    if hasattr(plantao_item, chave):
-                        setattr(plantao_item, chave, valor)
-                new_date_inicio = data_referencia + delta_data if delta_data is not None else data_referencia
-                new_time_inicio = dados_atualizacao["data_inicio"].time() if "data_inicio" in dados_atualizacao else plantao_item.horario_inicio
-                if "data_fim" in dados_atualizacao:
-                    new_fim_dt = dados_atualizacao["data_fim"]
-                    ref_ini = dados_atualizacao.get("data_inicio", datetime.combine(plantao_item.data_inicio, plantao_item.horario_inicio))
-                    overnight = (new_fim_dt.date() - ref_ini.date()).days
-                    new_time_fim = new_fim_dt.time()
-                else:
-                    overnight = (plantao_item.data_fim - plantao_item.data_inicio).days
-                    new_time_fim = plantao_item.horario_fim
-                plantao_item.data_inicio = new_date_inicio
-                plantao_item.data_fim = new_date_inicio + timedelta(days=overnight)
-                plantao_item.horario_inicio = new_time_inicio
-                plantao_item.horario_fim = new_time_fim
-                if forcar_recorrencia is not None:
-                    plantao_item.recorrencia = forcar_recorrencia
-                plantao_item.pagamento_plantao = _calcular_data_pagamento(plantao_item.data_inicio)
-
-            if "recorrencia" in dados_atualizacao and nova_recorrencia is None:
-                for p in plantoes_futuros[1:]:
-                    db.delete(p)
-                _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio)
-
-            elif plantao_atual.recorrencia == "Semanal" and nova_recorrencia == "Quinzenal":
-                for p in plantoes_futuros[1:]:
-                    diferenca = (p.data_inicio - data_ancora).days
-                    if diferenca % 14 != 0:
-                        db.delete(p)
-                    else:
-                        _aplicar_updates(p, p.data_inicio, forcar_recorrencia="Quinzenal")
-                _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio, forcar_recorrencia="Quinzenal")
-
-            elif plantao_atual.recorrencia == "Quinzenal" and nova_recorrencia == "Semanal":
-                data_limite = local.data_final
-                _d, novos_count = data_ancora + timedelta(days=7), 0
-                while _d <= data_limite:
-                    if _d not in plantoes_por_data:
-                        novos_count += 1
-                    _d += timedelta(days=7)
-                PlanoService.verificar_limite_serie(db, current_user, novos_count)
-
-                for p in plantoes_futuros:
-                    _aplicar_updates(p, p.data_inicio, forcar_recorrencia="Semanal")
-
-                overnight_offset = (plantao_atual.data_fim - plantao_atual.data_inicio).days
-                if "data_fim" in dados_atualizacao and "data_inicio" in dados_atualizacao:
-                    overnight_offset = (dados_atualizacao["data_fim"].date() - dados_atualizacao["data_inicio"].date()).days
-                proxima_data = data_ancora + timedelta(days=7)
-                while proxima_data <= data_limite:
-                    if proxima_data not in plantoes_por_data:
-                        novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
-                        if isinstance(novo_valor, Decimal):
-                            novo_valor = float(novo_valor)
-                        novo_time_inicio = dados_atualizacao["data_inicio"].time() if "data_inicio" in dados_atualizacao else plantao_atual.horario_inicio
-                        novo_time_fim = dados_atualizacao["data_fim"].time() if "data_fim" in dados_atualizacao else plantao_atual.horario_fim
-                        novo_plantao = Plantao(
-                            usuario_id=current_user.id,
-                            local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
-                            valor=novo_valor,
-                            data_inicio=proxima_data,
-                            data_fim=proxima_data + timedelta(days=overnight_offset),
-                            horario_inicio=novo_time_inicio,
-                            horario_fim=novo_time_fim,
-                            recorrencia="Semanal",
-                            sobreaviso=dados_atualizacao.get("sobreaviso", plantao_atual.sobreaviso),
-                            notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
-                            notificacao_antecedencia_minutos=dados_atualizacao.get(
-                                "notificacao_antecedencia_minutos",
-                                plantao_atual.notificacao_antecedencia_minutos,
-                            ),
-                            notificado=False,
-                            executado=False,
-                            transferido=False,
-                            recebido_via_transferencia=False,
-                            pagamento_plantao=_calcular_data_pagamento(proxima_data),
-                        )
-                        db.add(novo_plantao)
-                        _novos_plantoes_criados.append(novo_plantao)
-                    proxima_data += timedelta(days=7)
-
-            elif plantao_atual.recorrencia in (None, "Unico") and nova_recorrencia in {"Semanal", "Quinzenal"}:
-                intervalo_dias = 7 if nova_recorrencia == "Semanal" else 14
-                data_limite = local.data_final
-                _d2, novos_count2 = plantao_selecionado.data_inicio + timedelta(days=intervalo_dias), 0
-                while _d2 <= data_limite:
-                    novos_count2 += 1
-                    _d2 += timedelta(days=intervalo_dias)
-                PlanoService.verificar_limite_serie(db, current_user, novos_count2)
-
-                _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio, forcar_recorrencia=nova_recorrencia)
-
-                overnight_offset2 = (plantao_atual.data_fim - plantao_atual.data_inicio).days
-                if "data_fim" in dados_atualizacao and "data_inicio" in dados_atualizacao:
-                    overnight_offset2 = (dados_atualizacao["data_fim"].date() - dados_atualizacao["data_inicio"].date()).days
-                proxima_data = plantao_selecionado.data_inicio + timedelta(days=intervalo_dias)
-                while proxima_data <= data_limite:
-                    novo_valor = dados_atualizacao.get("valor", plantao_atual.valor)
-                    if isinstance(novo_valor, Decimal):
-                        novo_valor = float(novo_valor)
-                    novo_time_inicio = dados_atualizacao["data_inicio"].time() if "data_inicio" in dados_atualizacao else plantao_atual.horario_inicio
-                    novo_time_fim = dados_atualizacao["data_fim"].time() if "data_fim" in dados_atualizacao else plantao_atual.horario_fim
-                    novo_plantao = Plantao(
-                        usuario_id=current_user.id,
-                        local_id=dados_atualizacao.get("local_id", plantao_atual.local_id),
-                        valor=novo_valor,
-                        data_inicio=proxima_data,
-                        data_fim=proxima_data + timedelta(days=overnight_offset2),
-                        horario_inicio=novo_time_inicio,
-                        horario_fim=novo_time_fim,
-                        recorrencia=nova_recorrencia,
-                        sobreaviso=dados_atualizacao.get("sobreaviso", plantao_atual.sobreaviso),
-                        notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
-                        notificacao_antecedencia_minutos=dados_atualizacao.get(
-                            "notificacao_antecedencia_minutos",
-                            plantao_atual.notificacao_antecedencia_minutos,
-                        ),
-                        notificado=False,
-                        executado=False,
-                        transferido=False,
-                        recebido_via_transferencia=False,
-                        pagamento_plantao=_calcular_data_pagamento(proxima_data),
-                    )
-                    db.add(novo_plantao)
-                    _novos_plantoes_criados.append(novo_plantao)
-                    proxima_data += timedelta(days=intervalo_dias)
-
-            else:
-                for p in plantoes_futuros:
-                    _aplicar_updates(p, p.data_inicio)
-
-            db.commit()
-            db.refresh(plantao_selecionado)
-            plantao = plantao_selecionado
+        plantao = PlantaoService.atualizar(db, current_user, plantao_id, payload, aplicar_em=payload.aplicar_em)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
     except HTTPException:
-        db.rollback()
         raise
     except Exception as exc:
-        db.rollback()
         raise HTTPException(status_code=500, detail="Erro ao atualizar plantão") from exc
-
-    logger.info("Plantão %s atualizado por %s", plantao_id, current_user.email)
-    _meses_sync.add((plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year))
-    for _p_novo in _novos_plantoes_criados:
-        _meses_sync.add((_p_novo.local_id, _p_novo.data_inicio.month, _p_novo.data_inicio.year))
-    for _local_s, _mes_s, _ano_s in _meses_sync:
-        FinanceiroRepository.sync_mes(db, _local_s, _mes_s, _ano_s)
     return APIResponse(
         success=True,
         message="Plantão atualizado com sucesso.",
@@ -1686,33 +1324,10 @@ def deletar_plantao(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    plantao_del = PlantaoRepository.get_by_id_and_user_incluindo_transferidos(db, plantao_id, current_user.id)
-    if plantao_del is None:
-        raise HTTPException(status_code=404, detail="Plantão não encontrado")
-    if plantao_del.transferido:
-        raise HTTPException(
-            status_code=409,
-            detail="Este plantão foi transferido e não pode mais ser editado pelo dono original.",
-        )
-
-    if aplicar_em == "somente_este":
-        plantoes_para_excluir = [plantao_del]
-    else:
-        # Mesmo critério de série do PATCH (list_futuros_da_serie): local +
-        # horário + recorrência + data_inicio >= a deste plantão. Já filtra
-        # transferido=False, então plantões já transferidos ficam de fora.
-        plantoes_para_excluir = PlantaoRepository.list_futuros_da_serie(db, plantao_del)
-
-    _meses_sync = {(p.local_id, p.data_inicio.month, p.data_inicio.year) for p in plantoes_para_excluir}
-    for p in plantoes_para_excluir:
-        PlantaoRepository.delete_by_user(db, p.id, current_user.id)
-    for local_id, mes, ano in _meses_sync:
-        FinanceiroRepository.sync_mes(db, local_id, mes, ano)
-
-    logger.info(
-        "Plantão %s deletado por %s (aplicar_em=%s, total=%d)",
-        plantao_id, current_user.email, aplicar_em, len(plantoes_para_excluir),
-    )
+    try:
+        PlantaoService.deletar(db, current_user, plantao_id, aplicar_em=aplicar_em)
+    except ErroDeDominio as erro:
+        raise http_de_erro_de_dominio(erro) from erro
     return APIResponse(
         success=True,
         message="Plantão deletado com sucesso.",
@@ -2031,17 +1646,6 @@ def recusar_transferencia(
     return APIResponse(success=True, message="Transferência recusada. O plantão foi devolvido ao remetente.", data=None)
 
 
-def _serializar_amigo_configuracao(config) -> AmigoConfiguracaoResponse:
-    return AmigoConfiguracaoResponse(
-        id=config.id,
-        usuario_id=config.usuario_id,
-        amigo_usuario_id=config.amigo_usuario_id,
-        modo_visibilidade=config.modo_visibilidade,
-        mostrar_valores=config.mostrar_valores,
-        cor=config.cor,
-        locais_permitidos=[item.local_id for item in config.locais_permitidos],
-        atualizado_em=config.atualizado_em,
-    )
 
 
 @router.get(
@@ -2374,34 +1978,8 @@ def listar_plantoes_de_amigos(
     return APIResponse(success=True, message="Plantões de amigos listados com sucesso.", data=itens)
 
 
-def _plantao_troca_resumo(plantao: Plantao) -> PlantaoTrocaResumo:
-    return PlantaoTrocaResumo(
-        id=plantao.id,
-        local_nome=plantao.local.nome_local if plantao.local else "",
-        data_inicio=plantao.data_inicio,
-        horario_inicio=plantao.horario_inicio,
-        data_fim=plantao.data_fim,
-        horario_fim=plantao.horario_fim,
-        valor=plantao.valor,
-    )
 
 
-def _plantao_recebido_troca_resumo(solicitacao: SolicitacaoTroca) -> PlantaoTrocaResumo | None:
-    if solicitacao.plantao_alvo_id is not None:
-        return _plantao_troca_resumo(solicitacao.plantao_alvo) if solicitacao.plantao_alvo else None
-
-    if solicitacao.plantao_recebido_local_id is None:
-        return None
-    local = solicitacao.plantao_recebido_local
-    return PlantaoTrocaResumo(
-        id=None,
-        local_nome=local.nome_local if local else "",
-        data_inicio=solicitacao.plantao_recebido_data_inicio,
-        horario_inicio=solicitacao.plantao_recebido_horario_inicio,
-        data_fim=solicitacao.plantao_recebido_data_fim,
-        horario_fim=solicitacao.plantao_recebido_horario_fim,
-        valor=solicitacao.plantao_recebido_valor,
-    )
 
 
 @router.post(

@@ -48,21 +48,16 @@ from app.services.erros import ErroDeDominio
 from app.services.troca_service import TrocaService
 from app.services.local_service import LocalService
 
-# As entidades ainda não extraídas para um serviço próprio continuam sendo
-# atendidas chamando os handlers de rota como funções Python comuns. A intenção
-# original — não reimplementar a regra de negócio e não desalinhar o sync do
-# resto do sistema — é correta; o meio é que está invertido, com a camada de
-# serviço dependendo da de apresentação (ver auditoria A-13). `Local` já migrou
-# para LocalService acima; plantão, troca e bonificação seguem por aqui até
-# receberem o mesmo tratamento.
-from app.routes.plantao_routes import (
+# A-13 (4/4): todas as entidades passam por serviços próprios. Este módulo não
+# importa mais nada de app.routes — antes chamava os handlers de plantão como
+# funções Python, e um default `Query(...)` vazado fez a exclusão de UM plantão
+# apagar a série inteira (AUD-001).
+from app.services.plantao_service import PlantaoService
+from app.services.serializacao import (
     _plantoes_com_troca,
     _plantao_recebido_troca_resumo,
     _plantao_troca_resumo,
     _serializar_amigo_configuracao,
-    atualizar_plantao,
-    criar_plantao,
-    deletar_plantao,
 )
 
 
@@ -254,11 +249,9 @@ class SyncService:
                 ))
                 return
             try:
-                # AUD-001: `aplicar_em` explícito. Chamado como função Python, o
-                # default da rota é o objeto `Query("somente_este")`, que é !=
-                # "somente_este" — e a exclusão caía no ramo "este e futuros",
-                # levando junto todo plantão do mesmo local e horário.
-                deletar_plantao(plantao_id=existente.id, aplicar_em="somente_este", db=db, current_user=current_user)
+                # AUD-001: o sync exclui sempre UM plantão — o item que o
+                # aparelho mandou. `aplicar_em` é obrigatório no serviço.
+                PlantaoService.deletar(db, current_user, existente.id, aplicar_em="somente_este")
             except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
@@ -302,14 +295,14 @@ class SyncService:
                 uuid_cliente=item.uuid_cliente,
             )
             try:
-                resposta = criar_plantao(payload=payload, db=db, current_user=current_user)
+                criado = PlantaoService.criar(db, current_user, payload)
             except (ErroDeDominio, HTTPException, IntegrityError) as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
                 return
-            uuid_para_plantao_id[item.uuid_cliente] = resposta.data.id
-            resultado.plantoes_criados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=resposta.data.id))
+            uuid_para_plantao_id[item.uuid_cliente] = criado.id
+            resultado.plantoes_criados.append(SyncItemResultado(uuid_cliente=item.uuid_cliente, id=criado.id))
             return
 
         if _as_utc(existente.atualizado_em) >= _as_utc(item.atualizado_em):
@@ -334,7 +327,7 @@ class SyncService:
             aplicar_em="somente_este",
         )
         try:
-            atualizar_plantao(plantao_id=existente.id, payload=payload, db=db, current_user=current_user)
+            PlantaoService.atualizar(db, current_user, existente.id, payload, aplicar_em="somente_este")
         except (ErroDeDominio, HTTPException, IntegrityError) as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
