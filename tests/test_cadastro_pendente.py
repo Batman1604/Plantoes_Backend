@@ -1,6 +1,5 @@
 import os
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 
@@ -16,15 +15,6 @@ class TestCadastroPendente(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
-
-    @classmethod
-    def tearDownClass(cls):
-        db_file = Path("test_cadastro_pendente.db")
-        try:
-            if db_file.exists():
-                db_file.unlink()
-        except PermissionError:
-            pass
 
     def _iniciar_cadastro(self, email, telefone="11999990000", codigo="123456"):
         # A entrega do código é simulada de propósito. Não há provedor de

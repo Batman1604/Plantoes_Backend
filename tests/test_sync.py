@@ -1,7 +1,6 @@
 import os
 import unittest
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 
 from fastapi.testclient import TestClient
@@ -29,15 +28,6 @@ class TestSync(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
-
-    @classmethod
-    def tearDownClass(cls):
-        db_file = Path("test_sync.db")
-        try:
-            if db_file.exists():
-                db_file.unlink()
-        except PermissionError:
-            pass
 
     def criar_usuario(self, email):
         response = self.client.post("/api/usuarios", json={

@@ -1,6 +1,5 @@
 import os
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 
@@ -14,15 +13,6 @@ class TestTrocas(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
-
-    @classmethod
-    def tearDownClass(cls):
-        db_file = Path("test_trocas.db")
-        try:
-            if db_file.exists():
-                db_file.unlink()
-        except PermissionError:
-            pass
 
     def criar_usuario(self, email):
         response = self.client.post("/api/usuarios", json={

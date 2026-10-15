@@ -1,6 +1,5 @@
 import os
 import unittest
-from pathlib import Path
 
 
 from fastapi.testclient import TestClient
@@ -12,15 +11,6 @@ class TestAmizades(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
-
-    @classmethod
-    def tearDownClass(cls):
-        db_file = Path("test_amizades.db")
-        try:
-            if db_file.exists():
-                db_file.unlink()
-        except PermissionError:
-            pass
 
     def criar_usuario(self, email, telefone=None, nome="Usuário Teste"):
         payload = {"nome": nome, "email": email, "senha": "SenhaForte123"}

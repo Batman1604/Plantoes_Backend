@@ -53,6 +53,33 @@ if _DB_PATH.exists():
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _chaves_estrangeiras_ligadas():
+    """Liga `PRAGMA foreign_keys` em toda conexão SQLite da suíte (plano 5.11).
+
+    O SQLite vem com as FKs DESLIGADAS. Sem isto, nenhum `ondelete` do
+    schema (CASCADE, SET NULL) acontecia nos testes, enquanto no Postgres
+    acontece — a exclusão em cascata de solicitações de troca (AUD-025), por
+    exemplo, passava despercebida. O pragma vale por conexão, então entra
+    como listener do engine, e o pool é descartado para que nenhuma conexão
+    aberta antes fique sem ele.
+    """
+    from sqlalchemy import event
+
+    from app.core.database import engine
+
+    def _ligar(dbapi_conn, _record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    event.listen(engine, "connect", _ligar)
+    engine.dispose()
+    yield
+    event.remove(engine, "connect", _ligar)
+    engine.dispose()
+
+
 @pytest.fixture(autouse=True, scope="module")
 def _banco_limpo_por_modulo():
     """Garante o schema e zera todas as tabelas antes de cada módulo de teste."""

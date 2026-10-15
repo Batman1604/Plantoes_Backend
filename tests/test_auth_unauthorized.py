@@ -1,6 +1,5 @@
 import os
 import unittest
-from pathlib import Path
 
 
 from fastapi.testclient import TestClient
@@ -12,15 +11,6 @@ class TestUnauthorizedResponse(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
-
-    @classmethod
-    def tearDownClass(cls):
-        db_file = Path("test_auth_unauthorized.db")
-        try:
-            if db_file.exists():
-                db_file.unlink()
-        except PermissionError:
-            pass
 
     def assert_unauthorized(self, response):
         self.assertEqual(response.status_code, 401)

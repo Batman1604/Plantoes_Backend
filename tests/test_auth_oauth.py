@@ -1,7 +1,6 @@
 import os
 import time
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 os.environ["GOOGLE_CLIENT_ID"] = "test-google-client"
@@ -68,12 +67,6 @@ class TestAuthOAuth(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._jwks_patch.stop()
-        db_file = Path("test_auth_oauth.db")
-        try:
-            if db_file.exists():
-                db_file.unlink()
-        except PermissionError:
-            pass
 
     # ---------------------------------------------------------------
     # Google

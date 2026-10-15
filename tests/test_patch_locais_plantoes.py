@@ -1,7 +1,6 @@
 import os
 import unittest
 from datetime import date, timedelta
-from pathlib import Path
 from uuid import uuid4
 
 
@@ -14,15 +13,6 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(app)
-
-    @classmethod
-    def tearDownClass(cls):
-        db_file = Path("test_patch_locais_plantoes.db")
-        try:
-            if db_file.exists():
-                db_file.unlink()
-        except PermissionError:
-            pass
 
     def criar_usuario_e_token(self):
         # Email E telefone precisam ser únicos: o cadastro recusa telefone
