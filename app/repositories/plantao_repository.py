@@ -535,7 +535,8 @@ class PlantaoRepository:
         return db.scalars(stmt).all()
 
     @staticmethod
-    def delete_by_user(db: Session, plantao_id: int, usuario_id: int) -> bool:
+    def delete_by_user(db: Session, plantao_id: int, usuario_id: int, confirmar: bool = True) -> bool:
+        """`confirmar=False` deixa o commit para quem chama (A-14)."""
         plantao = db.scalar(
             select(Plantao).where(
                 Plantao.id == plantao_id,
@@ -550,7 +551,8 @@ class PlantaoRepository:
         SolicitacaoTrocaRepository.registrar_exclusoes_da_cascata(db, plantao_ids=[plantao.id])
         SyncRepository.registrar_exclusao(db, usuario_id, "plantao", plantao.id, plantao.uuid_cliente)
         db.delete(plantao)
-        db.commit()
+        if confirmar:
+            db.commit()
         return True
 
     @staticmethod
@@ -750,8 +752,11 @@ class CadastroPendenteRepository:
 
 class FinanceiroRepository:
     @staticmethod
-    def sync_mes(db: Session, local_id: int | None, mes: int, ano: int) -> None:
-        """Recalcula e persiste o total financeiro de um local/mês a partir dos plantões e bonificações."""
+    def sync_mes(db: Session, local_id: int | None, mes: int, ano: int, confirmar: bool = True) -> None:
+        """Recalcula e persiste o total financeiro de um local/mês a partir dos plantões e bonificações.
+
+        `confirmar=False` deixa o commit para quem chama, para a gravação do
+        plantão e a do total irem na mesma transação (A-14)."""
         if local_id is None:
             # Plantão desvinculado (AUD-006): não há local a totalizar.
             return
@@ -792,14 +797,11 @@ class FinanceiroRepository:
         if total == 0:
             if existente:
                 db.delete(existente)
-                db.commit()
-            return
-
-        if existente:
+        elif existente:
             existente.valor = total
-            db.commit()
         else:
             db.add(Financeiro(local_id=local_id, valor=total, data=date(ano, mes, 1), em_atraso=False))
+        if confirmar:
             db.commit()
 
     @staticmethod

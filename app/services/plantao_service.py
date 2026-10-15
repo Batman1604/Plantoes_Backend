@@ -78,29 +78,35 @@ class PlantaoService:
             pagamento_plantao = None
 
         try:
-            plantao = PlantaoRepository.create(
-                db,
-                PlantaoCreateWithUsuario(
-                    usuario_id=usuario.id,
-                    local_id=payload.local_id,
-                    valor=payload.valor if payload.valor is not None else Decimal("0"),
-                    data_inicio=inicio_dt.date(),
-                    data_fim=fim_dt.date(),
-                    horario_inicio=inicio_dt.time(),
-                    horario_fim=fim_dt.time(),
-                    recorrencia=recorrencia,
-                    sobreaviso=payload.sobreaviso,
-                    descricao=payload.descricao,
-                    notificacao_ativa=payload.notificacao_ativa,
-                    notificacao_antecedencia_minutos=payload.notificacao_antecedencia_minutos,
-                    executado=False,
-                    pagamento_plantao=pagamento_plantao,
+            # A-14: plantão e total do mês numa transação só. Antes
+            # PlantaoRepository.create e sync_mes faziam commit cada um, e uma
+            # falha no segundo deixava o plantão gravado e a rota respondia 500.
+            plantao = Plantao(**PlantaoCreateWithUsuario(
+                usuario_id=usuario.id,
+                local_id=payload.local_id,
+                valor=payload.valor if payload.valor is not None else Decimal("0"),
+                data_inicio=inicio_dt.date(),
+                data_fim=fim_dt.date(),
+                horario_inicio=inicio_dt.time(),
+                horario_fim=fim_dt.time(),
+                recorrencia=recorrencia,
+                sobreaviso=payload.sobreaviso,
+                descricao=payload.descricao,
+                notificacao_ativa=payload.notificacao_ativa,
+                notificacao_antecedencia_minutos=payload.notificacao_antecedencia_minutos,
+                executado=False,
+                pagamento_plantao=pagamento_plantao,
 
-                    transferido=False,
-                    uuid_cliente=payload.uuid_cliente,
-                ),
+                transferido=False,
+                uuid_cliente=payload.uuid_cliente,
+            ).model_dump())
+            db.add(plantao)
+            db.flush()
+            FinanceiroRepository.sync_mes(
+                db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year, confirmar=False
             )
-            FinanceiroRepository.sync_mes(db, plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year)
+            db.commit()
+            db.refresh(plantao)
         except Exception:
             db.rollback()
             raise
@@ -386,10 +392,18 @@ class PlantaoService:
             plantoes_para_excluir = PlantaoRepository.list_futuros_da_serie(db, plantao_del)
 
         _meses_sync = {(p.local_id, p.data_inicio.month, p.data_inicio.year) for p in plantoes_para_excluir}
-        for p in plantoes_para_excluir:
-            PlantaoRepository.delete_by_user(db, p.id, usuario.id)
-        for local_id, mes, ano in _meses_sync:
-            FinanceiroRepository.sync_mes(db, local_id, mes, ano)
+        # A-14: a série inteira e os totais numa transação só. Antes cada
+        # exclusão fazia o próprio commit dentro do laço, e uma falha no meio
+        # deixava a série pela metade.
+        try:
+            for p in plantoes_para_excluir:
+                PlantaoRepository.delete_by_user(db, p.id, usuario.id, confirmar=False)
+            for local_id, mes, ano in _meses_sync:
+                FinanceiroRepository.sync_mes(db, local_id, mes, ano, confirmar=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
         logger.info(
             "Plantão %s deletado por %s (aplicar_em=%s, total=%d)",
