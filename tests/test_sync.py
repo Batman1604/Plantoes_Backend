@@ -102,7 +102,10 @@ class TestSync(unittest.TestCase):
             }],
         }
         response = self.client.post("/api/sync/push", headers=headers, json=payload)
-        self.assertEqual(response.status_code, 422)
+        # AUD-007 (contrato K3): o item inválido vira erro 422 DELE, não do lote.
+        self.assertEqual(response.status_code, 200, response.text)
+        erros = response.json()["data"]["erros"]
+        self.assertEqual([(e["uuid_cliente"], e["status_code"]) for e in erros], [("plantao-sem-local", 422)])
 
     # ---------------------------------------------------------------
     # push: edição com last-write-wins
@@ -386,7 +389,10 @@ class TestSync(unittest.TestCase):
             }],
         }
         response = self.client.post("/api/sync/push", headers=headers, json=payload)
-        self.assertEqual(response.status_code, 422)
+        # AUD-007 (contrato K3): o item inválido vira erro 422 DELE, não do lote.
+        self.assertEqual(response.status_code, 200, response.text)
+        erros = response.json()["data"]["erros"]
+        self.assertEqual([(e["uuid_cliente"], e["status_code"]) for e in erros], [("troca-sem-plantao", 422)])
 
     def test_push_troca_deletada_gera_tombstone_visivel_no_pull(self):
         headers, usuario_id = self.criar_usuario("push_troca_delete@example.com")

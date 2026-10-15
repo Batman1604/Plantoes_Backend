@@ -1,7 +1,9 @@
+import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel, ValidationError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models import User
@@ -60,6 +62,8 @@ from app.services.serializacao import (
     _serializar_amigo_configuracao,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _as_utc(value: datetime | None) -> datetime | None:
     """SQLite não preserva timezone (mesmo em colunas DateTime(timezone=True), os valores
@@ -73,19 +77,63 @@ def _as_utc(value: datetime | None) -> datetime | None:
     return value
 
 
-def _erro_de_excecao(exc: "HTTPException | IntegrityError | ErroDeDominio") -> tuple[str, int]:
+def _detalhe_de_validacao(exc: ValidationError) -> str:
+    """Texto legível de uma ValidationError do pydantic, campo a campo."""
+    partes = []
+    for erro in exc.errors():
+        campo = ".".join(str(parte) for parte in erro.get("loc", ()))
+        partes.append(f"{campo}: {erro['msg']}" if campo else erro["msg"])
+    return "; ".join(partes)
+
+
+# AUD-007: falhas que viram erro DO ITEM (SyncErro), sem derrubar o lote.
+# ValidationError cobre o *Create/*Update montado a partir de um item que passou
+# no Sync*Item mas viola uma regra da criação (duração > 48 h, fim antes do
+# início). SQLAlchemyError cobre a falha de banco ao gravar o item; o lote
+# segue com rollback só deste item e a causa vai para o log.
+_FALHAS_DO_ITEM = (ErroDeDominio, HTTPException, ValidationError, SQLAlchemyError)
+
+
+def _erro_de_excecao(exc: Exception) -> tuple[str, int]:
     """Extrai (mensagem, status_code) de uma falha ao aplicar um item do lote de push.
     IntegrityError não tem .detail/.status_code (não é um HTTPException) — cobre
     principalmente uma corrida de uuid_cliente duplicado entre dois pushes quase
     simultâneos do mesmo dispositivo (ex.: retry após timeout de rede colidindo com a
     tentativa original ainda em voo). Sempre devolve algo serializável em SyncErro, para
     que ESTE item vire um erro isolado (com retry pelo próprio SyncEngine no cliente) em
-    vez de derrubar o lote inteiro com um 500 — ver SyncRoutes.push."""
+    vez de derrubar o lote inteiro com um 500 — ver SyncRoutes.push.
+
+    Chamada sempre de dentro do `except`, então logger.exception leva o traceback."""
     if isinstance(exc, ErroDeDominio):
         return exc.mensagem, exc.status_http
     if isinstance(exc, HTTPException):
         return str(exc.detail), exc.status_code
-    return "Conflito ao sincronizar este item (tente novamente).", 409
+    if isinstance(exc, ValidationError):
+        return _detalhe_de_validacao(exc), 422
+    if isinstance(exc, IntegrityError):
+        return "Conflito ao sincronizar este item (tente novamente).", 409
+    logger.exception("Falha de banco ao aplicar item do push")
+    return "Erro ao gravar este item no servidor (tente novamente).", 500
+
+
+def _validar_itens(modelo: type[BaseModel], entidade: str, brutos, resultado: SyncPushResponse) -> list:
+    """AUD-007 (contrato K3): valida cada item do push separadamente. O item
+    fora do schema vira SyncErro 422 com o motivo; os outros seguem. Antes a
+    validação era do corpo inteiro e um item ruim dava 422 no lote todo."""
+    validos = []
+    for bruto in brutos or []:
+        if isinstance(bruto, modelo):
+            validos.append(bruto)
+            continue
+        try:
+            validos.append(modelo.model_validate(bruto))
+        except ValidationError as exc:
+            uuid_cliente = bruto.get("uuid_cliente") if isinstance(bruto, dict) else None
+            resultado.erros.append(SyncErro(
+                entidade=entidade, uuid_cliente=str(uuid_cliente or ""),
+                detalhe=_detalhe_de_validacao(exc), status_code=422,
+            ))
+    return validos
 
 
 class SyncService:
@@ -97,27 +145,27 @@ class SyncService:
     def push(
         db: Session,
         current_user: User,
-        locais: list[SyncLocalItem],
-        plantoes: list[SyncPlantaoItem],
-        trocas: list[SyncTrocaItem] | None = None,
-        bonificacoes: list[SyncBonificacaoItem] | None = None,
+        locais: list[SyncLocalItem | dict],
+        plantoes: list[SyncPlantaoItem | dict],
+        trocas: list[SyncTrocaItem | dict] | None = None,
+        bonificacoes: list[SyncBonificacaoItem | dict] | None = None,
     ) -> SyncPushResponse:
         resultado = SyncPushResponse(servidor_timestamp=datetime.now(UTC))
         uuid_para_local_id: dict[str, int] = {}
         uuid_para_plantao_id: dict[str, int] = {}
 
-        for item in locais:
+        for item in _validar_itens(SyncLocalItem, "local", locais, resultado):
             SyncService._push_local(db, current_user, item, resultado, uuid_para_local_id)
 
-        for item in plantoes:
+        for item in _validar_itens(SyncPlantaoItem, "plantao", plantoes, resultado):
             SyncService._push_plantao(db, current_user, item, resultado, uuid_para_local_id, uuid_para_plantao_id)
 
         # Trocas/bonificações são processadas por último de propósito: uma troca ou
         # bonificação pode referenciar (via uuid_cliente) um plantão criado neste mesmo lote.
-        for item in trocas or []:
+        for item in _validar_itens(SyncTrocaItem, "troca", trocas, resultado):
             SyncService._push_troca(db, current_user, item, resultado, uuid_para_local_id, uuid_para_plantao_id)
 
-        for item in bonificacoes or []:
+        for item in _validar_itens(SyncBonificacaoItem, "bonificacao", bonificacoes, resultado):
             SyncService._push_bonificacao(db, current_user, item, resultado, uuid_para_plantao_id)
 
         resultado.servidor_timestamp = datetime.now(UTC)
@@ -153,7 +201,7 @@ class SyncService:
                 return
             try:
                 LocalService.deletar(db, current_user, existente.id)
-            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+            except _FALHAS_DO_ITEM as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -173,19 +221,21 @@ class SyncService:
                     status_code=410,
                 ))
                 return
-            payload = LocalCreate(
-                nome_local=item.nome_local,
-                data_inicio=item.data_inicio,
-                data_final=item.data_final,
-                dia_pagamento=item.dia_pagamento,
-                util_corrido=item.util_corrido,
-                cor=item.cor,
-                endereco_local=item.endereco_local,
-                uuid_cliente=item.uuid_cliente,
-            )
             try:
+                # AUD-007: montar o *Create dentro do try — os validadores dele
+                # (ex.: data_inicio > data_final) viram erro deste item.
+                payload = LocalCreate(
+                    nome_local=item.nome_local,
+                    data_inicio=item.data_inicio,
+                    data_final=item.data_final,
+                    dia_pagamento=item.dia_pagamento,
+                    util_corrido=item.util_corrido,
+                    cor=item.cor,
+                    endereco_local=item.endereco_local,
+                    uuid_cliente=item.uuid_cliente,
+                )
                 criado = LocalService.criar(db, current_user, payload)
-            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+            except _FALHAS_DO_ITEM as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -203,18 +253,18 @@ class SyncService:
             ))
             return
 
-        payload = LocalUpdate(
-            nome_local=item.nome_local,
-            data_inicio=item.data_inicio,
-            data_final=item.data_final,
-            dia_pagamento=item.dia_pagamento,
-            util_corrido=item.util_corrido,
-            cor=item.cor,
-            endereco_local=item.endereco_local,
-        )
         try:
+            payload = LocalUpdate(
+                nome_local=item.nome_local,
+                data_inicio=item.data_inicio,
+                data_final=item.data_final,
+                dia_pagamento=item.dia_pagamento,
+                util_corrido=item.util_corrido,
+                cor=item.cor,
+                endereco_local=item.endereco_local,
+            )
             LocalService.atualizar(db, current_user, existente.id, payload)
-        except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+        except _FALHAS_DO_ITEM as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="local", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -252,7 +302,7 @@ class SyncService:
                 # AUD-001: o sync exclui sempre UM plantão — o item que o
                 # aparelho mandou. `aplicar_em` é obrigatório no serviço.
                 PlantaoService.deletar(db, current_user, existente.id, aplicar_em="somente_este")
-            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+            except _FALHAS_DO_ITEM as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -281,22 +331,25 @@ class SyncService:
                     status_code=410,
                 ))
                 return
-            payload = PlantaoCreate(
-                valor=item.valor,
-                data_inicio=item.data_inicio,
-                data_fim=item.data_fim,
-                recorrencia=item.recorrencia,
-                sobreaviso=item.sobreaviso,
-                descricao=item.descricao,
-                local_id=local_id,
-                pagamento_plantao=item.pagamento_plantao,
-                notificacao_ativa=item.notificacao_ativa,
-                notificacao_antecedencia_minutos=item.notificacao_antecedencia_minutos,
-                uuid_cliente=item.uuid_cliente,
-            )
             try:
+                # AUD-007: PlantaoCreate recusa duração > 48 h; montado fora do
+                # try, a ValidationError virava 500 do lote inteiro depois de os
+                # itens anteriores já estarem gravados.
+                payload = PlantaoCreate(
+                    valor=item.valor,
+                    data_inicio=item.data_inicio,
+                    data_fim=item.data_fim,
+                    recorrencia=item.recorrencia,
+                    sobreaviso=item.sobreaviso,
+                    descricao=item.descricao,
+                    local_id=local_id,
+                    pagamento_plantao=item.pagamento_plantao,
+                    notificacao_ativa=item.notificacao_ativa,
+                    notificacao_antecedencia_minutos=item.notificacao_antecedencia_minutos,
+                    uuid_cliente=item.uuid_cliente,
+                )
                 criado = PlantaoService.criar(db, current_user, payload)
-            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+            except _FALHAS_DO_ITEM as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -313,22 +366,22 @@ class SyncService:
             ))
             return
 
-        payload = PlantaoUpdate(
-            valor=item.valor,
-            data_inicio=item.data_inicio,
-            data_fim=item.data_fim,
-            recorrencia=item.recorrencia,
-            sobreaviso=item.sobreaviso,
-            descricao=item.descricao,
-            local_id=local_id,
-            notificacao_ativa=item.notificacao_ativa,
-            notificacao_antecedencia_minutos=item.notificacao_antecedencia_minutos,
-            pagamento_plantao=item.pagamento_plantao,
-            aplicar_em="somente_este",
-        )
         try:
+            payload = PlantaoUpdate(
+                valor=item.valor,
+                data_inicio=item.data_inicio,
+                data_fim=item.data_fim,
+                recorrencia=item.recorrencia,
+                sobreaviso=item.sobreaviso,
+                descricao=item.descricao,
+                local_id=local_id,
+                notificacao_ativa=item.notificacao_ativa,
+                notificacao_antecedencia_minutos=item.notificacao_antecedencia_minutos,
+                pagamento_plantao=item.pagamento_plantao,
+                aplicar_em="somente_este",
+            )
             PlantaoService.atualizar(db, current_user, existente.id, payload, aplicar_em="somente_este")
-        except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+        except _FALHAS_DO_ITEM as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="plantao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -369,7 +422,7 @@ class SyncService:
                 return
             try:
                 TrocaService.deletar(db, current_user, existente.id)
-            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+            except _FALHAS_DO_ITEM as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -408,43 +461,48 @@ class SyncService:
             ))
             return
 
-        plantao_recebido_payload = None
+        recebido_local_id = None
         if item.plantao_recebido is not None:
             recebido_item = item.plantao_recebido
-            local_id = recebido_item.local_id
-            if local_id is None and recebido_item.local_uuid_cliente is not None:
-                local_id = uuid_para_local_id.get(recebido_item.local_uuid_cliente)
-                if local_id is None:
+            recebido_local_id = recebido_item.local_id
+            if recebido_local_id is None and recebido_item.local_uuid_cliente is not None:
+                recebido_local_id = uuid_para_local_id.get(recebido_item.local_uuid_cliente)
+                if recebido_local_id is None:
                     local_existente = LocalRepository.get_by_uuid_cliente(db, recebido_item.local_uuid_cliente, current_user.id)
-                    local_id = local_existente.id if local_existente else None
-            if local_id is None:
+                    recebido_local_id = local_existente.id if local_existente else None
+            if recebido_local_id is None:
                 resultado.erros.append(SyncErro(
                     entidade="troca", uuid_cliente=item.uuid_cliente,
                     detalhe="Local do plantão recebido (local_id ou local_uuid_cliente) não encontrado.", status_code=404,
                 ))
                 return
-            plantao_recebido_payload = PlantaoRecebidoTrocaCreate(
-                local_id=local_id,
-                data_inicio=recebido_item.data_inicio,
-                horario_inicio=recebido_item.horario_inicio,
-                data_fim=recebido_item.data_fim,
-                horario_fim=recebido_item.horario_fim,
-                valor=recebido_item.valor,
-                sobreaviso=recebido_item.sobreaviso,
-                descricao=recebido_item.descricao,
-                recebido_de=recebido_item.recebido_de,
-                uuid_cliente=recebido_item.uuid_cliente,
-            )
 
-        payload = TrocaOperacaoCreate(
-            plantao_transferido_id=plantao_transferido_id,
-            transferido_para=item.transferido_para,
-            plantao_recebido=plantao_recebido_payload,
-            uuid_cliente=item.uuid_cliente,
-        )
         try:
+            # AUD-007: só a montagem do payload entrou no try (a regra da troca
+            # não mudou) — PlantaoRecebidoTrocaCreate recusa fim antes do início.
+            plantao_recebido_payload = None
+            if item.plantao_recebido is not None:
+                recebido_item = item.plantao_recebido
+                plantao_recebido_payload = PlantaoRecebidoTrocaCreate(
+                    local_id=recebido_local_id,
+                    data_inicio=recebido_item.data_inicio,
+                    horario_inicio=recebido_item.horario_inicio,
+                    data_fim=recebido_item.data_fim,
+                    horario_fim=recebido_item.horario_fim,
+                    valor=recebido_item.valor,
+                    sobreaviso=recebido_item.sobreaviso,
+                    descricao=recebido_item.descricao,
+                    recebido_de=recebido_item.recebido_de,
+                    uuid_cliente=recebido_item.uuid_cliente,
+                )
+            payload = TrocaOperacaoCreate(
+                plantao_transferido_id=plantao_transferido_id,
+                transferido_para=item.transferido_para,
+                plantao_recebido=plantao_recebido_payload,
+                uuid_cliente=item.uuid_cliente,
+            )
             registrada = TrocaService.registrar(db, current_user, payload)
-        except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+        except _FALHAS_DO_ITEM as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="troca", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -488,7 +546,7 @@ class SyncService:
                 return
             try:
                 BonificacaoService.deletar(db, current_user, existente.id)
-            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+            except _FALHAS_DO_ITEM as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -517,16 +575,16 @@ class SyncService:
                     status_code=410,
                 ))
                 return
-            payload = BonificacaoCreate(
-                plantao_id=plantao_id,
-                local_id=item.local_id,
-                valor=item.valor,
-                descricao=item.descricao,
-                uuid_cliente=item.uuid_cliente,
-            )
             try:
+                payload = BonificacaoCreate(
+                    plantao_id=plantao_id,
+                    local_id=item.local_id,
+                    valor=item.valor,
+                    descricao=item.descricao,
+                    uuid_cliente=item.uuid_cliente,
+                )
                 criada = BonificacaoService.criar(db, current_user, payload)
-            except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+            except _FALHAS_DO_ITEM as exc:
                 db.rollback()
                 detalhe, status_code = _erro_de_excecao(exc)
                 resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))
@@ -542,10 +600,10 @@ class SyncService:
             ))
             return
 
-        payload = BonificacaoUpdate(valor=item.valor, descricao=item.descricao)
         try:
+            payload = BonificacaoUpdate(valor=item.valor, descricao=item.descricao)
             BonificacaoService.atualizar(db, current_user, existente.id, payload)
-        except (ErroDeDominio, HTTPException, IntegrityError) as exc:
+        except _FALHAS_DO_ITEM as exc:
             db.rollback()
             detalhe, status_code = _erro_de_excecao(exc)
             resultado.erros.append(SyncErro(entidade="bonificacao", uuid_cliente=item.uuid_cliente, detalhe=detalhe, status_code=status_code))

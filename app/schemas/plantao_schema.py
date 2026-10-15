@@ -1,6 +1,6 @@
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Generic, Literal, Optional, TypeVar
+from typing import Any, Generic, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from pydantic.generics import GenericModel
@@ -282,6 +282,18 @@ def _combinar_data_horarios(values: dict) -> dict:
     return values
 
 
+def _sem_fuso(value: datetime | None) -> datetime | None:
+    """Ver PlantaoBase.recusar_fuso. Compartilhado com PlantaoUpdate e
+    SyncPlantaoItem (FUSO-01): a recusa existia só na criação, e a edição
+    aceitava o valor com fuso e quebrava com TypeError (naive x aware) — 500."""
+    if value is not None and value.tzinfo is not None:
+        raise ValueError(
+            "data_inicio e data_fim não aceitam fuso horário: envie a hora local "
+            "do plantão (ex.: 2026-04-10T07:00:00), sem sufixo Z nem offset."
+        )
+    return value
+
+
 class PlantaoBase(BaseModel):
     valor: Optional[Decimal] = Field(
         default=None,
@@ -329,12 +341,7 @@ class PlantaoBase(BaseModel):
         existir quando virou data_inicio/data_fim. O teste passou a falhar por
         outro motivo e a proteção sumiu sem ninguém notar.
         """
-        if value.tzinfo is not None:
-            raise ValueError(
-                "data_inicio e data_fim não aceitam fuso horário: envie a hora local "
-                "do plantão (ex.: 2026-04-10T07:00:00), sem sufixo Z nem offset."
-            )
-        return value
+        return _sem_fuso(value)
 
     @field_validator("recorrencia", mode="before")
     @classmethod
@@ -417,6 +424,13 @@ class PlantaoUpdate(BaseModel):
         if isinstance(values, dict):
             _combinar_data_horarios(values)
         return values
+
+    @field_validator("data_inicio", "data_fim")
+    @classmethod
+    def recusar_fuso(cls, value: datetime | None) -> datetime | None:
+        # FUSO-01: mesma regra da criação. Sem ela, PATCH só com data_inicio
+        # "...Z" chegava a ajustar_fim_intervalo e comparava aware com naive.
+        return _sem_fuso(value)
 
     @field_validator("recorrencia", mode="before")
     @classmethod
@@ -958,6 +972,12 @@ class SyncPlantaoItem(BaseModel):
     atualizado_em: datetime = Field(description="Hora da última alteração feita no dispositivo (relógio local).")
     deletado: bool = Field(default=False, description="True se o registro foi excluído localmente.")
 
+    @field_validator("data_inicio", "data_fim")
+    @classmethod
+    def recusar_fuso(cls, value: datetime) -> datetime:
+        # FUSO-01: o item passava aqui e só explodia depois, em PlantaoCreate.
+        return _sem_fuso(value)
+
     @field_validator("recorrencia", mode="before")
     @classmethod
     def normalizar_recorrencia(cls, value):
@@ -1038,10 +1058,19 @@ class SyncBonificacaoItem(BaseModel):
 
 
 class SyncPushRequest(BaseModel):
-    locais: list[SyncLocalItem] = Field(default_factory=list, max_length=500)
-    plantoes: list[SyncPlantaoItem] = Field(default_factory=list, max_length=500)
-    trocas: list[SyncTrocaItem] = Field(default_factory=list, max_length=500)
-    bonificacoes: list[SyncBonificacaoItem] = Field(default_factory=list, max_length=500)
+    """AUD-007: os itens chegam como objetos crus e cada um é validado contra o
+    seu Sync*Item SEPARADAMENTE, em SyncService.push. Com `list[SyncLocalItem]`
+    aqui, um único item fora do schema (ex.: descrição de bonificação com 501
+    caracteres) fazia o FastAPI responder 422 ao lote inteiro: nada era
+    aplicado, a fila do aparelho não avançava e o cliente também não fazia o
+    pull. Agora o item inválido vira `erros[]` com status_code 422 e os demais
+    seguem. O formato de cada item continua sendo o de SyncLocalItem,
+    SyncPlantaoItem, SyncTrocaItem e SyncBonificacaoItem."""
+
+    locais: list[dict[str, Any]] = Field(default_factory=list, max_length=500, description="Itens no formato SyncLocalItem.")
+    plantoes: list[dict[str, Any]] = Field(default_factory=list, max_length=500, description="Itens no formato SyncPlantaoItem.")
+    trocas: list[dict[str, Any]] = Field(default_factory=list, max_length=500, description="Itens no formato SyncTrocaItem.")
+    bonificacoes: list[dict[str, Any]] = Field(default_factory=list, max_length=500, description="Itens no formato SyncBonificacaoItem.")
 
 
 class SyncItemResultado(BaseModel):

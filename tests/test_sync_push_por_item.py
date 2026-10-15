@@ -1,0 +1,79 @@
+"""AUD-007 (contrato K3): falha de um item do push não derruba o lote.
+
+Os casos de schema (bonificação com descrição longa, plantão de 72 h, data com
+"Z") estão em tests/auditoria/test_aud203_push_lote.py. Aqui fica o que eles
+não cobrem: falha de BANCO ao gravar um item (SQLAlchemyError que não é
+IntegrityError) e o FUSO-01 no campo data_fim do PATCH.
+"""
+
+import unittest
+from datetime import UTC, datetime
+from unittest.mock import patch
+from uuid import uuid4
+
+from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
+
+from app.core.security import create_access_token
+from app.core.database import SessionLocal
+from app.main import app
+from app.models import User
+from app.services.local_service import LocalService
+
+
+def _usuario_direto_no_banco() -> dict:
+    """Cria o usuário pelo banco (sem POST /api/usuarios) e devolve os headers."""
+    with SessionLocal() as db:
+        usuario = User(nome="Push", email=f"push-{uuid4().hex[:10]}@example.com")
+        db.add(usuario)
+        db.commit()
+        return {"Authorization": f"Bearer {create_access_token(usuario.id)}"}
+
+
+def _local(uuid: str) -> dict:
+    return {"uuid_cliente": uuid, "nome_local": "Hospital", "data_inicio": "2026-07-01",
+            "data_final": "2026-07-31", "atualizado_em": datetime.now(UTC).isoformat()}
+
+
+class TestFalhaDeBancoNumItem(unittest.TestCase):
+    def test_falha_de_banco_vira_erro_do_item_e_os_outros_seguem(self):
+        client = TestClient(app, raise_server_exceptions=False)
+        headers = _usuario_direto_no_banco()
+        criar_real = LocalService.criar
+        chamadas = []
+
+        def _criar(db, usuario, payload):
+            chamadas.append(payload.uuid_cliente)
+            if len(chamadas) == 1:
+                raise OperationalError("INSERT", {}, Exception("conexão caiu"))
+            return criar_real(db, usuario, payload)
+
+        with patch("app.services.sync_service.LocalService.criar", side_effect=_criar), \
+             self.assertLogs("app.services.sync_service", level="ERROR") as logs:
+            resposta = client.post("/api/sync/push", headers=headers,
+                                   json={"locais": [_local("falha-1"), _local("ok-2")]})
+
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        dados = resposta.json()["data"]
+        self.assertEqual([(e["uuid_cliente"], e["status_code"]) for e in dados["erros"]], [("falha-1", 500)])
+        self.assertEqual([r["uuid_cliente"] for r in dados["locais_criados"]], ["ok-2"])
+        self.assertTrue(any("Traceback" in linha for linha in logs.output), "a causa precisa ir para o log")
+
+
+class TestFusoNaEdicao(unittest.TestCase):
+    def test_patch_com_data_fim_com_fuso_responde_422__FUSO01(self):
+        client = TestClient(app, raise_server_exceptions=False)
+        headers = _usuario_direto_no_banco()
+        local = client.post("/api/locais", headers=headers, json={
+            "nome_local": "Hospital", "data_inicio": "2026-07-01", "data_final": "2026-07-31"}).json()["data"]
+        plantao = client.post("/api/plantoes", headers=headers, json={
+            "local_id": local["id"], "data_inicio": "2026-07-17T07:00:00",
+            "data_fim": "2026-07-17T19:00:00"}).json()["data"]
+
+        resposta = client.patch(f"/api/plantoes/{plantao['id']}", headers=headers,
+                                json={"data_fim": "2026-07-17T20:00:00-03:00"})
+        self.assertEqual(resposta.status_code, 422, resposta.text)
+
+
+if __name__ == "__main__":
+    unittest.main()
