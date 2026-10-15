@@ -9,6 +9,18 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
+def _envelhecer_plantao(plantao_id: int) -> None:
+    from sqlalchemy import update
+
+    from app.core.database import SessionLocal
+    from app.models import Plantao
+
+    with SessionLocal() as db:
+        db.execute(update(Plantao).where(Plantao.id == plantao_id)
+                   .values(atualizado_em=datetime.now(UTC) - timedelta(minutes=1)))
+        db.commit()
+
+
 def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
@@ -207,7 +219,10 @@ class TestSync(unittest.TestCase):
     def test_pull_retorna_apenas_alteracoes_desde_since(self):
         headers, _ = self.criar_usuario("pull_since@example.com")
         local = self.criar_local(headers)
-        self.criar_plantao(headers, local["id"], data_inicio="2026-03-01T08:00:00", data_fim="2026-03-01T16:00:00")
+        antigo = self.criar_plantao(headers, local["id"], data_inicio="2026-03-01T08:00:00", data_fim="2026-03-01T16:00:00")
+        # AUD-023: o pull recua o `since` em 5 s para não perder commit tardio,
+        # então o plantão "antigo" precisa estar mais velho que essa margem.
+        _envelhecer_plantao(antigo["id"])
 
         marco = self.client.get("/api/sync/pull", headers=headers).json()["data"]["servidor_timestamp"]
 

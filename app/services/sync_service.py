@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ValidationError
@@ -63,6 +63,10 @@ from app.services.serializacao import (
 )
 
 logger = logging.getLogger(__name__)
+
+# AUD-023: quanto o `since` do pull é recuado para cobrir commits que
+# terminaram depois do cursor anterior.
+_MARGEM_DO_CURSOR = timedelta(seconds=5)
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -635,7 +639,19 @@ class SyncService:
         # (ver auditoria A-04). A divergência de fuso entre Postgres e SQLite,
         # que era o motivo original de filtrar em Python, é resolvida por
         # instante_para_o_banco, no repositório.
+        #
+        # AUD-023 (contrato K6): o cursor devolvido é tirado ANTES das
+        # consultas, e o `since` recebido é recuado em _MARGEM_DO_CURSOR. Antes
+        # o servidor_timestamp era tirado no fim: uma escrita concorrente
+        # (outro aparelho, um amigo aceitando troca) com atualizado_em
+        # carimbado no flush e commitada depois destas consultas ficava com
+        # atualizado_em < cursor e nunca mais voltava no incremental. A
+        # margem reentrega os últimos segundos; o cliente aplica de forma
+        # idempotente.
+        servidor_timestamp = datetime.now(UTC)
         desde = _as_utc(desde)
+        if desde is not None:
+            desde = desde - _MARGEM_DO_CURSOR
 
         locais_alterados = LocalRepository.list_by_user(db, current_user.id, desde=desde)
         plantoes_alterados = PlantaoRepository.list_by_user(db, current_user.id, desde=desde)
@@ -699,7 +715,7 @@ class SyncService:
         ]
 
         return SyncPullResponse(
-            servidor_timestamp=datetime.now(UTC),
+            servidor_timestamp=servidor_timestamp,
             locais=[LocalResponse.model_validate(l) for l in locais_alterados],
             plantoes=_plantoes_com_troca(db, plantoes_alterados),
             amizades=itens_amizade,
