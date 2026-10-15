@@ -20,6 +20,10 @@ def _serializar_plantao(plantao: Plantao, troca: Troca | None) -> PlantaoRespons
     vez — ver _plantoes_com_troca.
     """
     result = PlantaoResponse.model_validate(plantao).model_dump()
+    if plantao.local_id is None and troca is not None and troca.local and not result["local_nome"]:
+        # AUD-006 (contrato K1): o dono do local o excluiu e o plantão
+        # recebido foi desvinculado; o nome do hospital ficou na troca.
+        result["local_nome"] = troca.local
     if troca is None:
         return PlantaoResponse.model_validate(result)
 

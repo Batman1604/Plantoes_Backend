@@ -83,7 +83,12 @@ class Local(Base):
     )
 
     usuario: Mapped[User] = relationship(back_populates="locais")
-    plantoes: Mapped[list["Plantao"]] = relationship(back_populates="local", cascade="all, delete-orphan")
+    # Sem delete-orphan (AUD-006): um plantão RECEBIDO por outro usuário aponta
+    # para o local de quem cedeu. Ao excluir o local (ou a conta), esse
+    # plantão é desvinculado (local_id NULL) e continua na conta de quem
+    # recebeu — ver LocalRepository._desvincular_plantoes_de_terceiros. Com
+    # delete-orphan, tirá-lo da coleção o apagaria.
+    plantoes: Mapped[list["Plantao"]] = relationship(back_populates="local", cascade="all")
 
 
 class Plantao(Base):
@@ -103,7 +108,12 @@ class Plantao(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
-    local_id: Mapped[int] = mapped_column(ForeignKey("locais.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Nulável e SET NULL (AUD-006, decisão do usuário: desvincular): quando o
+    # dono do local o exclui, ou exclui a conta, o plantão que OUTRO usuário
+    # recebeu dele continua existindo, sem local. O nome do hospital fica na
+    # troca (Troca.local) e volta no `local_nome` da resposta. Os plantões do
+    # próprio dono são excluídos pelo ORM, com tombstone.
+    local_id: Mapped[int | None] = mapped_column(ForeignKey("locais.id", ondelete="SET NULL"), nullable=True, index=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     data_inicio: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     data_fim: Mapped[date] = mapped_column(Date, nullable=False)
@@ -136,7 +146,7 @@ class Plantao(Base):
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
 
-    local: Mapped[Local] = relationship(back_populates="plantoes")
+    local: Mapped[Local | None] = relationship(back_populates="plantoes")
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
     transferencia: Mapped["Transferencia | None"] = relationship(
         back_populates="plantao",

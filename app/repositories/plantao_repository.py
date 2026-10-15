@@ -227,6 +227,32 @@ class UserRepository:
         user = db.scalar(select(User).where(User.id == user_id))
         if user is None:
             return False
+
+        # AUD-025: a exclusão da conta apaga em cascata (no banco) amizades,
+        # configurações de amigo e solicitações de troca que envolvem esta
+        # pessoa. Sem tombstone, o aparelho de cada amigo ficava com o amigo e
+        # a solicitação "fantasma" para sempre. Só o OUTRO lado precisa dele:
+        # os tombstones da própria conta somem junto com ela.
+        SolicitacaoTrocaRepository.registrar_exclusoes_da_cascata(db, usuario_excluido_id=user_id)
+        amizades = db.scalars(
+            select(Amizade).where(
+                or_(Amizade.solicitante_usuario_id == user_id, Amizade.destinatario_usuario_id == user_id)
+            )
+        ).all()
+        for amizade in amizades:
+            outro = amizade.destinatario_usuario_id if amizade.solicitante_usuario_id == user_id else amizade.solicitante_usuario_id
+            SyncRepository.registrar_exclusao(db, outro, "amizade", amizade.id)
+        configs_dos_amigos = db.scalars(
+            select(AmigoConfiguracao).where(AmigoConfiguracao.amigo_usuario_id == user_id)
+        ).all()
+        for config in configs_dos_amigos:
+            SyncRepository.registrar_exclusao(db, config.usuario_id, "amigo_configuracao", config.id)
+
+        # AUD-006: plantões que outros usuários receberam desta pessoa apontam
+        # para os locais dela. Continuam na conta de quem recebeu, sem local.
+        for local in user.locais:
+            LocalRepository._desvincular_plantoes_de_terceiros(db, local)
+
         db.delete(user)
         db.commit()
         return True
@@ -305,19 +331,53 @@ class LocalRepository:
         return local
 
     @staticmethod
+    def _desvincular_plantoes_de_terceiros(db: Session, local: Local) -> None:
+        """AUD-006 (decisão do usuário: desvincular; contrato K1).
+
+        O plantão que alguém RECEBEU por solicitação de troca é um clone que
+        aponta para o local de quem cedeu. Excluir esse local (ou a conta de
+        quem cedeu) apagava o plantão de outra pessoa, e o tombstone ia para o
+        usuário errado. Agora o plantão de terceiro continua, com local_id
+        NULL: a alteração carimba atualizado_em, então o pull incremental de
+        quem recebeu o traz; nenhum tombstone é gerado para ele.
+
+        O nome do hospital fica em Troca.local (coluna que já existia, "nome
+        do local" da troca): toda troca que apontava para este local recebe o
+        nome, e _serializar_plantao o devolve em `local_nome` quando o
+        plantão não tem mais local. Nenhuma coluna nova (regra 3).
+        """
+        for troca in db.scalars(select(Troca).where(Troca.local_id == local.id)).all():
+            if not troca.local:
+                troca.local = local.nome_local
+            # O banco faria isto (FK SET NULL), mas sem passar pelo onupdate:
+            # pelo ORM, atualizado_em muda e o pull do dono da troca a traz.
+            troca.local_id = None
+        for plantao in list(local.plantoes):
+            if plantao.usuario_id != local.usuario_id:
+                plantao.local = None
+
+    @staticmethod
     def delete_by_user(db: Session, local_id: int, usuario_id: int) -> bool:
         local = db.scalar(select(Local).where(Local.id == local_id, Local.usuario_id == usuario_id))
         if local is None:
             return False
-        # O cascade="all, delete-orphan" de Local.plantoes apaga os plantões no
-        # banco junto com o local, mas só na sessão do ORM — nunca passa por
+        LocalRepository._desvincular_plantoes_de_terceiros(db, local)
+        # Daqui em diante local.plantoes só tem plantões do dono.
+        proprios = [p for p in local.plantoes if p.usuario_id == usuario_id]
+        # AUD-025: solicitações que citam estes plantões ou este local somem
+        # em cascata no banco; os dois lados precisam do tombstone.
+        SolicitacaoTrocaRepository.registrar_exclusoes_da_cascata(
+            db, plantao_ids=[p.id for p in proprios], local_id=local.id
+        )
+        # O cascade de Local.plantoes apaga os plantões no banco junto com o
+        # local, mas só na sessão do ORM — nunca passa por
         # PlantaoRepository.delete_by_user, que é quem grava o tombstone de
         # sync. Sem isso aqui, o /sync/pull incremental de outro dispositivo
         # nunca fica sabendo que esses plantões sumiram (não aparecem nem como
         # alterados, já que não existem mais, nem em "exclusões"), e ficam
         # presos no calendário/cards de pagamento do cliente até um resync
-        # completo (novo login).
-        for plantao in local.plantoes:
+        # completo (novo login). Só os do dono (AUD-006).
+        for plantao in proprios:
             SyncRepository.registrar_exclusao(db, usuario_id, "plantao", plantao.id, plantao.uuid_cliente)
         SyncRepository.registrar_exclusao(db, usuario_id, "local", local.id, local.uuid_cliente)
         db.delete(local)
@@ -485,14 +545,21 @@ class PlantaoRepository:
         )
         if plantao is None:
             return False
+        # AUD-025: solicitações de troca que citam este plantão somem em
+        # cascata no banco; os dois lados precisam do tombstone.
+        SolicitacaoTrocaRepository.registrar_exclusoes_da_cascata(db, plantao_ids=[plantao.id])
         SyncRepository.registrar_exclusao(db, usuario_id, "plantao", plantao.id, plantao.uuid_cliente)
         db.delete(plantao)
         db.commit()
         return True
 
     @staticmethod
-    def list_ids_e_datas_por_local(db: Session, local_id: int) -> list[tuple[int, date]]:
-        stmt = select(Plantao.id, Plantao.data_inicio).where(Plantao.local_id == local_id)
+    def list_ids_e_datas_por_local(db: Session, local_id: int, usuario_id: int) -> list[tuple[int, date]]:
+        # AUD-006: só os plantões do DONO do local. O plantão recebido por
+        # outro usuário aponta para este local, mas não é de quem o edita.
+        stmt = select(Plantao.id, Plantao.data_inicio).where(
+            Plantao.local_id == local_id, Plantao.usuario_id == usuario_id
+        )
         return db.execute(stmt).all()
 
 
@@ -682,25 +749,33 @@ class CadastroPendenteRepository:
 
 class FinanceiroRepository:
     @staticmethod
-    def sync_mes(db: Session, local_id: int, mes: int, ano: int) -> None:
+    def sync_mes(db: Session, local_id: int | None, mes: int, ano: int) -> None:
         """Recalcula e persiste o total financeiro de um local/mês a partir dos plantões e bonificações."""
+        if local_id is None:
+            # Plantão desvinculado (AUD-006): não há local a totalizar.
+            return
+        dono_id = db.scalar(select(Local.usuario_id).where(Local.id == local_id))
+        if dono_id is None:
+            return
+        # AUD-055: só plantões do DONO do local e não transferidos. Antes a
+        # soma contava o plantão cedido (transferido=True) E o clone de quem o
+        # recebeu (que aponta para o mesmo local) — o valor entrava em dobro e
+        # o financeiro de uma conta mudava quando a outra editava bonificação.
+        filtro_plantao = (
+            Plantao.local_id == local_id,
+            Plantao.usuario_id == dono_id,
+            Plantao.transferido.is_(False),
+            func.extract("month", Plantao.data_inicio) == mes,
+            func.extract("year", Plantao.data_inicio) == ano,
+        )
         total_plantoes = db.scalar(
-            select(func.coalesce(func.sum(Plantao.valor), 0))
-            .where(
-                Plantao.local_id == local_id,
-                func.extract("month", Plantao.data_inicio) == mes,
-                func.extract("year", Plantao.data_inicio) == ano,
-            )
+            select(func.coalesce(func.sum(Plantao.valor), 0)).where(*filtro_plantao)
         ) or 0
 
         total_bonificacoes = db.scalar(
             select(func.coalesce(func.sum(Bonificacao.valor), 0))
             .join(Plantao, Plantao.id == Bonificacao.plantao_id)
-            .where(
-                Plantao.local_id == local_id,
-                func.extract("month", Plantao.data_inicio) == mes,
-                func.extract("year", Plantao.data_inicio) == ano,
-            )
+            .where(*filtro_plantao)
         ) or 0
 
         total = float(total_plantoes) + float(total_bonificacoes)
@@ -1147,6 +1222,38 @@ class SolicitacaoTrocaRepository:
         db.commit()
         db.refresh(solicitacao)
         return solicitacao
+
+    @staticmethod
+    def registrar_exclusoes_da_cascata(
+        db: Session,
+        *,
+        plantao_ids: list[int] | tuple = (),
+        local_id: int | None = None,
+        usuario_excluido_id: int | None = None,
+    ) -> None:
+        """AUD-025: grava o tombstone `solicitacao_troca` das solicitações que o
+        BANCO vai apagar em cascata (FKs ondelete=CASCADE para plantão, local e
+        usuário), para os dois lados — mesmo tratamento de cancelar_pendente.
+        Sem isto o aparelho de quem recebeu a solicitação a mantinha para
+        sempre e, ao aceitar, recebia 404.
+
+        Na exclusão de conta (`usuario_excluido_id`), só o outro lado recebe:
+        os tombstones da conta excluída somem junto com ela."""
+        condicoes = []
+        if plantao_ids:
+            condicoes.append(SolicitacaoTroca.plantao_transferido_id.in_(plantao_ids))
+            condicoes.append(SolicitacaoTroca.plantao_alvo_id.in_(plantao_ids))
+        if local_id is not None:
+            condicoes.append(SolicitacaoTroca.plantao_recebido_local_id == local_id)
+        if usuario_excluido_id is not None:
+            condicoes.append(SolicitacaoTroca.remetente_usuario_id == usuario_excluido_id)
+            condicoes.append(SolicitacaoTroca.destinatario_usuario_id == usuario_excluido_id)
+        if not condicoes:
+            return
+        for solicitacao in db.scalars(select(SolicitacaoTroca).where(or_(*condicoes))).all():
+            for usuario_id in (solicitacao.remetente_usuario_id, solicitacao.destinatario_usuario_id):
+                if usuario_id != usuario_excluido_id:
+                    SyncRepository.registrar_exclusao(db, usuario_id, "solicitacao_troca", solicitacao.id)
 
     @staticmethod
     def cancelar_pendente(db: Session, solicitacao: SolicitacaoTroca) -> None:

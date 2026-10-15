@@ -441,7 +441,9 @@ class PlantaoUpdate(BaseModel):
 class PlantaoResponse(BaseModel):
     id: int
     usuario_id: int
-    local_id: int
+    # Nulo quando o dono do local o excluiu (AUD-006, contrato K1): o plantão
+    # recebido continua, e local_nome traz o nome do hospital.
+    local_id: Optional[int] = None
     local_nome: str = ""
     local_cor: Optional[str] = None
     valor: Decimal = Decimal("0")

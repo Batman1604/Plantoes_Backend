@@ -65,7 +65,7 @@ class LocalService:
                     setattr(local, campo, valor)
 
             if recalcular and dia_novo is not None:
-                LocalService._recalcular_pagamentos(db, local_id, dia_novo, util_novo)
+                LocalService._recalcular_pagamentos(db, local, dia_novo, util_novo)
 
             db.commit()
             db.refresh(local)
@@ -77,8 +77,11 @@ class LocalService:
         return local
 
     @staticmethod
-    def _recalcular_pagamentos(db: Session, local_id: int, dia_pagamento: int, util_corrido: bool) -> None:
-        plantoes = PlantaoRepository.list_ids_e_datas_por_local(db, local_id)
+    def _recalcular_pagamentos(db: Session, local: Local, dia_pagamento: int, util_corrido: bool) -> None:
+        # AUD-006: só os plantões do dono do local. O clone que outro usuário
+        # recebeu aponta para este local, mas editar o local não pode alterar
+        # a data de pagamento nem o atualizado_em do plantão de outra pessoa.
+        plantoes = PlantaoRepository.list_ids_e_datas_por_local(db, local.id, local.usuario_id)
         if not plantoes:
             return
 
