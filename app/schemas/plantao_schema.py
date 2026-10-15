@@ -797,6 +797,14 @@ class TrocaResponse(BaseModel):
     horario_fim: Optional[time] = None
     uuid_cliente: Optional[str] = None
     atualizado_em: Optional[datetime] = None
+    # AUD-060 (contrato K5): colunas que já existiam e não saíam no contrato.
+    # Sem elas, o pull de `trocas` gravava nulo por cima da observação que o
+    # cliente tinha acabado de receber pelo plantão.
+    observacao_transferir: Optional[str] = None
+    observacao_receber: Optional[str] = None
+    criado_em: Optional[datetime] = None
+    contraparte_usuario_id: Optional[int] = None
+    contraparte_usuario_id_receber: Optional[int] = None
 
     class Config:
         from_attributes = True
