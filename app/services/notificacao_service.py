@@ -2,8 +2,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import logging
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
 
 from app.models import Plantao
 
@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 # auditoria A-16). Era o único datetime.now() sem fuso no backend, e estava
 # justamente onde a hora de parede importa.
 FUSO_DO_PLANTAO = ZoneInfo("America/Sao_Paulo")
+
+# Teto de notificacao_antecedencia_minutos aceito pelos schemas (48 h). Define
+# até onde, à frente de "agora", pode estar o início de um plantão que já
+# está na janela de aviso.
+_ANTECEDENCIA_MAXIMA = timedelta(minutes=2880)
 
 
 def agora_em_hora_de_parede() -> datetime:
@@ -44,17 +49,21 @@ class NotificacaoService:
     ) -> list[Plantao]:
         """`agora` é injetável para teste; em produção vem de
         agora_em_hora_de_parede()."""
-        stmt = (
-            select(Plantao)
-            .where(
-                Plantao.notificacao_ativa.is_(True),
-                Plantao.notificado.is_(False),
-            )
-            .options(joinedload(Plantao.usuario))
-        )
-        plantoes = db.scalars(stmt).unique().all()
-
         agora = agora or agora_em_hora_de_parede()
+        # AUD-027: a janela é filtrada em SQL. Antes vinham TODOS os plantões
+        # não notificados de todos os usuários a cada minuto — e um plantão
+        # cuja janela já passou (cadastro retroativo, worker parado) nunca
+        # ficava notificado=True, então era recarregado para sempre. Na
+        # janela, o início está entre agora e agora + antecedência máxima;
+        # o corte exato por plantão continua abaixo.
+        stmt = select(Plantao).where(
+            Plantao.notificacao_ativa.is_(True),
+            Plantao.notificado.is_(False),
+            Plantao.data_inicio >= agora.date(),
+            Plantao.data_inicio <= (agora + _ANTECEDENCIA_MAXIMA).date(),
+        )
+        plantoes = db.scalars(stmt).all()
+
         plantoes_para_notificar = []
 
         for plantao in plantoes:
@@ -66,14 +75,11 @@ class NotificacaoService:
         return plantoes_para_notificar
 
     @staticmethod
-    def enviar_email_notificacao(email: str, plantao: Plantao) -> None:
-        mensagem = (
-            f"Notificação para usuário {email}: seu plantão está agendado para "
-            f"{NotificacaoService.obter_datetime_inicio(plantao).strftime('%Y-%m-%d %H:%M')} "
-            f"(valor R${plantao.valor})."
-        )
-        logger.info("Enviando notificação para plantão %s do usuário %s", plantao.id, email)
-        logger.info(mensagem)
+    def registrar_notificacao(plantao: Plantao) -> None:
+        # Não há envio real: as notificações que o usuário vê são locais, no
+        # app. Antes esta linha de log levava o e-mail e o valor do plantão
+        # (A-11/AUD-027); fica só o que identifica o registro.
+        logger.info("Plantão %s na janela de aviso (usuário %s)", plantao.id, plantao.usuario_id)
 
     @staticmethod
     def processar_notificacoes(db: Session) -> None:
@@ -84,14 +90,19 @@ class NotificacaoService:
 
         for plantao in plantoes:
             try:
-                if plantao.usuario is not None:
-                    email = plantao.usuario.email
-                else:
-                    email = "destinatario@desconhecido"
-
-                NotificacaoService.enviar_email_notificacao(email, plantao)
-                plantao.notificado = True
-                db.add(plantao)
+                NotificacaoService.registrar_notificacao(plantao)
+                # AUD-022 (contrato K6): marcar `notificado` NÃO pode mexer em
+                # atualizado_em. Pelo ORM, o onupdate carimbava o plantão com a
+                # hora do servidor, e a edição que o médico tinha feito offline
+                # antes disso perdia no last-write-wins e era descartada. O
+                # UPDATE explícito com atualizado_em = ele mesmo impede o
+                # onupdate (que só entra quando a coluna não está no SET).
+                db.execute(
+                    update(Plantao)
+                    .where(Plantao.id == plantao.id)
+                    .values(notificado=True, atualizado_em=Plantao.atualizado_em)
+                    .execution_options(synchronize_session=False)
+                )
                 db.commit()
             except Exception:
                 db.rollback()
