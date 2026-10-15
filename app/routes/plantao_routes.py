@@ -1226,6 +1226,9 @@ def criar_plantao(payload: PlantaoCreate, db: Session = Depends(get_db), current
     except HTTPException:
         raise
     except Exception as exc:
+        # AUD-056: sem isto o 500 saía sem causa no log (o handler de
+        # HTTPException registra só o `detail`).
+        logger.exception("Falha ao criar plantão do usuário %s", current_user.id)
         raise HTTPException(status_code=500, detail="Erro ao criar plantão") from exc
     return APIResponse(
         success=True,
@@ -1271,6 +1274,7 @@ def atualizar_plantao(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Falha ao atualizar plantão %s", plantao_id)  # AUD-056
         raise HTTPException(status_code=500, detail="Erro ao atualizar plantão") from exc
     return APIResponse(
         success=True,
@@ -1471,6 +1475,7 @@ def transferir_plantao(
         )
     except Exception as exc:
         db.rollback()
+        logger.exception("Falha ao registrar transferência do plantão %s", plantao_id)  # AUD-056
         raise HTTPException(status_code=500, detail="Erro ao registrar transferência") from exc
 
     # Envio de mensagem não reverte a transferência em caso de falha
@@ -1589,6 +1594,7 @@ def aceitar_transferencia(
         db.refresh(novo_plantao)
     except Exception as exc:
         db.rollback()
+        logger.exception("Falha ao aceitar transferência %s", transferencia_id)  # AUD-056
         raise HTTPException(status_code=500, detail="Erro ao aceitar transferência") from exc
 
     logger.info(
@@ -1634,6 +1640,7 @@ def recusar_transferencia(
         db.commit()
     except Exception as exc:
         db.rollback()
+        logger.exception("Falha ao recusar transferência %s", transferencia_id)  # AUD-056
         raise HTTPException(status_code=500, detail="Erro ao recusar transferência") from exc
 
     logger.info(
