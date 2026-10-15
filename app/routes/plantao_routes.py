@@ -2149,9 +2149,7 @@ def listar_amizades(
         # avatar. Só acompanha a resposta depois que a outra parte ACEITOU —
         # numa solicitação pendente, quem recebe nunca consentiu com nada (ver
         # auditoria C-09).
-        amigo = AmizadeAmigoResumo.model_validate(outro)
-        if amizade.status != "aceito":
-            amigo.telefone = None
+        amigo = AmizadeAmigoResumo.da_amizade(outro, amizade.status)
         itens.append(
             AmizadeListItem(
                 id=amizade.id,

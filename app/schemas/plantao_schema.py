@@ -859,6 +859,16 @@ class AmizadeAmigoResumo(UsuarioResumo):
     usuários (ver auditoria C-09)."""
     telefone: Optional[str] = None
 
+    @classmethod
+    def da_amizade(cls, outro, status_amizade: str) -> "AmizadeAmigoResumo":
+        """Único lugar que monta o resumo do amigo. Antes a regra do telefone
+        vivia só em listar_amizades, e GET /api/sync/pull montava o mesmo item
+        sem ela — reabrindo a varredura do C-09 por outro caminho (AUD-002)."""
+        resumo = cls.model_validate(outro)
+        if status_amizade != "aceito":
+            resumo.telefone = None
+        return resumo
+
 
 class AmizadeListItem(BaseModel):
     id: int

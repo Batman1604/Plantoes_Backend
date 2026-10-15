@@ -607,7 +607,7 @@ class SyncService:
                 id=amizade.id,
                 status=amizade.status,
                 papel=papel,
-                amigo=AmizadeAmigoResumo.model_validate(outro),
+                amigo=AmizadeAmigoResumo.da_amizade(outro, amizade.status),
                 configuracao_id=config.id if config else None,
                 modo_visibilidade=config.modo_visibilidade if config else None,
                 mostrar_valores=config.mostrar_valores if config else None,
