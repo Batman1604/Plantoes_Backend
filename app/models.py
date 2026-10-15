@@ -427,6 +427,13 @@ class SyncExclusao(Base):
     /api/sync/pull). Sem isso, uma exclusão física normal (DELETE ... WHERE id = ...) não
     deixaria nenhum rastro para um dispositivo que estava offline no momento."""
     __tablename__ = "sync_exclusoes"
+    __table_args__ = (
+        # A-05: SyncRepository.foi_excluido roda a cada item NOVO de todo push
+        # (usuario_id + entidade + uuid_cliente) numa tabela que só cresce —
+        # tombstones não são podados. Com os índices separados, o banco filtra
+        # por um deles e varre o resto.
+        Index("ix_sync_exclusoes_usuario_entidade_uuid", "usuario_id", "entidade", "uuid_cliente"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
