@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -1026,8 +1026,23 @@ class AmizadeRepository:
         return list(db.scalars(stmt).all())
 
     @staticmethod
-    def aceitar(db: Session, amizade: Amizade) -> tuple[Amizade, AmigoConfiguracao, AmigoConfiguracao]:
-        """Marca a amizade como aceita e cria as duas linhas de configuração (uma por direção)."""
+    def aceitar(db: Session, amizade: Amizade) -> tuple[Amizade, AmigoConfiguracao, AmigoConfiguracao] | None:
+        """Marca a amizade como aceita e cria as duas linhas de configuração (uma por direção).
+
+        Devolve None se a amizade já não estava pendente (A-08): dois aceites
+        simultâneos liam "pendente" e os dois tentavam criar as
+        configurações — o segundo batia no UNIQUE e virava 500. A troca de
+        status é condicional e atômica; só quem a fez cria as configurações.
+        """
+        trocou = db.execute(
+            update(Amizade)
+            .where(Amizade.id == amizade.id, Amizade.status == "pendente")
+            .values(status="aceito", atualizado_em=datetime.now(UTC))
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if trocou != 1:
+            db.rollback()
+            return None
         amizade.status = "aceito"
         amizade.atualizado_em = datetime.now(UTC)
 
@@ -1040,7 +1055,13 @@ class AmizadeRepository:
             amigo_usuario_id=amizade.solicitante_usuario_id,
         )
         db.add_all([amizade, config_solicitante, config_destinatario])
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Configuração do par já existente: mesma situação de um aceite
+            # concorrente. Conflito, nunca 500.
+            db.rollback()
+            return None
         db.refresh(amizade)
         db.refresh(config_solicitante)
         db.refresh(config_destinatario)
@@ -1053,10 +1074,20 @@ class AmizadeRepository:
             SyncRepository.registrar_exclusao(db, usuario_id, "amizade", amizade.id)
 
     @staticmethod
-    def rejeitar(db: Session, amizade: Amizade) -> None:
+    def rejeitar(db: Session, amizade: Amizade) -> bool:
+        """False se a amizade já não estava pendente (A-08: um aceite pode ter
+        vencido a corrida; apagar a linha deixaria as configurações órfãs)."""
         AmizadeRepository._registrar_exclusao_dos_dois_lados(db, amizade)
-        db.delete(amizade)
+        apagadas = db.execute(
+            delete(Amizade)
+            .where(Amizade.id == amizade.id, Amizade.status == "pendente")
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if apagadas != 1:
+            db.rollback()
+            return False
         db.commit()
+        return True
 
     @staticmethod
     def cancelar_pendente(db: Session, amizade: Amizade) -> None:
@@ -1216,9 +1247,26 @@ class SolicitacaoTrocaRepository:
         return list(db.scalars(stmt).all())
 
     @staticmethod
-    def marcar_respondida(db: Session, solicitacao: SolicitacaoTroca, status: str) -> SolicitacaoTroca:
-        solicitacao.status = status
-        solicitacao.respondido_em = datetime.now(UTC)
+    def responder_se_pendente(db: Session, solicitacao_id: int, status: str) -> bool:
+        """A-08: troca o status de 'pendente' para `status` numa única
+        instrução condicional, SEM commit. Devolve False se outra requisição já
+        respondeu. Dois aceites simultâneos liam "pendente" e os dois criavam
+        clone e Troca; agora só quem consegue esta troca de status prossegue
+        (no Postgres o segundo UPDATE espera a trava da linha e, depois do
+        commit do primeiro, não casa mais o WHERE)."""
+        return db.execute(
+            update(SolicitacaoTroca)
+            .where(SolicitacaoTroca.id == solicitacao_id, SolicitacaoTroca.status == "pendente")
+            .values(status=status, respondido_em=datetime.now(UTC))
+            .execution_options(synchronize_session=False)
+        ).rowcount == 1
+
+    @staticmethod
+    def marcar_respondida(db: Session, solicitacao: SolicitacaoTroca, status: str) -> SolicitacaoTroca | None:
+        """None se a solicitação já não estava pendente (A-08)."""
+        if not SolicitacaoTrocaRepository.responder_se_pendente(db, solicitacao.id, status):
+            db.rollback()
+            return None
         db.commit()
         db.refresh(solicitacao)
         return solicitacao

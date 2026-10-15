@@ -19,15 +19,11 @@ from sqlalchemy import event
 
 from app.core.database import engine
 from app.main import app
+from tests.fixtures_usuario import SENHA, criar_usuario_no_banco
 
-SENHA = "SenhaForte123"
 
-
-def _usuario(client, email):
-    r = client.post("/api/usuarios", json={"nome": email.split("@")[0], "email": email, "senha": SENHA})
-    assert r.status_code == 201, r.text
-    dados = r.json()["data"]
-    return dados["usuario"]["id"], {"Authorization": f"Bearer {dados['access_token']}"}
+def _usuario(_client, email):
+    return criar_usuario_no_banco(email)
 
 
 def _fk_ligadas(caso: unittest.TestCase) -> None:

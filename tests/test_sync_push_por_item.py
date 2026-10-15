@@ -9,25 +9,17 @@ IntegrityError) e o FUSO-01 no campo data_fim do PATCH.
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import patch
-from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
 
-from app.core.security import create_access_token
-from app.core.database import SessionLocal
 from app.main import app
-from app.models import User
 from app.services.local_service import LocalService
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 def _usuario_direto_no_banco() -> dict:
-    """Cria o usuário pelo banco (sem POST /api/usuarios) e devolve os headers."""
-    with SessionLocal() as db:
-        usuario = User(nome="Push", email=f"push-{uuid4().hex[:10]}@example.com")
-        db.add(usuario)
-        db.commit()
-        return {"Authorization": f"Bearer {create_access_token(usuario.id)}"}
+    return criar_usuario_no_banco()[1]
 
 
 def _local(uuid: str) -> dict:

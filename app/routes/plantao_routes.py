@@ -1792,7 +1792,10 @@ def aceitar_amizade(
     if amizade.status != "pendente":
         raise HTTPException(status_code=404, detail="Solicitação de amizade não está pendente.")
 
-    amizade, _, _ = AmizadeRepository.aceitar(db, amizade)
+    aceita = AmizadeRepository.aceitar(db, amizade)
+    if aceita is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta solicitação de amizade já foi respondida.")
+    amizade, _, _ = aceita
     logger.info("Amizade %s aceita por %s", amizade_id, current_user.email)
     return APIResponse(success=True, message="Amizade aceita.", data=AmizadeResponse.model_validate(amizade))
 
@@ -1816,7 +1819,8 @@ def rejeitar_amizade(
     if amizade.status != "pendente":
         raise HTTPException(status_code=404, detail="Solicitação de amizade não está pendente.")
 
-    AmizadeRepository.rejeitar(db, amizade)
+    if not AmizadeRepository.rejeitar(db, amizade):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta solicitação de amizade já foi respondida.")
     logger.info("Amizade %s rejeitada por %s", amizade_id, current_user.email)
     return APIResponse(success=True, message="Solicitação de amizade rejeitada.", data=None)
 
@@ -2146,6 +2150,13 @@ def aceitar_solicitacao_troca(
     if ganho_destinatario > perda_destinatario:
         PlanoService.verificar_limite_serie(db, destinatario, ganho_destinatario - perda_destinatario)
 
+    # A-08: a resposta é reservada ANTES de qualquer escrita, com UPDATE
+    # condicional ao status 'pendente'. Sem isto, dois aceites simultâneos
+    # passavam pela checagem acima e os dois criavam clone e Troca.
+    if not SolicitacaoTrocaRepository.responder_se_pendente(db, solicitacao.id, "aceita"):
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta solicitação de troca já foi respondida.")
+
     try:
         if plantao_transferido is not None:
             plantao_transferido.transferido = True
@@ -2325,7 +2336,8 @@ def rejeitar_solicitacao_troca(
     ):
         raise HTTPException(status_code=404, detail="Solicitação de troca não encontrada ou não está pendente.")
 
-    SolicitacaoTrocaRepository.marcar_respondida(db, solicitacao, "rejeitada")
+    if SolicitacaoTrocaRepository.marcar_respondida(db, solicitacao, "rejeitada") is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta solicitação de troca já foi respondida.")
     logger.info("Solicitação de troca %s rejeitada por %s", solicitacao_id, current_user.email)
     return APIResponse(success=True, message="Solicitação de troca rejeitada.", data=None)
 
