@@ -106,7 +106,14 @@ def verificar_migracoes() -> None:
         cfg = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
         head = ScriptDirectory.from_config(cfg).get_current_head()
         atual = _revisao_do_banco()
-    except Exception:
+    except Exception as exc:
+        # AUD-044: em produção, não conseguir verificar (alembic.ini fora da
+        # imagem, banco inacessível na subida) recusa subir — antes só avisava
+        # e o servidor subia "saudável" sem saber o estado do schema.
+        if settings.environment == "production":
+            raise RuntimeError(
+                "Não foi possível verificar o estado das migrações; em produção o servidor não sobe assim."
+            ) from exc
         logger.warning("Não foi possível verificar o estado das migrações.", exc_info=True)
         return
 
@@ -254,14 +261,32 @@ def notificacao_worker() -> None:
         time.sleep(60)
 
 
+def _banco_responde() -> bool:
+    """AUD-044: `SELECT 1` no banco. Antes o /health respondia 200 com o banco
+    fora do ar, e o painel da hospedagem dizia que estava tudo bem."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        logger.exception("Banco de dados não respondeu ao /health")
+        return False
+
+
 @app.get("/health", tags=["health"])
 def health_check():
-    """Endpoint de saúde que verifica se o aplicativo e o worker de notificações estão ativos."""
+    """Endpoint de saúde: banco respondendo e worker de notificações ativo."""
     worker_alive = _notificacao_thread is not None and _notificacao_thread.is_alive()
+    banco_ok = _banco_responde()
     if not worker_alive:
         logger.error("Worker de notificações não está em execução")
+    if not worker_alive or not banco_ok:
         return JSONResponse(
             status_code=503,
-            content={"status": "degraded", "notifications_worker": "down"},
+            content={
+                "status": "degraded",
+                "database": "up" if banco_ok else "down",
+                "notifications_worker": "up" if worker_alive else "down",
+            },
         )
-    return {"status": "ok", "notifications_worker": "up"}
+    return {"status": "ok", "database": "up", "notifications_worker": "up"}
