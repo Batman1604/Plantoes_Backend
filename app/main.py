@@ -147,7 +147,20 @@ if _cors_origins == ["*"]:
 _uploads_dir = Path("uploads/avatars")
 _uploads_dir.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
+def urls_de_documentacao(environment: str) -> dict[str, str | None]:
+    """A-24: /docs, /redoc e /openapi.json mapeiam todos os endpoints para quem
+    quer atacar a API, então em produção ficam desligados (404). Fora dela
+    continuam ligados, porque são a ferramenta de trabalho do desenvolvimento."""
+    if environment == "production":
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
+
+
+app = FastAPI(
+    title=settings.app_name,
+    lifespan=lifespan,
+    **urls_de_documentacao(settings.environment),
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
