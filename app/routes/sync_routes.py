@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.rate_limiter import rate_limit, rate_limit_por_usuario
 from app.routes.plantao_routes import get_current_user
 from app.schemas.plantao_schema import APIResponse, SyncPullResponse, SyncPushRequest, SyncPushResponse
 from app.services.sync_service import SyncService
@@ -34,6 +35,10 @@ def push(
     payload: SyncPushRequest,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    # A-12: o push aplica lotes inteiros no banco. Teto por IP generoso (NAT
+    # do hospital) e por conta (o motor do app empurra em rajadas curtas).
+    _ip=Depends(rate_limit(300, 60)),
+    _usuario=Depends(rate_limit_por_usuario(get_current_user, 60, 60)),
 ):
     resultado = SyncService.push(db, current_user, payload.locais, payload.plantoes, payload.trocas, payload.bonificacoes)
     logger.info(

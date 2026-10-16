@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # "production", então nenhuma proteção de força bruta ou de varredura era
     # verificada por nenhum teste (ver auditoria A-12/C-09).
     rate_limit_enabled: str = ""
+    # A-12: IPs dos proxies reversos (separados por vírgula) dos quais o
+    # limitador aceita X-Forwarded-For. Vazio = nenhum: usa o IP da conexão.
+    trusted_proxy_ips: str = ""
     log_level: str = "INFO"
     anthropic_api_key: str = ""
     whatsapp_token: str = ""

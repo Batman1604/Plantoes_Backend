@@ -64,6 +64,20 @@ uvicorn app.main:app --reload
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+## Limite de requisições
+
+O limitador (`app/core/rate_limiter.py`) conta em memória, **por processo**:
+com vários workers do uvicorn ou várias réplicas, cada processo conta sozinho
+e o limite efetivo é multiplicado pelo número de processos (A-12). Ele age
+em produção (ou com `RATE_LIMIT_ENABLED=1`), por IP e, em `/api/sync/push`,
+criação de `/api/solicitacoes-troca`, `/api/feedback` e criação de
+`/api/amizades`, também por usuário autenticado.
+
+Atrás de proxy reverso, defina `TRUSTED_PROXY_IPS` com o IP do proxy
+(separados por vírgula). Só então o `X-Forwarded-For` é lido; de qualquer
+outra origem ele é ignorado, porque é forjável. Sem isso, todos os usuários
+dividem o limite do IP do proxy.
+
 ## Fluxo de autenticação JWT
 1. Cadastre-se em `POST /api/auth/cadastro` e confirme o código em
    `POST /api/auth/confirmar-cadastro` (o antigo `POST /api/usuarios`, que

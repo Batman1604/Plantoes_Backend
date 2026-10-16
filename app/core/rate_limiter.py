@@ -1,8 +1,17 @@
+"""Limitador de requisições em memória.
+
+Os contadores vivem NO PROCESSO (A-12): com N workers ou N réplicas, cada um
+conta sozinho e o limite efetivo vira N vezes o configurado. Isso está
+documentado no README; um limitador compartilhado (Redis) fica para quando o
+deploy tiver mais de um processo.
+"""
+
 import time
 from collections import defaultdict
 from threading import Lock
+from typing import Callable
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from app.core.config import settings
 
@@ -44,17 +53,63 @@ def reset() -> None:
         _buckets.clear()
 
 
+def _proxies_confiaveis() -> set[str]:
+    return {ip.strip() for ip in settings.trusted_proxy_ips.split(",") if ip.strip()}
+
+
+def ip_real(request: Request) -> str | None:
+    """IP do cliente para o limitador (A-12).
+
+    Atrás de proxy, `request.client.host` é o IP do PROXY: todos os usuários
+    dividiam o mesmo limite. X-Forwarded-For só é lido quando a conexão vem de
+    um proxy listado em TRUSTED_PROXY_IPS — de qualquer outro peer o cabeçalho
+    é forjável e é ignorado. Percorre a lista da direita para a esquerda
+    pulando os proxies confiáveis; o primeiro IP que não é proxy é o cliente.
+    """
+    if request.client is None:
+        return None
+    peer = request.client.host
+    confiaveis = _proxies_confiaveis()
+    if peer not in confiaveis:
+        return peer
+    encaminhado = request.headers.get("x-forwarded-for", "")
+    for ip in reversed([parte.strip() for parte in encaminhado.split(",") if parte.strip()]):
+        if ip not in confiaveis:
+            return ip
+    return peer
+
+
+def _barrar_se_estourou(chave: str, max_requests: int, window_seconds: int) -> None:
+    if not _check(chave, max_requests, window_seconds):
+        raise HTTPException(
+            status_code=429,
+            detail="Muitas tentativas. Tente novamente em alguns instantes.",
+        )
+
+
 def rate_limit(max_requests: int = 10, window_seconds: int = 60):
     """Cria dependência FastAPI que limita chamadas por IP e rota."""
     def dependency(request: Request) -> None:
         if not esta_ativo():
             return
-        if request.client is None:
+        ip = ip_real(request)
+        if ip is None:
             return
-        key = f"{request.client.host}:{request.url.path}"
-        if not _check(key, max_requests, window_seconds):
-            raise HTTPException(
-                status_code=429,
-                detail="Muitas tentativas. Tente novamente em alguns instantes.",
-            )
+        _barrar_se_estourou(f"{ip}:{request.url.path}", max_requests, window_seconds)
+    return dependency
+
+
+def rate_limit_por_usuario(obter_usuario: Callable, max_requests: int, window_seconds: int):
+    """Limite por USUÁRIO autenticado e rota (A-12), somado ao limite por IP.
+
+    Por IP só, uma conta espalhada em vários IPs não tinha teto, e vários
+    usuários atrás do mesmo NAT (a rede do hospital) dividiam um teto só.
+    `obter_usuario` é a dependência de autenticação (get_current_user), passada
+    por quem usa para o core não importar as rotas; o FastAPI a resolve uma vez
+    por requisição, então não há segunda consulta ao banco.
+    """
+    def dependency(request: Request, usuario=Depends(obter_usuario)) -> None:
+        if not esta_ativo():
+            return
+        _barrar_se_estourou(f"usuario:{usuario.id}:{request.url.path}", max_requests, window_seconds)
     return dependency

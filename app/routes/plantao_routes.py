@@ -6,7 +6,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from app.core.mascaras import mascarar_telefone
-from app.core.rate_limiter import rate_limit
+from app.core.rate_limiter import rate_limit, rate_limit_por_usuario
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -932,7 +932,13 @@ def deletar_troca(
     summary="Enviar feedback",
     description="Envia um feedback do usuário autenticado por e-mail para a equipe de desenvolvimento.",
 )
-def enviar_feedback(payload: FeedbackCreate, current_user=Depends(get_current_user)):
+def enviar_feedback(
+    payload: FeedbackCreate,
+    current_user=Depends(get_current_user),
+    # A-12: cada feedback vira um e-mail para a equipe.
+    _ip=Depends(rate_limit(20, 600)),
+    _usuario=Depends(rate_limit_por_usuario(get_current_user, 5, 600)),
+):
     """Endpoint que envia feedback do usuário autenticado por email para o time."""
     try:
         FeedbackService.enviar_feedback(current_user, payload.mensagem)
@@ -1616,6 +1622,8 @@ def criar_amizade(
     # listagem (ver auditoria C-09). Esconder o telefone de pendentes reduz o
     # que se colhe; o limite reduz a escala.
     _=Depends(rate_limit(20, 60)),
+    # A-12: o mesmo teto por conta, que não se contorna trocando de IP.
+    _usuario=Depends(rate_limit_por_usuario(get_current_user, 20, 60)),
 ):
     if payload.destinatario_usuario_id == current_user.id:
         raise HTTPException(status_code=400, detail="Não é possível adicionar a si mesmo.")
@@ -1918,6 +1926,10 @@ def criar_solicitacao_troca(
     payload: SolicitacaoTrocaCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    # A-12: limite por IP (generoso: vários médicos atrás do NAT do hospital)
+    # e por conta. Só a criação; o fluxo de aceite não muda.
+    _ip=Depends(rate_limit(60, 60)),
+    _usuario=Depends(rate_limit_por_usuario(get_current_user, 20, 60)),
 ):
     if payload.destinatario_usuario_id == current_user.id:
         raise HTTPException(status_code=400, detail="Não é possível solicitar troca consigo mesmo.")
