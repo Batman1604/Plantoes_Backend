@@ -64,7 +64,11 @@ class EmailService:
 
     @staticmethod
     def enviar_reset_senha(email: str, codigo: str) -> bool:
-        """Envia código de redefinição de senha por email."""
+        """Envia código de redefinição de senha por email.
+
+        Devolve se o código chegou a algum canal: o e-mail, ou — só fora de
+        produção — o log do servidor, que é o modo de desenvolvimento (C-10:
+        a rota responde 502 quando isto devolve False)."""
         corpo = (
             "Olá!\n\n"
             "Recebemos uma solicitação de redefinição de senha para sua conta.\n\n"
@@ -93,6 +97,8 @@ class EmailService:
                     mascarar_email(email),
                     codigo,
                 )
+                # Modo de desenvolvimento: o código está no log, conta como entregue.
+                return True
             else:
                 logger.error(
                     "Email de reset NÃO enviado para %s: SMTP não configurado em produção.",

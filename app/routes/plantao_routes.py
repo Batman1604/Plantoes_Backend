@@ -184,15 +184,24 @@ def _sessao_invalidada(user: User, emitido_em: float | None) -> bool:
 # /auth/confirmar-cadastro.
 
 
-def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) -> None:
+_FALHA_NO_ENVIO = "Não foi possível enviar o código de verificação. Tente novamente."
+
+
+def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) -> bool:
+    """Devolve se o código foi enviado (C-10). Antes o resultado do envio era
+    ignorado e a exceção engolida: a rota dizia "código reenviado" sem que
+    nada tivesse saído."""
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    expira_em = datetime.now(UTC) + timedelta(minutes=1)
+    VerificacaoTelefoneRepository.upsert(db, usuario_id, codigo, expira_em)
     try:
-        codigo = f"{secrets.randbelow(1_000_000):06d}"
-        expira_em = datetime.now(UTC) + timedelta(minutes=1)
-        VerificacaoTelefoneRepository.upsert(db, usuario_id, codigo, expira_em)
-        SmsService.enviar_codigo_verificacao(telefone, codigo)
-        logger.info("Código de verificação enviado para %s", mascarar_telefone(telefone))
+        enviado = SmsService.enviar_codigo_verificacao(telefone, codigo)
     except Exception:
-        logger.warning("Falha ao enviar código de verificação para %s", mascarar_telefone(telefone))
+        logger.exception("Falha ao enviar código de verificação para %s", mascarar_telefone(telefone))
+        return False
+    if enviado:
+        logger.info("Código de verificação enviado para %s", mascarar_telefone(telefone))
+    return enviado
 
 
 def _conflitos_cadastro(db: Session, email: str, telefone: str | None) -> list[str]:
@@ -570,11 +579,18 @@ def verificar_email(token: str = Query(...), db: Session = Depends(get_db)):
 def reenviar_verificacao(current_user=Depends(get_current_user)):
     if current_user.email_verificado:
         raise HTTPException(status_code=400, detail="Email já verificado.")
+    token = create_purpose_token(current_user.email, "email_verification", expire_minutes=24 * 60)
     try:
-        token = create_purpose_token(current_user.email, "email_verification", expire_minutes=24 * 60)
-        EmailService.enviar_verificacao(current_user.email, token)
+        enviado = EmailService.enviar_verificacao(current_user.email, token)
     except Exception:
-        logger.warning("Falha ao reenviar verificação para %s", mascarar_email(current_user.email))
+        logger.exception("Falha ao reenviar verificação para %s", mascarar_email(current_user.email))
+        enviado = False
+    if not enviado:
+        # C-10: mesmo tratamento do cadastro — sem envio, não há "enviado".
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível enviar o email de verificação. Tente novamente.",
+        )
     return APIResponse(success=True, message="Email de verificação enviado.", data=None)
 
 
@@ -624,18 +640,24 @@ def reenviar_verificacao_telefone(
     if not current_user.telefone:
         raise HTTPException(status_code=400, detail="Nenhum telefone cadastrado nesta conta.")
 
-    _disparar_verificacao_telefone(db, current_user.id, current_user.telefone)
+    if not _disparar_verificacao_telefone(db, current_user.id, current_user.telefone):
+        # C-10: mesmo tratamento do cadastro.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_FALHA_NO_ENVIO)
     return APIResponse(success=True, message="Código reenviado para o seu WhatsApp.", data=None)
 
 
-def _disparar_codigo_reset_senha(db: Session, user: User) -> None:
+def _disparar_codigo_reset_senha(db: Session, user: User) -> bool:
+    """Devolve se o código chegou a algum canal (C-10). Fora de produção, sem
+    SMTP, o EmailService registra o código no log (modo de desenvolvimento) e
+    isso conta como entregue — é como se testa o fluxo no aparelho."""
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    expira_em = datetime.now(UTC) + timedelta(minutes=1)
+    CodigoResetSenhaRepository.upsert(db, user.id, codigo, expira_em)
     try:
-        codigo = f"{secrets.randbelow(1_000_000):06d}"
-        expira_em = datetime.now(UTC) + timedelta(minutes=1)
-        CodigoResetSenhaRepository.upsert(db, user.id, codigo, expira_em)
-        EmailService.enviar_reset_senha(user.email, codigo)
+        return EmailService.enviar_reset_senha(user.email, codigo)
     except Exception:
-        logger.warning("Falha ao enviar código de reset de senha para %s", mascarar_email(user.email))
+        logger.exception("Falha ao enviar código de reset de senha para %s", mascarar_email(user.email))
+        return False
 
 
 _EMAIL_NAO_CADASTRADO = "Não encontramos cadastro com este email. Verifique se digitou certo."
@@ -657,7 +679,9 @@ def forgot_password(payload: SenhaResetRequest, db: Session = Depends(get_db), _
     user = UserRepository.get_by_email(db, payload.email)
     if not user:
         raise HTTPException(status_code=404, detail=_EMAIL_NAO_CADASTRADO)
-    _disparar_codigo_reset_senha(db, user)
+    if not _disparar_codigo_reset_senha(db, user):
+        # C-10: mesmo tratamento do cadastro.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_FALHA_NO_ENVIO)
     return APIResponse(success=True, message="Código enviado para o seu email.", data=None)
 
 
