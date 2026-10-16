@@ -12,6 +12,7 @@ from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
+from app.core.mascaras import FiltroQueryStringDoAccessLog
 from app import models  # noqa: F401
 from app.core.database import SessionLocal, engine
 from app.routes.plantao_routes import router
@@ -26,6 +27,13 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# AUD-033: o access log do uvicorn gravava a query string (o e-mail e o
+# telefone de /api/usuarios/busca). O uvicorn configura o próprio logging
+# ANTES de importar app.main (Config.configure_logging, também no processo
+# filho do --reload), e o dictConfig não remove filtros de logger — então
+# instalar aqui vale para `uvicorn app.main:app`.
+logging.getLogger("uvicorn.access").addFilter(FiltroQueryStringDoAccessLog())
 
 if settings.jwt_secret_key == "change-me-in-production":
     if settings.environment == "production":
