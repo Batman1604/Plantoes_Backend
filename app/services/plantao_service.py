@@ -247,14 +247,18 @@ class PlantaoService:
 
                 if "recorrencia" in dados_atualizacao and nova_recorrencia is None:
                     for p in plantoes_futuros[1:]:
-                        db.delete(p)
+                        # Pendência do Backend-A: db.delete apagava sem tombstone
+                        # (nem do plantão, nem das solicitações em cascata), e o
+                        # outro aparelho nunca sabia que esses plantões sumiram.
+                        PlantaoRepository.delete_by_user(db, p.id, usuario.id, confirmar=False)
                     _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio)
 
                 elif plantao_atual.recorrencia == "Semanal" and nova_recorrencia == "Quinzenal":
                     for p in plantoes_futuros[1:]:
                         diferenca = (p.data_inicio - data_ancora).days
                         if diferenca % 14 != 0:
-                            db.delete(p)
+                            # Com tombstone (ver o ramo acima).
+                            PlantaoRepository.delete_by_user(db, p.id, usuario.id, confirmar=False)
                         else:
                             _aplicar_updates(p, p.data_inicio, forcar_recorrencia="Quinzenal")
                     _aplicar_updates(plantao_selecionado, plantao_selecionado.data_inicio, forcar_recorrencia="Quinzenal")

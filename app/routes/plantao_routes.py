@@ -2274,6 +2274,14 @@ def aceitar_solicitacao_troca(
             db.add(Troca(
                 usuario_id=solicitacao.remetente_usuario_id,
                 local_id=plantao_transferido.local_id,
+                # AUD-006 (resíduo): plantão já desvinculado (local excluído
+                # pelo dono) só tem o nome do hospital na troca de origem; sem
+                # repassá-lo, o novo clone nascia sem local_nome.
+                local=(
+                    troca_origem.local
+                    if plantao_transferido.local_id is None and troca_origem is not None
+                    else None
+                ),
                 plantao_id_transferido=plantao_transferido.id,
                 plantao_id_recebido=recebido_destinatario.id,
                 nome_transferir=destinatario.nome,
