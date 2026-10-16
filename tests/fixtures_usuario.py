@@ -9,6 +9,7 @@ verificados), para que os testes migrados continuem exercitando o mesmo
 estado de conta.
 """
 
+from functools import lru_cache
 from uuid import uuid4
 
 from app.core.database import SessionLocal
@@ -16,6 +17,14 @@ from app.core.security import create_access_token, hash_password
 from app.models import User
 
 SENHA = "SenhaForte123"
+
+
+@lru_cache(maxsize=None)
+def _hash(senha: str) -> str:
+    """Um hash por senha distinta, reaproveitado entre os usuários de teste.
+    Com 600.000 iterações (AUD-059), refazer o hash a cada usuário somava
+    minutos à suíte; o hash continua real, só o salt se repete."""
+    return hash_password(senha)
 
 
 def criar_usuario_no_banco(
@@ -35,7 +44,7 @@ def criar_usuario_no_banco(
             telefone=telefone,
             telefone_verificado=telefone_verificado,
             email_verificado=email_verificado,
-            senha_hash=hash_password(senha),
+            senha_hash=_hash(senha),
         )
         db.add(usuario)
         db.commit()

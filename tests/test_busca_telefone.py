@@ -107,10 +107,13 @@ class TestBuscaPorTelefone(unittest.TestCase):
 
         # Uma base com vários usuários, todos com telefone.
         sufixo = uuid4().hex[:8]
+        # Um hash só para os 30: com 600.000 iterações (AUD-059), 30 hashes
+        # somavam ~12 s a este teste, que mede consultas, não hash.
+        senha_hash = hash_password("SenhaForte123")
         with SessionLocal() as db:
             db.add_all([
                 User(nome=f"Massa {i}", email=f"massa-{sufixo}-{i}@example.com",
-                     telefone=f"1197{i:07d}", senha_hash=hash_password("SenhaForte123"))
+                     telefone=f"1197{i:07d}", senha_hash=senha_hash)
                 for i in range(30)
             ])
             db.commit()

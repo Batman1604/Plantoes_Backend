@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import instante_para_o_banco
-from app.core.security import verify_password
+from app.core.security import hash_password, precisa_rehash, verify_password
 from app.models import (
     normalizar_email,
     normalizar_telefone,
@@ -76,6 +76,12 @@ class UserRepository:
             return None
         if not verify_password(payload.senha, user.senha_hash):
             return None
+        if precisa_rehash(user.senha_hash):
+            # AUD-059: único momento em que a senha em claro está disponível
+            # para refazer o hash com as iterações atuais. Não é troca de
+            # senha: as sessões abertas continuam valendo.
+            user.senha_hash = hash_password(payload.senha)
+            db.commit()
         return user
 
     @staticmethod

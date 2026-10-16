@@ -8,7 +8,11 @@ from jose import jwt, JWTError
 
 from app.core.config import settings
 
-_ITERATIONS = 100_000
+# AUD-059: 600.000 iterações para PBKDF2-HMAC-SHA256 (recomendação atual da
+# OWASP). Eram 100.000. O formato guarda a contagem de cada hash, então os
+# antigos continuam verificando e são refeitos no próximo login bem-sucedido
+# (ver precisa_rehash e UserRepository.authenticate).
+_ITERATIONS = 600_000
 
 # AUD-031: idade máxima de uma cadeia de /auth/refresh, contada do login
 # original (claim auth_time). Sem limite, um token roubado renovava para
@@ -33,6 +37,14 @@ def verify_password(password: str, password_hash: str) -> bool:
 
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
     return hmac.compare_digest(digest.hex(), expected_hash)
+
+
+def precisa_rehash(password_hash: str) -> bool:
+    """AUD-059: hash gravado com menos iterações que as atuais."""
+    try:
+        return int(password_hash.split("$", 1)[0]) < _ITERATIONS
+    except (ValueError, AttributeError):
+        return False
 
 
 def create_purpose_token(email: str, purpose: str, expire_minutes: int) -> str:
