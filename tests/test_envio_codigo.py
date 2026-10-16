@@ -42,20 +42,24 @@ class TestEnvioCodigo(unittest.TestCase):
 
     def test_cadastro_falha_alto_quando_nenhum_canal_esta_configurado(self):
         sufixo = uuid4().hex[:8]
-        resposta = self.client.post("/api/auth/cadastro", json={
-            "nome": "Usuário Cadastro",
-            "email": f"cad-{sufixo}@example.com",
-            "telefone": f"119{uuid4().int % 100000000:08d}",
-            "senha": "SenhaForte123",
-        })
+        # Em produção. Fora dela, sem canal, o código vai ao log (modo de
+        # desenvolvimento, ver TestModoDesenvolvimentoDoCodigoDeTelefone).
+        with patch("app.core.config.settings.environment", "production"):
+            resposta = self.client.post("/api/auth/cadastro", json={
+                "nome": "Usuário Cadastro",
+                "email": f"cad-{sufixo}@example.com",
+                "telefone": f"119{uuid4().int % 100000000:08d}",
+                "senha": "SenhaForte123",
+            })
 
-        # Sem WhatsApp configurado no ambiente de teste, o certo é recusar de
-        # forma explícita — e não prometer um código que nunca chega.
+        # Sem WhatsApp configurado em produção, o certo é recusar de forma
+        # explícita — e não prometer um código que nunca chega.
         self.assertEqual(resposta.status_code, 502, resposta.text)
         self.assertFalse(resposta.json()["success"])
 
     def test_verificacao_de_codigo_por_whatsapp_sem_credenciais_retorna_falso(self):
-        self.assertFalse(SmsService.enviar_codigo_verificacao("11999999999", "123456"))
+        with patch("app.core.config.settings.environment", "production"):
+            self.assertFalse(SmsService.enviar_codigo_verificacao("11999999999", "123456"))
 
 
 class TestRotasDeReenvioDizemAVerdade(unittest.TestCase):
@@ -68,7 +72,8 @@ class TestRotasDeReenvioDizemAVerdade(unittest.TestCase):
 
     def test_reenviar_verificacao_telefone_sem_canal_responde_502(self):
         _, headers = criar_usuario_no_banco(telefone=f"119{uuid4().int % 100000000:08d}")
-        r = self.client.post("/api/auth/reenviar-verificacao-telefone", headers=headers)
+        with patch("app.core.config.settings.environment", "production"):
+            r = self.client.post("/api/auth/reenviar-verificacao-telefone", headers=headers)
         self.assertEqual(r.status_code, 502, r.text)
 
     def test_reenviar_verificacao_telefone_com_envio_responde_200(self):
@@ -99,6 +104,68 @@ class TestRotasDeReenvioDizemAVerdade(unittest.TestCase):
             r = self.client.post("/api/auth/forgot-password", json={"email": email})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertIn("246810", "\n".join(capturado.output))
+
+
+class TestModoDesenvolvimentoDoCodigoDeTelefone(unittest.TestCase):
+    """Sem WhatsApp/SMS configurado, /auth/cadastro e o reenvio do código de
+    telefone respondiam 502 também em desenvolvimento: ninguém conseguia criar
+    conta em dev. Fora de produção, sem canal, o código vai ao log (telefone
+    mascarado) e conta como enviado — o mesmo modo de desenvolvimento que o
+    reset de senha por e-mail já tinha."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(app)
+
+    def test_cadastro_fora_de_producao_entrega_o_codigo_no_log(self):
+        sufixo = uuid4().hex[:8]
+        telefone = f"119{uuid4().int % 100000000:08d}"
+        email = f"dev-cad-{sufixo}@example.com"
+        with (
+            patch("app.routes.plantao_routes.secrets.randbelow", return_value=135791),
+            self.assertLogs("app.services.sms_service", level=logging.WARNING) as capturado,
+        ):
+            r = self.client.post("/api/auth/cadastro", json={
+                "nome": "Dev", "email": email, "telefone": telefone, "senha": "SenhaForte123",
+            })
+        self.assertEqual(r.status_code, 200, r.text)
+        registro = "\n".join(capturado.output)
+        self.assertIn("135791", registro)
+        self.assertIn(telefone[-4:], registro)
+        self.assertNotIn(telefone, registro, "o telefone vai mascarado")
+
+        # O código do log conclui o cadastro.
+        confirmado = self.client.post("/api/auth/confirmar-cadastro", json={"email": email, "codigo": "135791"})
+        self.assertEqual(confirmado.status_code, 201, confirmado.text)
+
+    def test_reenviar_verificacao_telefone_fora_de_producao_responde_200(self):
+        _, headers = criar_usuario_no_banco(telefone=f"119{uuid4().int % 100000000:08d}")
+        with (
+            patch("app.routes.plantao_routes.secrets.randbelow", return_value=975310),
+            self.assertLogs("app.services.sms_service", level=logging.WARNING) as capturado,
+        ):
+            r = self.client.post("/api/auth/reenviar-verificacao-telefone", headers=headers)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn("975310", "\n".join(capturado.output))
+
+    def test_com_whatsapp_configurado_falha_de_envio_nao_vai_ao_log(self):
+        # Com canal configurado, a falha é real: nada de código no log, nem em dev.
+        with (
+            patch("app.core.config.settings.whatsapp_token", "tok"),
+            patch("app.core.config.settings.whatsapp_phone_number_id", "123"),
+            patch("app.services.sms_service.SmsService._enviar_whatsapp", return_value=False),
+            self.assertLogs("app.services.sms_service", level=logging.DEBUG) as capturado,
+        ):
+            self.assertFalse(SmsService.enviar_codigo_verificacao("11999999999", "864200"))
+        self.assertNotIn("864200", "\n".join(capturado.output))
+
+    def test_em_producao_o_codigo_nunca_vai_ao_log(self):
+        with (
+            patch("app.core.config.settings.environment", "production"),
+            self.assertLogs("app.services.sms_service", level=logging.DEBUG) as capturado,
+        ):
+            self.assertFalse(SmsService.enviar_codigo_verificacao("11999999999", "424242"))
+        self.assertNotIn("424242", "\n".join(capturado.output))
 
 
 if __name__ == "__main__":

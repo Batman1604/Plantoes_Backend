@@ -19,8 +19,9 @@ class TestCadastroPendente(unittest.TestCase):
 
     def _iniciar_cadastro(self, email, telefone="11999990000", codigo="123456"):
         # A entrega do código é simulada de propósito. Não há provedor de
-        # mensagens configurado em teste, e o envio real devolve False — o que
-        # faz a rota responder 502, corretamente. Antes, o stub de SMS retornava
+        # mensagens configurado em teste: em produção a rota responderia 502,
+        # e fora dela o código iria ao log (modo de desenvolvimento, ver
+        # test_envio_codigo.py). Antes, o stub de SMS retornava
         # True sem enviar nada, e estes testes passavam apoiados nessa mentira
         # (ver auditoria C-10). Declarar a suposição aqui deixa explícito o que
         # está sendo testado: o fluxo de cadastro, não a entrega.

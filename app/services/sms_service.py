@@ -61,7 +61,33 @@ class SmsService:
         if not enviado:
             logger.warning("[VERIFICACAO] WhatsApp indisponível, tentando SMS para %s", _mascarar_telefone(telefone))
             enviado = SmsService._enviar_sms(telefone, mensagem)
+        if not enviado:
+            enviado = SmsService._registrar_codigo_em_desenvolvimento(telefone, codigo)
         return enviado
+
+    @staticmethod
+    def _registrar_codigo_em_desenvolvimento(telefone: str, codigo: str) -> bool:
+        """Modo de desenvolvimento do código de telefone — mesmo padrão do
+        EmailService.enviar_reset_senha.
+
+        Sem nenhum canal configurado, fora de produção, o código vai para o log
+        e conta como entregue; sem isso ninguém consegue criar conta em dev
+        (as rotas respondiam 502). Só vale quando o WhatsApp NÃO está
+        configurado: com credenciais, uma falha de envio é falha de verdade. Em
+        produção o código nunca vai ao log (C-10) e a rota continua em 502.
+        """
+        from app.core.config import settings
+
+        if settings.environment == "production":
+            return False
+        if settings.whatsapp_token and settings.whatsapp_phone_number_id:
+            return False
+        logger.warning(
+            "[VERIFICACAO] Nenhum canal configurado (modo de desenvolvimento) — código para %s: %s",
+            _mascarar_telefone(telefone),
+            codigo,
+        )
+        return True
 
     @staticmethod
     def _enviar_whatsapp(telefone: str, mensagem: str) -> bool:
