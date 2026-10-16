@@ -783,6 +783,7 @@ class CadastroPendenteRepository:
             existente.senha_hash = senha_hash
             existente.codigo = codigo
             existente.expira_em = expira_em
+            existente.tentativas = 0
             db.commit()
             db.refresh(existente)
             return existente
@@ -797,6 +798,11 @@ class CadastroPendenteRepository:
     @staticmethod
     def get_by_email(db: Session, email: str) -> CadastroPendente | None:
         return db.scalar(select(CadastroPendente).where(CadastroPendente.email == normalizar_email(email)))
+
+    @staticmethod
+    def conferir(db: Session, email: str, codigo: str) -> CadastroPendente | None:
+        """Confere o código contando a tentativa (mesmo padrão do AUD-032)."""
+        return _conferir_codigo(db, CadastroPendenteRepository.get_by_email(db, email), codigo)
 
     @staticmethod
     def delete_by_email(db: Session, email: str) -> None:

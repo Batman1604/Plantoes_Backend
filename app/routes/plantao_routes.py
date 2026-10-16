@@ -276,12 +276,10 @@ def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_
 def confirmar_cadastro(
     payload: ConfirmarCadastroRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 120))
 ):
-    pendente = CadastroPendenteRepository.get_by_email(db, payload.email)
-    expira_em = pendente.expira_em if pendente else None
-    if expira_em is not None and expira_em.tzinfo is None:
-        # SQLite (usado nos testes) não preserva o timezone ao ler de volta a coluna.
-        expira_em = expira_em.replace(tzinfo=UTC)
-    if pendente is None or pendente.codigo != payload.codigo or expira_em <= datetime.now(UTC):
+    # Contador de tentativas (padrão do AUD-032): depois de 5 erros, nem o
+    # código certo vale; o limite por IP sozinho deixava adivinhar os 6 dígitos.
+    pendente = CadastroPendenteRepository.conferir(db, payload.email, payload.codigo)
+    if pendente is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Código inválido ou expirado.")
 
     conflitos = _conflitos_cadastro(db, pendente.email, pendente.telefone)

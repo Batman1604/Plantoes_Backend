@@ -289,6 +289,9 @@ class CadastroPendente(Base):
     codigo: Mapped[str] = mapped_column(String(6), nullable=False)
     expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    # Mesmo contador do AUD-032 (reset e telefone): erros de digitação deste
+    # código; no limite, o código morre e é preciso pedir outro.
+    tentativas: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 

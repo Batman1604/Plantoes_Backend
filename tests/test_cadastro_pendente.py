@@ -101,6 +101,38 @@ class TestCadastroPendente(unittest.TestCase):
         resposta = self._iniciar_cadastro(email, telefone="11977770000")
         self.assertEqual(resposta.status_code, 409, resposta.text)
 
+    def test_cinco_erros_invalidam_o_codigo_de_cadastro(self):
+        """Mesmo padrão do AUD-032: o código de confirmar-cadastro não tinha
+        contador; só o limite por IP freava quem tentava adivinhar."""
+        email = "tentativas-cadastro@example.com"
+        self._iniciar_cadastro(email, telefone="11944440000", codigo="383838")
+        for _ in range(5):
+            errado = self.client.post("/api/auth/confirmar-cadastro", json={"email": email, "codigo": "000000"})
+            self.assertEqual(errado.status_code, 400, errado.text)
+
+        # A sexta tentativa, mesmo com o código certo, é recusada.
+        certo = self.client.post("/api/auth/confirmar-cadastro", json={"email": email, "codigo": "383838"})
+        self.assertEqual(certo.status_code, 400, certo.text)
+        self._login_falha(email)
+
+        # Um código novo (reenviar-cadastro) zera o contador.
+        with (
+            patch("app.routes.plantao_routes.secrets.randbelow", return_value=494949),
+            patch("app.services.sms_service.SmsService.enviar_codigo_verificacao", return_value=True),
+        ):
+            reenviar = self.client.post("/api/auth/reenviar-cadastro", json={"email": email})
+        self.assertEqual(reenviar.status_code, 200, reenviar.text)
+        novo = self.client.post("/api/auth/confirmar-cadastro", json={"email": email, "codigo": "494949"})
+        self.assertEqual(novo.status_code, 201, novo.text)
+
+    def test_quatro_erros_ainda_aceitam_o_codigo_de_cadastro(self):
+        email = "tentativas-cadastro-limite@example.com"
+        self._iniciar_cadastro(email, telefone="11944441111", codigo="252525")
+        for _ in range(4):
+            self.client.post("/api/auth/confirmar-cadastro", json={"email": email, "codigo": "000000"})
+        certo = self.client.post("/api/auth/confirmar-cadastro", json={"email": email, "codigo": "252525"})
+        self.assertEqual(certo.status_code, 201, certo.text)
+
     def test_falha_no_envio_do_codigo_nao_deixa_nada_pendente(self):
         email = "falha-envio@example.com"
         with patch("app.services.sms_service.SmsService.enviar_codigo_verificacao", return_value=False):
