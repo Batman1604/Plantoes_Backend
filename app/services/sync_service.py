@@ -360,6 +360,7 @@ class SyncService:
                     notificacao_ativa=item.notificacao_ativa,
                     notificacao_antecedencia_minutos=item.notificacao_antecedencia_minutos,
                     uuid_cliente=item.uuid_cliente,
+                    serie_id=item.serie_id,  # K8
                 )
                 criado = PlantaoService.criar(db, current_user, payload)
             except _FALHAS_DO_ITEM as exc:
@@ -379,8 +380,12 @@ class SyncService:
             ))
             return
 
+        # K8: cliente antigo não manda serie_id; só quem manda pode alterá-lo
+        # (sem isto, a edição vinda de um aparelho desatualizado apagaria a série).
+        serie = {"serie_id": item.serie_id} if "serie_id" in item.model_fields_set else {}
         try:
             payload = PlantaoUpdate(
+                **serie,
                 valor=item.valor,
                 data_inicio=item.data_inicio,
                 data_fim=item.data_fim,

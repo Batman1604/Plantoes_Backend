@@ -134,6 +134,12 @@ class Plantao(Base):
     horario_inicio: Mapped[time] = Column(Time, nullable=False)
     horario_fim: Mapped[time] = Column(Time, nullable=False)
     recorrencia: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # K8 (AUD-053): série a que o plantão pertence, como o APARELHO a definiu
+    # (Shift.seriesId). Sem ele, o servidor adivinhava a série por local +
+    # horário + recorrência, e "este e futuros" num aparelho virava "só este"
+    # no outro. Nulo em dados antigos e em plantão vindo de cliente antigo —
+    # aí a heurística continua valendo (ver list_futuros_da_serie).
+    serie_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     notificacao_ativa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notificacao_antecedencia_minutos: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     notificado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

@@ -100,6 +100,7 @@ class PlantaoService:
 
                 transferido=False,
                 uuid_cliente=payload.uuid_cliente,
+                serie_id=payload.serie_id,
             ).model_dump())
             db.add(plantao)
             db.flush()
@@ -295,6 +296,7 @@ class PlantaoService:
                                 horario_inicio=novo_time_inicio,
                                 horario_fim=novo_time_fim,
                                 recorrencia="Semanal",
+                                serie_id=dados_atualizacao.get("serie_id", plantao_atual.serie_id),  # K8
                                 sobreaviso=dados_atualizacao.get("sobreaviso", plantao_atual.sobreaviso),
                                 notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
                                 notificacao_antecedencia_minutos=dados_atualizacao.get(
@@ -341,6 +343,7 @@ class PlantaoService:
                             horario_inicio=novo_time_inicio,
                             horario_fim=novo_time_fim,
                             recorrencia=nova_recorrencia,
+                            serie_id=dados_atualizacao.get("serie_id", plantao_atual.serie_id),  # K8
                             sobreaviso=dados_atualizacao.get("sobreaviso", plantao_atual.sobreaviso),
                             notificacao_ativa=dados_atualizacao.get("notificacao_ativa", plantao_atual.notificacao_ativa),
                             notificacao_antecedencia_minutos=dados_atualizacao.get(

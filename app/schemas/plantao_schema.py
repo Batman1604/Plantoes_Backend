@@ -308,6 +308,8 @@ class PlantaoBase(BaseModel):
     uuid_cliente: Optional[str] = Field(
         default=None, max_length=36, description="Identificador gerado no dispositivo, usado para sincronização offline."
     )
+    # K8 (AUD-053): identificador da série gerado no aparelho (Shift.seriesId).
+    serie_id: Optional[str] = Field(default=None, max_length=64)
 
     @field_validator("data_inicio", "data_fim")
     @classmethod
@@ -389,6 +391,7 @@ class PlantaoCreateWithUsuario(BaseModel):
     pagamento_plantao: Optional[date] = None
     transferido: bool = False
     uuid_cliente: Optional[str] = None
+    serie_id: Optional[str] = None
 
 
 class PlantaoUpdate(BaseModel):
@@ -402,6 +405,8 @@ class PlantaoUpdate(BaseModel):
     notificacao_ativa: bool | None = None
     notificacao_antecedencia_minutos: int | None = Field(default=None, ge=0, le=2880)
     pagamento_plantao: Optional[date] = Field(default=None, description="Sobrescreve a data de pagamento calculada automaticamente.")
+    # K8 (AUD-053): identificador da série gerado no aparelho (Shift.seriesId).
+    serie_id: Optional[str] = Field(default=None, max_length=64)
     aplicar_em: Literal["somente_este", "este_e_futuros"] = Field(
         default="somente_este",
         description="Define se a alteração será aplicada somente neste plantão ou no plantão selecionado e nos futuros recorrentes.",
@@ -454,6 +459,7 @@ class PlantaoResponse(BaseModel):
     troca: "PlantaoTrocaResponse | None" = None
     bonificacoes: list["BonificacaoResponse"] = []
     uuid_cliente: Optional[str] = None
+    serie_id: Optional[str] = None  # K8 (AUD-053)
     atualizado_em: datetime
 
     class Config:
@@ -491,6 +497,7 @@ class PlantaoResponse(BaseModel):
                 "tipo_troca": None,
                 "troca": None,
                 "uuid_cliente": getattr(obj, "uuid_cliente", None),
+                "serie_id": getattr(obj, "serie_id", None),
                 "atualizado_em": obj.atualizado_em,
                 "bonificacoes": [
                     {
@@ -968,6 +975,8 @@ class SyncPlantaoItem(BaseModel):
     notificacao_ativa: bool = True
     notificacao_antecedencia_minutos: int = Field(default=60, ge=0, le=2880)
     pagamento_plantao: Optional[date] = None
+    # K8 (AUD-053): identificador da série gerado no aparelho (Shift.seriesId).
+    serie_id: Optional[str] = Field(default=None, max_length=64)
     atualizado_em: datetime = Field(description="Hora da última alteração feita no dispositivo (relógio local).")
     deletado: bool = Field(default=False, description="True se o registro foi excluído localmente.")
 

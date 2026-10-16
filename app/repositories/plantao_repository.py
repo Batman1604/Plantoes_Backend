@@ -528,6 +528,20 @@ class PlantaoRepository:
 
     @staticmethod
     def list_futuros_da_serie(db: Session, plantao_referencia: Plantao) -> list[Plantao]:
+        if plantao_referencia.serie_id:
+            # K8 (AUD-053): a série que o aparelho definiu manda. A heurística
+            # abaixo fica só para dados antigos (serie_id nulo).
+            return db.scalars(
+                select(Plantao)
+                .where(
+                    Plantao.usuario_id == plantao_referencia.usuario_id,
+                    Plantao.serie_id == plantao_referencia.serie_id,
+                    Plantao.data_inicio >= plantao_referencia.data_inicio,
+                    Plantao.transferido.is_(False),
+                )
+                .order_by(Plantao.data_inicio.asc(), Plantao.id.asc())
+            ).all()
+
         stmt = (
             select(Plantao)
             .where(
