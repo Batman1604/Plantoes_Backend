@@ -845,7 +845,9 @@ class UpgradeWebhookRequest(BaseModel):
 class UsuarioResumo(BaseModel):
     id: int
     nome: str
-    email: EmailStr
+    # K9 (AUD-064): a chave continua, mas vem nula, exceto quando a busca foi
+    # pelo e-mail exato da pessoa (quem buscou já o conhecia).
+    email: Optional[EmailStr] = None
     avatar: Optional[str] = None
 
     class Config:

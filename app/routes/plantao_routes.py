@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
-from app.models import AmigoConfiguracao, Plantao, SolicitacaoTroca, Troca, User
+from app.models import AmigoConfiguracao, Plantao, SolicitacaoTroca, Troca, User, normalizar_email
 from app.core.security import (
     IDADE_MAXIMA_DA_SESSAO,
     create_access_token,
@@ -1631,7 +1631,18 @@ def buscar_usuarios(
     return APIResponse(
         success=True,
         message="Usuários encontrados.",
-        data=[UsuarioResumo.model_validate(u) for u in usuarios],
+        # K9 (AUD-064): a busca por prefixo revelava o e-mail completo de quem
+        # aparecia (bastava "abc" para colher endereços). Só devolve o e-mail
+        # quando quem buscou digitou exatamente o dele.
+        data=[
+            UsuarioResumo(
+                id=u.id,
+                nome=u.nome,
+                email=u.email if email is not None and normalizar_email(email) == u.email else None,
+                avatar=u.avatar,
+            )
+            for u in usuarios
+        ],
     )
 
 
