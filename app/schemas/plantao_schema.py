@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Generic, Literal, Optional, TypeVar
@@ -832,7 +833,28 @@ class UpgradeWebhookRequest(BaseModel):
     usuario_id: int
 
 
+_AVATAR_EMBUTIDO_NO_APP = re.compile(r"^img_persons/[A-Za-z0-9_-]+\.png$")
+
+
+def avatar_visivel_a_terceiros(avatar: str | None) -> str | None:
+    """O avatar de um usuário como OUTRO usuário pode vê-lo.
+
+    O app grava em `usuarios.avatar` o CAMINHO LOCAL da foto no aparelho do
+    dono (a foto fica só lá, A-18): para o amigo esse caminho não serve para
+    nada e expõe a estrutura de pastas do aparelho de outra pessoa. Passa só
+    o que tem sentido em outro aparelho: URL https (foto do Google) e os
+    avatares embutidos no app ('img_persons/person_boy1.png', caminho
+    relativo do asset — o app do amigo os desenha; ver friend_model.dart).
+    A resposta do próprio usuário (perfil/login) não passa por aqui."""
+    if not avatar:
+        return None
+    if avatar.lower().startswith("https://") or _AVATAR_EMBUTIDO_NO_APP.match(avatar):
+        return avatar
+    return None
+
+
 class UsuarioResumo(BaseModel):
+    """Outro usuário (busca, amizades): nunca o próprio."""
     id: int
     nome: str
     # K9 (AUD-064): a chave continua, mas vem nula, exceto quando a busca foi
@@ -841,6 +863,11 @@ class UsuarioResumo(BaseModel):
     avatar: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("avatar")
+    @classmethod
+    def _avatar_de_terceiro(cls, valor: str | None) -> str | None:
+        return avatar_visivel_a_terceiros(valor)
 
 
 class AmizadeCreate(BaseModel):
@@ -918,6 +945,11 @@ class AmigoPlantaoItem(BaseModel):
     amigo_nome: str
     amigo_avatar: Optional[str] = None
     cor: str = Field(description="Cor escolhida pelo usuário autenticado para pintar este amigo no próprio calendário.")
+
+    @field_validator("amigo_avatar")
+    @classmethod
+    def _avatar_de_terceiro(cls, valor: str | None) -> str | None:
+        return avatar_visivel_a_terceiros(valor)
     local_id: int
     local_nome: str
     local_endereco: Optional[str] = None
