@@ -14,6 +14,7 @@
 Usuários fictícios; JWKS do Google falso (mesma técnica de test_auth_oauth.py).
 """
 
+import json
 import time
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -22,8 +23,8 @@ from uuid import uuid4
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jose import jwt
-from jose.backends.cryptography_backend import CryptographyRSAKey
+import jwt
+from jwt.algorithms import RSAAlgorithm
 
 import app.services.oauth_service as oauth_service
 import aud_helpers as h
@@ -35,7 +36,7 @@ _PEM = _KEY.private_bytes(
     format=serialization.PrivateFormat.PKCS8,
     encryption_algorithm=serialization.NoEncryption(),
 ).decode()
-_JWK = CryptographyRSAKey(_KEY.public_key(), algorithm="RS256").to_dict()
+_JWK = json.loads(RSAAlgorithm.to_jwk(_KEY.public_key()))
 _JWK["kid"] = "aud-kid"
 
 
