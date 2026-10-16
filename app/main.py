@@ -8,7 +8,6 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -151,9 +150,6 @@ if _cors_origins == ["*"]:
         )
     logger.warning("ALLOWED_ORIGINS está em '*'. Defina uma lista explícita antes de ir para produção.")
 
-_uploads_dir = Path("uploads/avatars")
-_uploads_dir.mkdir(parents=True, exist_ok=True)
-
 def urls_de_documentacao(environment: str) -> dict[str, str | None]:
     """A-24: /docs, /redoc e /openapi.json mapeiam todos os endpoints para quem
     quer atacar a API, então em produção ficam desligados (404). Fora dela
@@ -175,7 +171,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# A-18: sem mount de /uploads — a foto de perfil fica só no aparelho.
 app.include_router(router)
 app.include_router(politicas_router)
 app.include_router(sync_router)

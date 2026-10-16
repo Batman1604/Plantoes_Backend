@@ -10,8 +10,6 @@ python-jose[cryptography]==3.5.0
 httpx==0.28.1
 anthropic==0.40.0
 redis==5.2.0
-python-multipart==0.0.20
-Pillow==11.2.1
 # Base de fusos horários. O zoneinfo da stdlib depende do tzdata do SISTEMA, que
 # imagens Linux slim não trazem — sem este pacote, ZoneInfo("America/Sao_Paulo")
 # levanta ZoneInfoNotFoundError em produção enquanto funciona na máquina do
