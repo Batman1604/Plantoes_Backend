@@ -42,6 +42,12 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_DB_PATH.as_posix()}"
 os.environ.setdefault("GOOGLE_CLIENT_ID", "test-google-client")
 os.environ.setdefault("APPLE_CLIENT_ID", "test-apple-client")
 
+# AUD-012: ENVIRONMENT e JWT_SECRET_KEY passaram a ser obrigatórios, sem default.
+# Fixados aqui (e não com setdefault) para a suíte nunca herdar o ambiente de
+# quem a roda — nem um .env de produção, nem um segredo real.
+os.environ["ENVIRONMENT"] = "test"
+os.environ["JWT_SECRET_KEY"] = "segredo-da-suite-de-testes-nao-usar-fora-dela"
+
 # Um banco deixado para trás por uma execução anterior (ver item 2 do docstring)
 # contamina esta — começa sempre do zero.
 if _DB_PATH.exists():

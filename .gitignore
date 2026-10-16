@@ -13,6 +13,8 @@ env/
 # Environment variables
 .env
 .env.*
+# Modelo sem segredos, documenta as variáveis obrigatórias (AUD-012).
+!.env.example
 
 # Distribution / packaging
 dist/

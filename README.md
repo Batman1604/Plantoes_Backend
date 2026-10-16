@@ -23,13 +23,10 @@ API para armazenar usuários e seus plantões com:
    - `plantoes.local_id` -> `locais.id`
    - `plantoes.usuario_id` -> `usuarios.id`
    - A aplicação cria automaticamente essas foreign keys na inicialização.
-3. Configure as variáveis de ambiente:
-   ```bash
-   export DATABASE_URL="INSIRA SUA SENHA DO BANCO"
-   export JWT_SECRET_KEY="troque-essa-chave-em-producao"
-   # opcional
-   export JWT_EXPIRE_MINUTES="1440"
-   ```
+3. Configure as variáveis de ambiente copiando `.env.example` para `.env`.
+   São obrigatórias `DATABASE_URL`, `ENVIRONMENT` (`development`, `test` ou
+   `production`, exatamente) e `JWT_SECRET_KEY`; sem elas o servidor não sobe
+   (AUD-012). Em produção, `ALLOWED_ORIGINS` também.
 4. Instale dependências:
    ```bash
    pip install -r requirements.txt -r requirements-dev.txt
