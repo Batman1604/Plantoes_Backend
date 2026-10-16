@@ -10,15 +10,20 @@ from app.models import User
 logger = logging.getLogger(__name__)
 
 
+class FeedbackNaoConfigurado(RuntimeError):
+    """O servidor não tem a configuração para enviar feedback. A rota responde
+    503 (serviço indisponível), não 500: não é defeito, é configuração."""
+
+
 class FeedbackService:
     @staticmethod
     def enviar_feedback(usuario: User, mensagem: str) -> None:
         """Envia o feedback do usuário para o email configurado da equipe de desenvolvimento."""
         if not settings.smtp_username or not settings.smtp_password:
-            raise RuntimeError("Configuração SMTP ausente. Defina SMTP_USERNAME e SMTP_PASSWORD.")
+            raise FeedbackNaoConfigurado("Configuração SMTP ausente. Defina SMTP_USERNAME e SMTP_PASSWORD.")
         if not settings.feedback_email_to:
             # AUD-012: sem default (era um e-mail pessoal no código-fonte).
-            raise RuntimeError("Destino do feedback ausente. Defina FEEDBACK_EMAIL_TO.")
+            raise FeedbackNaoConfigurado("Destino do feedback ausente. Defina FEEDBACK_EMAIL_TO.")
 
         msg = EmailMessage()
         msg["Subject"] = f"Feedback do app - usuário {usuario.id}"

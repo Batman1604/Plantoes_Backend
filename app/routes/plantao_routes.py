@@ -96,7 +96,7 @@ from app.schemas.plantao_schema import (
     VerificarTelefoneRequest,
 )
 from app.services.email_service import EmailService
-from app.services.feedback_service import FeedbackService
+from app.services.feedback_service import FeedbackNaoConfigurado, FeedbackService
 from app.services.financeiro_service import FinanceiroService
 from app.core.config import settings
 from app.services.oauth_service import OAuthService, OAuthTokenError, parse_bool_claim
@@ -969,8 +969,14 @@ def enviar_feedback(
     """Endpoint que envia feedback do usuário autenticado por email para o time."""
     try:
         FeedbackService.enviar_feedback(current_user, payload.mensagem)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except FeedbackNaoConfigurado as exc:
+        # Configuração ausente (FEEDBACK_EMAIL_TO ou SMTP) não é erro interno:
+        # 503 com mensagem clara para o app, e o nome da variável só no log.
+        logger.error("Feedback indisponível: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="O envio de feedback não está configurado no servidor no momento.",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Falha ao enviar feedback do usuário %s", mascarar_email(current_user.email))
         raise HTTPException(status_code=500, detail="Não foi possível enviar o feedback no momento.") from exc
