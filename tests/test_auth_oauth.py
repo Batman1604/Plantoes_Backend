@@ -14,6 +14,7 @@ from jose.backends.cryptography_backend import CryptographyRSAKey
 
 import app.services.oauth_service as oauth_service
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 _PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 _PRIVATE_PEM = _PRIVATE_KEY.private_bytes(
@@ -90,11 +91,11 @@ class TestAuthOAuth(unittest.TestCase):
         self.assertEqual(primeiro.json()["data"]["usuario"]["id"], segundo.json()["data"]["usuario"]["id"])
 
     def test_google_vincula_conta_email_senha_existente_quando_email_verificado(self):
-        cadastro = self.client.post("/api/usuarios", json={
-            "nome": "Conta Senha", "email": "vincular@example.com", "senha": "SenhaForte123",
-        })
-        self.assertEqual(cadastro.status_code, 201, cadastro.text)
-        usuario_id = cadastro.json()["data"]["usuario"]["id"]
+        # AUD-010: a senha só sobrevive ao vínculo quando a conta JÁ tinha o
+        # e-mail verificado (o dono provou a posse antes). Antes este teste usava
+        # POST /api/usuarios, que cria a conta com e-mail NÃO verificado — e
+        # afirmava que a senha continuava valendo, que é o próprio pré-sequestro.
+        usuario_id, _ = criar_usuario_no_banco("vincular@example.com", "Conta Senha", email_verificado=True)
 
         token = _sign(_google_claims(sub="google-link-1", email="vincular@example.com"))
         resposta = self.client.post("/api/auth/google", json={"id_token": token})
@@ -106,11 +107,21 @@ class TestAuthOAuth(unittest.TestCase):
         self.assertEqual(login.status_code, 200)
         self.assertEqual(login.json()["data"]["usuario"]["id"], usuario_id)
 
+    def test_google_vincula_conta_com_email_nao_verificado_anula_a_senha(self):
+        """AUD-010: quem cadastrou antes com o e-mail alheio (nunca verificado)
+        perde a senha quando o dono real entra com o Google."""
+        usuario_id, _ = criar_usuario_no_banco("presequestro@example.com", "Conta Invasor")
+
+        token = _sign(_google_claims(sub="google-presequestro-1", email="presequestro@example.com"))
+        resposta = self.client.post("/api/auth/google", json={"id_token": token})
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        self.assertEqual(resposta.json()["data"]["usuario"]["id"], usuario_id)
+
+        login = self.client.post("/api/auth/login", json={"email": "presequestro@example.com", "senha": "SenhaForte123"})
+        self.assertEqual(login.status_code, 401)
+
     def test_google_nao_vincula_quando_email_nao_verificado_retorna_409(self):
-        cadastro = self.client.post("/api/usuarios", json={
-            "nome": "Conta Segura", "email": "seguro@example.com", "senha": "SenhaForte123",
-        })
-        self.assertEqual(cadastro.status_code, 201)
+        criar_usuario_no_banco("seguro@example.com", "Conta Segura")
 
         token = _sign(_google_claims(sub="google-naolink-1", email="seguro@example.com", email_verified=False))
         resposta = self.client.post("/api/auth/google", json={"id_token": token})
@@ -166,11 +177,8 @@ class TestAuthOAuth(unittest.TestCase):
         self.assertEqual(resposta.status_code, 422)
 
     def test_apple_vincula_conta_email_senha_existente_quando_email_verificado(self):
-        cadastro = self.client.post("/api/usuarios", json={
-            "nome": "Conta Apple Vinculo", "email": "vincularapple@example.com", "senha": "SenhaForte123",
-        })
-        self.assertEqual(cadastro.status_code, 201)
-        usuario_id = cadastro.json()["data"]["usuario"]["id"]
+        # AUD-011: POST /api/usuarios foi removido; a conta é gravada direto no banco.
+        usuario_id, _ = criar_usuario_no_banco("vincularapple@example.com", "Conta Apple Vinculo")
 
         token = _sign(_apple_claims(sub="apple-link-1", email="vincularapple@example.com"))
         resposta = self.client.post("/api/auth/apple", json={"identity_token": token})
@@ -178,10 +186,7 @@ class TestAuthOAuth(unittest.TestCase):
         self.assertEqual(resposta.json()["data"]["usuario"]["id"], usuario_id)
 
     def test_apple_nao_vincula_quando_email_nao_verificado_retorna_409(self):
-        cadastro = self.client.post("/api/usuarios", json={
-            "nome": "Conta Apple Segura", "email": "seguroapple@example.com", "senha": "SenhaForte123",
-        })
-        self.assertEqual(cadastro.status_code, 201)
+        criar_usuario_no_banco("seguroapple@example.com", "Conta Apple Segura")
 
         token = _sign(_apple_claims(sub="apple-naolink-1", email="seguroapple@example.com", email_verified=False))
         resposta = self.client.post("/api/auth/apple", json={"identity_token": token})

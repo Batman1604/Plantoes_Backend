@@ -65,7 +65,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ## Fluxo de autenticação JWT
-1. Crie um usuário em `POST /api/usuarios`.
+1. Cadastre-se em `POST /api/auth/cadastro` e confirme o código em
+   `POST /api/auth/confirmar-cadastro` (o antigo `POST /api/usuarios`, que
+   criava a conta sem verificação, foi removido — AUD-011).
 2. Faça login em `POST /api/auth/login` com `email` e `senha`.
 3. O backend retorna `access_token` (Bearer).
 4. Envie header `Authorization: Bearer <token>` nos endpoints protegidos.
@@ -73,7 +75,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## Endpoints principais
 - Públicos:
-  - `POST /api/usuarios` (envie `senha`; backend salva apenas o hash)
+  - `POST /api/auth/cadastro` e `POST /api/auth/confirmar-cadastro`
   - `POST /api/auth/login`
   - `GET /health`
 - Protegidos (JWT obrigatório):

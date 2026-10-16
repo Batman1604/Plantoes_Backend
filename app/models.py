@@ -13,6 +13,15 @@ from sqlalchemy import event
 from app.core.database import Base
 
 
+def normalizar_email(email: str | None) -> str | None:
+    """AUD-058: e-mail sem espaços nas pontas e em minúsculas. O UNIQUE do
+    Postgres diferencia caixa: sem isto, 'Maria@x' e 'maria@x' viravam duas
+    contas, e o reset de senha com a outra grafia dava 404."""
+    if email is None:
+        return None
+    return email.strip().lower()
+
+
 def normalizar_telefone(telefone: str | None) -> str | None:
     """Reduz um telefone a apenas dígitos e remove o DDI 55 quando presente.
 
@@ -454,3 +463,11 @@ class SyncExclusao(Base):
 @event.listens_for(User, "before_update")
 def _sincronizar_telefone_normalizado(mapper, connection, alvo: User) -> None:
     alvo.telefone_normalizado = normalizar_telefone(alvo.telefone)
+
+
+# AUD-058: mesmo motivo do listener acima — todo ponto que grava usuário
+# passa a gravar o e-mail normalizado, sem depender de cada chamador lembrar.
+@event.listens_for(User, "before_insert")
+@event.listens_for(User, "before_update")
+def _normalizar_email_do_usuario(mapper, connection, alvo: User) -> None:
+    alvo.email = normalizar_email(alvo.email)

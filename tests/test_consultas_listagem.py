@@ -18,6 +18,7 @@ from sqlalchemy import event
 
 from app.core.database import engine
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 class ContadorDeConsultas:
@@ -43,14 +44,11 @@ class TestConsultasListagem(unittest.TestCase):
 
     def autenticar(self):
         sufixo = uuid4().hex[:8]
-        r = self.client.post("/api/usuarios", json={
-            "nome": "Usuário Consultas",
-            "email": f"consultas-{sufixo}@example.com",
-            "telefone": f"119{uuid4().int % 100000000:08d}",
-            "senha": "SenhaForte123",
-        })
-        self.assertEqual(r.status_code, 201, r.text)
-        return {"Authorization": f"Bearer {r.json()['data']['access_token']}"}
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        return criar_usuario_no_banco(
+            f"consultas-{sufixo}@example.com", "Usuário Consultas",
+            telefone=f"119{uuid4().int % 100000000:08d}",
+        )[1]
 
     def semear(self, headers, quantidade):
         local_id = self.client.post("/api/locais", headers=headers, json={

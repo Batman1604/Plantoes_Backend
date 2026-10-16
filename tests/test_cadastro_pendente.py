@@ -6,6 +6,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 class TestCadastroPendente(unittest.TestCase):
@@ -93,11 +94,8 @@ class TestCadastroPendente(unittest.TestCase):
 
     def test_iniciar_cadastro_com_email_ja_confirmado_retorna_409(self):
         email = "existente@example.com"
-        criado = self.client.post(
-            "/api/usuarios",
-            json={"nome": "Já existe", "email": email, "telefone": "11988880000", "senha": "SenhaForte123"},
-        )
-        self.assertEqual(criado.status_code, 201, criado.text)
+        # AUD-011: POST /api/usuarios foi removido; a conta existente é gravada direto no banco.
+        criar_usuario_no_banco(email, "Já existe", telefone="11988880000", telefone_verificado=True)
 
         resposta = self._iniciar_cadastro(email, telefone="11977770000")
         self.assertEqual(resposta.status_code, 409, resposta.text)

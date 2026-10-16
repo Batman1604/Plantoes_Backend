@@ -6,6 +6,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 class TestResetSenha(unittest.TestCase):
@@ -18,11 +19,8 @@ class TestResetSenha(unittest.TestCase):
         cls.client = TestClient(app)
 
     def _criar_usuario(self, email, telefone):
-        resposta = self.client.post(
-            "/api/usuarios",
-            json={"nome": "Usuário Teste", "email": email, "telefone": telefone, "senha": "SenhaAntiga123"},
-        )
-        self.assertEqual(resposta.status_code, 201, resposta.text)
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        criar_usuario_no_banco(email, telefone=telefone, senha="SenhaAntiga123")
 
     def _pedir_codigo(self, email, codigo="654321", path="/api/auth/forgot-password"):
         with patch("app.routes.plantao_routes.secrets.randbelow", return_value=int(codigo)):

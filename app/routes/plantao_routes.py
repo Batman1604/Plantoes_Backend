@@ -93,7 +93,6 @@ from app.schemas.plantao_schema import (
     TrocaOperacaoData,
     TrocaResponse,
     UsuarioResumo,
-    UserCreate,
     UserLogin,
     UserResponse,
     VerificarTelefoneRequest,
@@ -165,40 +164,11 @@ def get_current_user(
 
 
 
-@router.post(
-    "/usuarios",
-    response_model=APIResponse[AuthResponse],
-    status_code=status.HTTP_201_CREATED,
-    summary="Criar usuário",
-    description="Cria um novo usuário e retorna o token de acesso para uso imediato.",
-)
-def criar_usuario(payload: UserCreate, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
-    conflitos = _conflitos_cadastro(db, payload.email, payload.telefone)
-    if conflitos:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_detalhe_conflito(conflitos))
-
-    try:
-        user = UserRepository.create(db, payload)
-        logger.info("Usuário criado: %s", user.email)
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email já cadastrado") from exc
-
-    try:
-        token_verificacao = create_purpose_token(user.email, "email_verification", expire_minutes=24 * 60)
-        EmailService.enviar_verificacao(user.email, token_verificacao)
-    except Exception:
-        logger.warning("Falha ao enviar email de verificação para %s", user.email)
-
-    if user.telefone:
-        _disparar_verificacao_telefone(db, user.id, user.telefone)
-
-    access_token = create_access_token(user.id)
-    return APIResponse(
-        success=True,
-        message="Usuário criado com sucesso.",
-        data=AuthResponse(autenticado=True, access_token=access_token, usuario=UserResponse.model_validate(user)),
-    )
+# AUD-011: POST /api/usuarios (cadastro legado) foi removido por decisão do
+# usuário. Ele criava a conta na hora, sem verificar telefone nem e-mail: dava
+# para "ocupar" o número ou o e-mail de outro médico e receber as
+# transferências feitas para ele. O único cadastro é /auth/cadastro +
+# /auth/confirmar-cadastro.
 
 
 def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) -> None:

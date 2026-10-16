@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 class TestTrocas(unittest.TestCase):
@@ -15,11 +16,8 @@ class TestTrocas(unittest.TestCase):
         cls.client = TestClient(app)
 
     def criar_usuario(self, email):
-        response = self.client.post("/api/usuarios", json={
-            "nome": "Usuário Teste", "email": email, "senha": "SenhaForte123",
-        })
-        self.assertEqual(response.status_code, 201, response.text)
-        return {"Authorization": f"Bearer {response.json()['data']['access_token']}"}
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        return criar_usuario_no_banco(email)[1]
 
     def criar_local_e_plantao(self, headers):
         local = self.client.post("/api/locais", headers=headers, json={

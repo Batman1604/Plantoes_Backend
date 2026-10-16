@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.core.database import SessionLocal
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 from app.models import SyncExclusao, Troca
 
 
@@ -24,17 +25,8 @@ class TestTrocasAutorizacao(unittest.TestCase):
 
     def criar_usuario(self):
         sufixo = uuid4().hex[:8]
-        resposta = self.client.post("/api/usuarios", json={
-            "nome": "Usuário Troca",
-            "email": f"troca-{sufixo}@example.com",
-            "senha": "SenhaForte123",
-        })
-        self.assertEqual(resposta.status_code, 201, resposta.text)
-        dados = resposta.json()["data"]
-        return (
-            dados["usuario"]["id"],
-            {"Authorization": f"Bearer {dados['access_token']}"},
-        )
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        return criar_usuario_no_banco(f"troca-{sufixo}@example.com", "Usuário Troca")
 
     def criar_local_e_plantao(self, headers):
         local = self.client.post("/api/locais", headers=headers, json={

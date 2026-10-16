@@ -5,8 +5,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import instante_para_o_banco
-from app.core.security import hash_password, verify_password
+from app.core.security import verify_password
 from app.models import (
+    normalizar_email,
     normalizar_telefone,
     Amizade,
     AmigoConfiguracao,
@@ -25,7 +26,7 @@ from app.models import (
     User,
     VerificacaoTelefone,
 )
-from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserCreate, UserLogin
+from app.schemas.plantao_schema import LocalCreate, PlantaoCreate, UserLogin
 
 
 def _ids_excluidos_busca_amigo(db: Session, usuario_id: int) -> set[int]:
@@ -50,16 +51,6 @@ def _ids_excluidos_busca_amigo(db: Session, usuario_id: int) -> set[int]:
 
 class UserRepository:
     @staticmethod
-    def create(db: Session, payload: UserCreate) -> User:
-        """Cria um novo usuário e armazena a senha com hash seguro."""
-        user_data = payload.model_dump(exclude={"senha"})
-        user = User(**user_data, senha_hash=hash_password(payload.senha))
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        return user
-
-    @staticmethod
     def create_a_partir_de_pendente(db: Session, pendente: CadastroPendente) -> User:
         """Cria a conta definitiva a partir de um cadastro pendente já confirmado.
         Reaproveita o senha_hash já calculado (evita re-hash de senha em texto
@@ -79,7 +70,7 @@ class UserRepository:
     @staticmethod
     def authenticate(db: Session, payload: UserLogin) -> User | None:
         """Autentica usuário por email e senha, retornando o objeto de usuário quando válido."""
-        user = db.scalar(select(User).where(func.lower(User.email) == payload.email.lower()))
+        user = db.scalar(select(User).where(func.lower(User.email) == normalizar_email(payload.email)))
         if user is None or not user.senha_hash:
             return None
         if not verify_password(payload.senha, user.senha_hash):
@@ -96,11 +87,23 @@ class UserRepository:
 
     @staticmethod
     def get_by_email(db: Session, email: str) -> User | None:
-        return db.scalar(select(User).where(User.email == email.lower()))
+        return db.scalar(select(User).where(User.email == normalizar_email(email)))
 
     @staticmethod
     def get_by_phone(db: Session, telefone: str) -> User | None:
-        return db.scalar(select(User).where(User.telefone == telefone))
+        """Dono VERIFICADO do número (AUD-011/AUD-058).
+
+        Compara pela coluna normalizada: '11999999999' e '+55 11 99999-9999'
+        eram números diferentes. E só devolve quem confirmou o número por
+        código — senão quem só DIGITOU o telefone alheio (cadastro legado)
+        recebia as transferências feitas para ele e bloqueava o cadastro do
+        dono real."""
+        alvo = normalizar_telefone(telefone)
+        if not alvo:
+            return None
+        return db.scalar(
+            select(User).where(User.telefone_normalizado == alvo, User.telefone_verificado.is_(True))
+        )
 
     @staticmethod
     def buscar_por_email_prefixo(db: Session, prefixo: str, excluir_usuario_id: int) -> list[User]:
@@ -165,7 +168,7 @@ class UserRepository:
         if usuario is not None:
             return usuario, False
 
-        usuario = db.scalar(select(User).where(func.lower(User.email) == email.lower()))
+        usuario = db.scalar(select(User).where(func.lower(User.email) == normalizar_email(email)))
         if usuario is not None:
             if not email_verificado:
                 raise ValueError("email_nao_verificado")
@@ -173,6 +176,11 @@ class UserRepository:
             if not usuario.avatar and avatar:
                 usuario.avatar = avatar
             if not usuario.email_verificado:
+                # AUD-010 (pré-sequestro): a conta existia com este e-mail sem
+                # que ninguém tivesse provado a posse dele. Quem a criou pode ser
+                # outra pessoa; a senha que ela definiu deixa de valer agora que
+                # o dono real do e-mail entrou pelo provedor.
+                usuario.senha_hash = None
                 usuario.email_verificado = True
             db.commit()
             db.refresh(usuario)
@@ -180,7 +188,7 @@ class UserRepository:
 
         usuario = User(
             nome=nome,
-            email=email.lower(),
+            email=normalizar_email(email),
             senha_hash=None,
             avatar=avatar,
             email_verificado=email_verificado,
@@ -721,7 +729,7 @@ class CadastroPendenteRepository:
         codigo: str,
         expira_em: datetime,
     ) -> CadastroPendente:
-        email = email.lower()
+        email = normalizar_email(email)
         existente = db.scalar(select(CadastroPendente).where(CadastroPendente.email == email))
         if existente:
             existente.nome = nome
@@ -742,11 +750,11 @@ class CadastroPendenteRepository:
 
     @staticmethod
     def get_by_email(db: Session, email: str) -> CadastroPendente | None:
-        return db.scalar(select(CadastroPendente).where(CadastroPendente.email == email.lower()))
+        return db.scalar(select(CadastroPendente).where(CadastroPendente.email == normalizar_email(email)))
 
     @staticmethod
     def delete_by_email(db: Session, email: str) -> None:
-        db.execute(delete(CadastroPendente).where(CadastroPendente.email == email.lower()))
+        db.execute(delete(CadastroPendente).where(CadastroPendente.email == normalizar_email(email)))
         db.commit()
 
 

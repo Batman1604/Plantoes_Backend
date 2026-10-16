@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 def _envelhecer_plantao(plantao_id: int) -> None:
@@ -30,12 +31,9 @@ class TestSync(unittest.TestCase):
         cls.client = TestClient(app)
 
     def criar_usuario(self, email):
-        response = self.client.post("/api/usuarios", json={
-            "nome": "Usuário Teste", "email": email, "senha": "SenhaForte123",
-        })
-        self.assertEqual(response.status_code, 201, response.text)
-        data = response.json()["data"]
-        return {"Authorization": f"Bearer {data['access_token']}"}, data["usuario"]["id"]
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        usuario_id, headers = criar_usuario_no_banco(email)
+        return headers, usuario_id
 
     def criar_local(self, headers, nome="Hospital Teste"):
         response = self.client.post("/api/locais", headers=headers, json={

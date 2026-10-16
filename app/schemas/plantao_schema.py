@@ -31,11 +31,6 @@ class UserBase(BaseModel):
     email: EmailStr = Field(example="joao@example.com")
 
 
-class UserCreate(UserBase):
-    telefone: Optional[str] = Field(default=None, max_length=30, example="11999999999")
-    senha: str = Field(min_length=8, max_length=128, example="SenhaForte123")
-
-
 class UserLogin(BaseModel):
     email: EmailStr = Field(example="joao@example.com")
     senha: str = Field(min_length=8, max_length=128, example="SenhaForte123")

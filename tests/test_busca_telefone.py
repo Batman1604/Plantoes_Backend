@@ -19,6 +19,7 @@ from sqlalchemy import event, select
 from app.core.database import SessionLocal
 from app.core.security import hash_password
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 from app.models import User, normalizar_telefone
 
 
@@ -60,15 +61,9 @@ class TestBuscaPorTelefone(unittest.TestCase):
         sufixo = uuid4().hex[:8]
         if telefone is None:
             telefone = f"119{uuid4().int % 100000000:08d}"
-        r = self.client.post("/api/usuarios", json={
-            "nome": "Usuário Busca",
-            "email": f"busca-{sufixo}@example.com",
-            "telefone": telefone,
-            "senha": "SenhaForte123",
-        })
-        self.assertEqual(r.status_code, 201, r.text)
-        dados = r.json()["data"]
-        return dados["usuario"]["id"], {"Authorization": f"Bearer {dados['access_token']}"}, telefone
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        uid, headers = criar_usuario_no_banco(f"busca-{sufixo}@example.com", "Usuário Busca", telefone=telefone)
+        return uid, headers, telefone
 
     def test_coluna_normalizada_e_preenchida_ao_cadastrar(self):
         uid, _, _ = self.criar_usuario(telefone="+55 (11) 91234-5678")

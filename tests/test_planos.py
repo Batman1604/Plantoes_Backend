@@ -12,6 +12,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 from app.services.plano_service import PlanoService
 
 
@@ -28,16 +29,8 @@ class TestPlanos(unittest.TestCase):
         sufixo = uuid4().hex[:8]
         email = f"plan-user-{sufixo}@example.com"
         telefone = f"119{uuid4().int % 100000000:08d}"
-        criacao = self.client.post(
-            "/api/usuarios",
-            json={
-                "nome": "Usuário Plano",
-                "email": email,
-                "telefone": telefone,
-                "senha": "SenhaForte123",
-            },
-        )
-        self.assertEqual(criacao.status_code, 201, criacao.text)
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        criar_usuario_no_banco(email, "Usuário Plano", telefone=telefone)
 
         login = self.client.post(
             "/api/auth/login",

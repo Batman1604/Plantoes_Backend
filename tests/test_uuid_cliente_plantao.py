@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from app.core.database import SessionLocal
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 from app.models import Plantao
 
 
@@ -30,13 +31,8 @@ class TestUuidClientePlantao(unittest.TestCase):
 
     def criar_usuario(self):
         sufixo = uuid4().hex[:8]
-        resposta = self.client.post("/api/usuarios", json={
-            "nome": "Usuário Uuid",
-            "email": f"uuid-{sufixo}@example.com",
-            "senha": "SenhaForte123",
-        })
-        self.assertEqual(resposta.status_code, 201, resposta.text)
-        return {"Authorization": f"Bearer {resposta.json()['data']['access_token']}"}
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        return criar_usuario_no_banco(f"uuid-{sufixo}@example.com", "Usuário Uuid")[1]
 
     def criar_local_e_plantao(self, headers):
         local = self.client.post("/api/locais", headers=headers, json={

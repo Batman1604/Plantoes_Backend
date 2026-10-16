@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 class TestPatchLocaisEPlantoes(unittest.TestCase):
@@ -20,16 +21,8 @@ class TestPatchLocaisEPlantoes(unittest.TestCase):
         # a rodar conseguia criar usuário; os demais falhavam no login por falta
         # de token.
         email = f"patch-user-{uuid4()}@example.com"
-        criacao = self.client.post(
-            "/api/usuarios",
-            json={
-                "nome": "Usuário Patch",
-                "email": email,
-                "telefone": f"119{uuid4().int % 100000000:08d}",
-                "senha": "SenhaForte123",
-            },
-        )
-        self.assertEqual(criacao.status_code, 201, criacao.text)
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        criar_usuario_no_banco(email, "Usuário Patch", telefone=f"119{uuid4().int % 100000000:08d}")
         login = self.client.post(
             "/api/auth/login",
             json={"email": email, "senha": "SenhaForte123"},

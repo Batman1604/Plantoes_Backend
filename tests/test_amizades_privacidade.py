@@ -13,6 +13,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 class TestAmizadesPrivacidade(unittest.TestCase):
@@ -22,22 +23,13 @@ class TestAmizadesPrivacidade(unittest.TestCase):
 
     def criar_usuario(self, telefone=None):
         sufixo = uuid4().hex[:8]
-        corpo = {
-            "nome": "Usuário Privacidade",
-            "email": f"priv-{sufixo}@example.com",
-            "senha": "SenhaForte123",
-        }
         if telefone is None:
             telefone = f"119{uuid4().int % 100000000:08d}"
-        corpo["telefone"] = telefone
-        resposta = self.client.post("/api/usuarios", json=corpo)
-        self.assertEqual(resposta.status_code, 201, resposta.text)
-        dados = resposta.json()["data"]
-        return (
-            dados["usuario"]["id"],
-            {"Authorization": f"Bearer {dados['access_token']}"},
-            telefone,
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        usuario_id, headers = criar_usuario_no_banco(
+            f"priv-{sufixo}@example.com", "Usuário Privacidade", telefone=telefone
         )
+        return usuario_id, headers, telefone
 
     def _amigo_na_listagem(self, headers, amizade_id=None):
         resposta = self.client.get("/api/amizades", headers=headers)
@@ -130,14 +122,10 @@ class TestVarreduraLimitada(unittest.TestCase):
 
     def _autenticar(self):
         sufixo = uuid4().hex[:8]
-        resposta = self.client.post("/api/usuarios", json={
-            "nome": "Usuário Varredura",
-            "email": f"scan-{sufixo}@example.com",
-            "telefone": f"119{uuid4().int % 100000000:08d}",
-            "senha": "SenhaForte123",
-        })
-        self.assertEqual(resposta.status_code, 201, resposta.text)
-        return {"Authorization": f"Bearer {resposta.json()['data']['access_token']}"}
+        return criar_usuario_no_banco(
+            f"scan-{sufixo}@example.com", "Usuário Varredura",
+            telefone=f"119{uuid4().int % 100000000:08d}",
+        )[1]
 
     def test_criar_amizade_em_sequencia_acaba_bloqueado(self):
         headers = self._autenticar()

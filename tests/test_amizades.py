@@ -5,6 +5,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.fixtures_usuario import criar_usuario_no_banco
 
 
 class TestAmizades(unittest.TestCase):
@@ -13,14 +14,9 @@ class TestAmizades(unittest.TestCase):
         cls.client = TestClient(app)
 
     def criar_usuario(self, email, telefone=None, nome="Usuário Teste"):
-        payload = {"nome": nome, "email": email, "senha": "SenhaForte123"}
-        if telefone is not None:
-            payload["telefone"] = telefone
-        response = self.client.post("/api/usuarios", json=payload)
-        self.assertEqual(response.status_code, 201, response.text)
-        data = response.json()["data"]
-        headers = {"Authorization": f"Bearer {data['access_token']}"}
-        return headers, data["usuario"]["id"]
+        # AUD-011: POST /api/usuarios foi removido; o usuário é gravado direto no banco.
+        usuario_id, headers = criar_usuario_no_banco(email, nome, telefone=telefone)
+        return headers, usuario_id
 
     def enviar_amizade(self, headers, destinatario_id):
         return self.client.post(
