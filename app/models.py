@@ -250,6 +250,8 @@ class VerificacaoTelefone(Base):
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     codigo: Mapped[str] = mapped_column(String(6), nullable=False)
     expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # AUD-032: erros de digitação deste código; no limite, o código morre.
+    tentativas: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
 
@@ -261,6 +263,8 @@ class CodigoResetSenha(Base):
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     codigo: Mapped[str] = mapped_column(String(6), nullable=False)
     expira_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # AUD-032: erros de digitação deste código; no limite, o código morre.
+    tentativas: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     usuario: Mapped[User] = relationship(foreign_keys=[usuario_id])
 

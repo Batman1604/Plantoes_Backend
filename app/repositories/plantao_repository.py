@@ -1,3 +1,4 @@
+import hmac
 from datetime import UTC, date, datetime
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -658,6 +659,32 @@ class TransferenciaRepository:
             db.commit()
 
 
+# AUD-032: erros admitidos por código de 6 dígitos (reset de senha e
+# verificação de telefone). O único freio era o limite por IP e por rota —
+# com várias rotas testando o mesmo código e vários IPs, as chances somavam.
+MAX_TENTATIVAS_CODIGO = 5
+
+
+def _conferir_codigo(db: Session, registro, codigo: str):
+    """Devolve o registro se o código confere, não expirou e ainda tem
+    tentativas; senão None. Cada erro conta (e é gravado na hora): ao chegar
+    a MAX_TENTATIVAS_CODIGO, nem o código certo vale mais — é preciso pedir
+    outro."""
+    if registro is None or registro.tentativas >= MAX_TENTATIVAS_CODIGO:
+        return None
+    expira_em = registro.expira_em
+    if expira_em.tzinfo is None:
+        # SQLite (testes) não preserva o fuso ao ler a coluna de volta.
+        expira_em = expira_em.replace(tzinfo=UTC)
+    if expira_em <= datetime.now(UTC):
+        return None
+    if not hmac.compare_digest(registro.codigo, codigo):
+        registro.tentativas += 1
+        db.commit()
+        return None
+    return registro
+
+
 class VerificacaoTelefoneRepository:
     @staticmethod
     def upsert(db: Session, usuario_id: int, codigo: str, expira_em: datetime) -> VerificacaoTelefone:
@@ -665,6 +692,7 @@ class VerificacaoTelefoneRepository:
         if existente:
             existente.codigo = codigo
             existente.expira_em = expira_em
+            existente.tentativas = 0
             db.commit()
             db.refresh(existente)
             return existente
@@ -675,14 +703,10 @@ class VerificacaoTelefoneRepository:
         return verificacao
 
     @staticmethod
-    def get_valido(db: Session, usuario_id: int, codigo: str) -> VerificacaoTelefone | None:
-        return db.scalar(
-            select(VerificacaoTelefone).where(
-                VerificacaoTelefone.usuario_id == usuario_id,
-                VerificacaoTelefone.codigo == codigo,
-                VerificacaoTelefone.expira_em > datetime.now(UTC),
-            )
-        )
+    def conferir(db: Session, usuario_id: int, codigo: str) -> VerificacaoTelefone | None:
+        """Confere o código contando a tentativa (AUD-032)."""
+        registro = db.scalar(select(VerificacaoTelefone).where(VerificacaoTelefone.usuario_id == usuario_id))
+        return _conferir_codigo(db, registro, codigo)
 
     @staticmethod
     def delete_by_user(db: Session, usuario_id: int) -> None:
@@ -697,6 +721,7 @@ class CodigoResetSenhaRepository:
         if existente:
             existente.codigo = codigo
             existente.expira_em = expira_em
+            existente.tentativas = 0
             db.commit()
             db.refresh(existente)
             return existente
@@ -707,14 +732,10 @@ class CodigoResetSenhaRepository:
         return codigo_reset
 
     @staticmethod
-    def get_valido(db: Session, usuario_id: int, codigo: str) -> CodigoResetSenha | None:
-        return db.scalar(
-            select(CodigoResetSenha).where(
-                CodigoResetSenha.usuario_id == usuario_id,
-                CodigoResetSenha.codigo == codigo,
-                CodigoResetSenha.expira_em > datetime.now(UTC),
-            )
-        )
+    def conferir(db: Session, usuario_id: int, codigo: str) -> CodigoResetSenha | None:
+        """Confere o código contando a tentativa (AUD-032)."""
+        registro = db.scalar(select(CodigoResetSenha).where(CodigoResetSenha.usuario_id == usuario_id))
+        return _conferir_codigo(db, registro, codigo)
 
     @staticmethod
     def delete_by_user(db: Session, usuario_id: int) -> None:

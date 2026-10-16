@@ -73,7 +73,6 @@ from app.schemas.plantao_schema import (
     PlantaoUpdate,
     ReenviarCadastroRequest,
     ResetPasswordRequest,
-    SenhaResetConfirmar,
     SenhaResetRequest,
     VerificarCodigoSenhaRequest,
     SolicitacaoTrocaCreate,
@@ -592,7 +591,7 @@ def verificar_telefone(
     if not current_user.telefone:
         raise HTTPException(status_code=400, detail="Nenhum telefone cadastrado nesta conta.")
 
-    verificacao = VerificacaoTelefoneRepository.get_valido(db, current_user.id, payload.codigo)
+    verificacao = VerificacaoTelefoneRepository.conferir(db, current_user.id, payload.codigo)
     if verificacao is None:
         raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
 
@@ -638,33 +637,10 @@ def _disparar_codigo_reset_senha(db: Session, user: User) -> None:
 _EMAIL_NAO_CADASTRADO = "Não encontramos cadastro com este email. Verifique se digitou certo."
 
 
-@router.post(
-    "/auth/esqueci-senha",
-    response_model=APIResponse[None],
-    summary="Solicitar redefinição de senha",
-    description="Envia um email com código de 6 dígitos para redefinição de senha. Retorna 404 se o email não estiver cadastrado.",
-)
-def esqueci_senha(payload: SenhaResetRequest, db: Session = Depends(get_db), _=Depends(rate_limit(3, 60))):
-    user = UserRepository.get_by_email(db, payload.email)
-    if not user:
-        raise HTTPException(status_code=404, detail=_EMAIL_NAO_CADASTRADO)
-    _disparar_codigo_reset_senha(db, user)
-    return APIResponse(success=True, message="Código enviado para o seu email.", data=None)
-
-
-@router.post(
-    "/auth/redefinir-senha",
-    response_model=APIResponse[None],
-    summary="Redefinir senha com código",
-)
-def redefinir_senha(payload: SenhaResetConfirmar, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
-    user = UserRepository.get_by_email(db, payload.email)
-    if not user or CodigoResetSenhaRepository.get_valido(db, user.id, payload.codigo) is None:
-        raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
-    UserRepository.update_senha(db, user.id, payload.nova_senha)
-    CodigoResetSenhaRepository.delete_by_user(db, user.id)
-    logger.info("Senha redefinida via código para %s", user.email)
-    return APIResponse(success=True, message="Senha redefinida com sucesso.", data=None)
+# AUD-032: as rotas duplicadas em português (/auth/esqueci-senha e
+# /auth/redefinir-senha) foram removidas. Cada rota que testava o mesmo código
+# tinha o próprio orçamento no limitador; o app usa forgot-password,
+# verificar-codigo-senha e reset-password, e o site usa reset-password.
 
 
 @router.post(
@@ -691,7 +667,7 @@ def verificar_codigo_senha(
     payload: VerificarCodigoSenhaRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 120))
 ):
     user = UserRepository.get_by_email(db, payload.email)
-    if not user or CodigoResetSenhaRepository.get_valido(db, user.id, payload.code) is None:
+    if not user or CodigoResetSenhaRepository.conferir(db, user.id, payload.code) is None:
         raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
     return APIResponse(success=True, message="Código válido.", data=None)
 
@@ -703,7 +679,7 @@ def verificar_codigo_senha(
 )
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
     user = UserRepository.get_by_email(db, payload.email)
-    if not user or CodigoResetSenhaRepository.get_valido(db, user.id, payload.code) is None:
+    if not user or CodigoResetSenhaRepository.conferir(db, user.id, payload.code) is None:
         raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
     UserRepository.update_senha(db, user.id, payload.newPassword)
     CodigoResetSenhaRepository.delete_by_user(db, user.id)
