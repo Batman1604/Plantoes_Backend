@@ -10,6 +10,11 @@ from app.core.config import settings
 
 _ITERATIONS = 100_000
 
+# AUD-031: idade máxima de uma cadeia de /auth/refresh, contada do login
+# original (claim auth_time). Sem limite, um token roubado renovava para
+# sempre. Generoso de propósito: a biometria do app (A-17) depende do refresh.
+IDADE_MAXIMA_DA_SESSAO = timedelta(days=30)
+
 
 def hash_password(password: str) -> str:
     """Gera hash seguro para senha usando PBKDF2-HMAC-SHA256 e salt aleatório."""
@@ -54,13 +59,20 @@ def decode_purpose_token(token: str, purpose: str) -> str | None:
         return None
 
 
-def create_access_token(user_id: int) -> str:
-    """Gera token de acesso JWT que identifica o usuário e vence após tempo configurado."""
-    expires_at = datetime.now(UTC) + timedelta(minutes=settings.jwt_expire_minutes)
+def create_access_token(user_id: int, autenticado_em: float | None = None) -> str:
+    """Gera token de acesso JWT que identifica o usuário e vence após tempo configurado.
+
+    AUD-031: `iat` (com fração de segundo) permite recusar tokens emitidos antes
+    de uma troca de senha; `auth_time` é o instante do login original e passa
+    adiante a cada /auth/refresh (`autenticado_em`), limitando a cadeia."""
+    agora = datetime.now(UTC)
+    expires_at = agora + timedelta(minutes=settings.jwt_expire_minutes)
     payload = {
         "sub": str(user_id),
         "jti": str(uuid4()),
         "exp": expires_at,
+        "iat": agora.timestamp(),
+        "auth_time": autenticado_em if autenticado_em is not None else agora.timestamp(),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
@@ -87,6 +99,15 @@ def decode_access_token(token: str) -> dict[str, str | int | datetime] | None:
         else:
             return None
 
-        return {"user_id": int(subject), "jti": str(token_id), "exp": expires_at}
+        # AUD-031: ausentes em tokens emitidos antes desta versão (None).
+        emitido_em = payload.get("iat")
+        autenticado_em = payload.get("auth_time")
+        return {
+            "user_id": int(subject),
+            "jti": str(token_id),
+            "exp": expires_at,
+            "iat": float(emitido_em) if emitido_em is not None else None,
+            "auth_time": float(autenticado_em) if autenticado_em is not None else None,
+        }
     except (JWTError, ValueError, TypeError):
         return None

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models import Plantao, SolicitacaoTroca, Troca, User
 from app.core.security import (
+    IDADE_MAXIMA_DA_SESSAO,
     create_access_token,
     create_purpose_token,
     decode_access_token,
@@ -157,7 +158,22 @@ def get_current_user(
     if user is None:
         raise unauthorized_exception()
 
+    if _sessao_invalidada(user, token_payload["iat"]):
+        raise unauthorized_exception()
+
     return user
+
+
+def _sessao_invalidada(user: User, emitido_em: float | None) -> bool:
+    """AUD-031: token emitido antes da última troca/redefinição de senha.
+    Token sem `iat` (anterior a esta versão) também cai, se houve troca."""
+    limite = user.sessoes_invalidas_antes_de
+    if limite is None:
+        return False
+    if limite.tzinfo is None:
+        # SQLite (testes) não preserva o fuso ao ler a coluna de volta.
+        limite = limite.replace(tzinfo=UTC)
+    return emitido_em is None or emitido_em < limite.timestamp()
 
 
 
@@ -501,6 +517,13 @@ def refresh_token(
     current_user=Depends(get_current_user),
 ):
     token_payload = decode_access_token(credentials.credentials)
+    # AUD-031: a cadeia de renovação tem idade máxima desde o login original.
+    # Token anterior a esta versão (sem auth_time) começa a contar agora.
+    agora = datetime.now(UTC).timestamp()
+    autenticado_em = token_payload["auth_time"] if token_payload["auth_time"] is not None else agora
+    if agora - autenticado_em > IDADE_MAXIMA_DA_SESSAO.total_seconds():
+        raise unauthorized_exception()
+
     try:
         TokenRevogadoRepository.revoke(
             db,
@@ -511,7 +534,7 @@ def refresh_token(
     except IntegrityError:
         db.rollback()
 
-    new_token = create_access_token(current_user.id)
+    new_token = create_access_token(current_user.id, autenticado_em=autenticado_em)
     return APIResponse(
         success=True,
         message="Token renovado com sucesso.",

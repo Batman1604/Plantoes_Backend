@@ -64,6 +64,11 @@ class User(Base):
     avatar: Mapped[str | None] = mapped_column(String(255), nullable=True)
     profissao: Mapped[str | None] = mapped_column(String(255), nullable=True)
     theme_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="light")
+    # AUD-031: tokens de acesso emitidos ANTES deste instante são recusados.
+    # Gravado ao trocar/redefinir a senha (e ao anular a senha no vínculo
+    # OAuth do AUD-010). A revogação por jti (tokens_revogados) só alcança o
+    # token do próprio aparelho; esta coluna derruba todos de uma vez.
+    sessoes_invalidas_antes_de: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     locais: Mapped[list["Local"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
 

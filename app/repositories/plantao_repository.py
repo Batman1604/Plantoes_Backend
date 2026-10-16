@@ -181,6 +181,8 @@ class UserRepository:
                 # outra pessoa; a senha que ela definiu deixa de valer agora que
                 # o dono real do e-mail entrou pelo provedor.
                 usuario.senha_hash = None
+                # ...e as sessões abertas com essa senha caem junto (AUD-031).
+                usuario.sessoes_invalidas_antes_de = datetime.now(UTC)
                 usuario.email_verificado = True
             db.commit()
             db.refresh(usuario)
@@ -271,6 +273,9 @@ class UserRepository:
         user = db.scalar(select(User).where(User.id == user_id))
         if user:
             user.senha_hash = hash_password(nova_senha)
+            # AUD-031: trocar ou redefinir a senha derruba todas as sessões
+            # abertas antes — inclusive a de quem roubou o token.
+            user.sessoes_invalidas_antes_de = datetime.now(UTC)
             db.commit()
 
     @staticmethod
