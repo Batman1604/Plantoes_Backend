@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
-    whatsapp_verify_token: str = "plantoes_whatsapp_verify"
+    # AUD-089: sem default público (o anterior estava no código-fonte).
+    # Obrigatório quando WHATSAPP_TOKEN está definido (validador abaixo).
+    whatsapp_verify_token: str = ""
     # Chave secreta do app na Meta (App Dashboard > Configurações básicas), usada para
     # validar a assinatura HMAC (header X-Hub-Signature-256) de cada webhook recebido —
     # sem isso qualquer requisição POST /webhook/whatsapp seria aceita como se viesse da Meta.
@@ -72,6 +74,9 @@ class Settings(BaseSettings):
         falaria com o assistente como o telefone de outro usuário."""
         if self.whatsapp_token and not self.whatsapp_app_secret:
             raise ValueError("WHATSAPP_APP_SECRET é obrigatório quando WHATSAPP_TOKEN está definido.")
+        if self.whatsapp_token and not self.whatsapp_verify_token:
+            # AUD-089: o default público saiu; sem ele, o webhook em uso precisa de um.
+            raise ValueError("WHATSAPP_VERIFY_TOKEN é obrigatório quando WHATSAPP_TOKEN está definido.")
         return self
 
 

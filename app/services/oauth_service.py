@@ -58,7 +58,9 @@ def _decode_and_verify(token: str, jwks_url: str, valid_issuers: tuple[str, ...]
 
     if payload.get("iss") not in valid_issuers:
         raise OAuthTokenError("Emissor do token não corresponde ao esperado.")
-    if allowed_audiences and payload.get("aud") not in allowed_audiences:
+    # AUD-089: sem o `allowed_audiences and`, uma configuração só com vírgulas
+    # (lista vazia) recusa tudo, em vez de pular a checagem de audiência.
+    if payload.get("aud") not in allowed_audiences:
         raise OAuthTokenError("Audiência do token não corresponde a este aplicativo.")
     if not payload.get("sub"):
         raise OAuthTokenError("Token não contém identificador de usuário (sub).")

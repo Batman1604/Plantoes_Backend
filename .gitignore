@@ -38,6 +38,10 @@ test_*.db
 .DS_Store
 Thumbs.db
 
+# Arquivos enviados por usuários (AUD-089). A rota de avatar saiu (A-18), mas
+# uma pasta uploads/ antiga não pode ser commitada por engano.
+uploads/
+
 # Cache do Alembic
 migrations/__pycache__/
 migrations/versions/__pycache__/

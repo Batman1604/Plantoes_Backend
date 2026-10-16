@@ -1,3 +1,4 @@
+import hmac
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -1001,7 +1002,9 @@ def upgrade_usuario(
 ):
     if not settings.upgrade_webhook_secret:
         raise HTTPException(status_code=503, detail="Gateway de pagamento não configurado.")
-    if x_upgrade_secret != settings.upgrade_webhook_secret:
+    # AUD-089: comparação em tempo constante (o `!=` deixava medir quantos
+    # caracteres do segredo batiam pelo tempo de resposta).
+    if not hmac.compare_digest(x_upgrade_secret.encode("utf-8"), settings.upgrade_webhook_secret.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Secret inválido.")
 
     user = UserRepository.get_by_id(db, payload.usuario_id)
