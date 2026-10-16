@@ -21,6 +21,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from app.core.mascaras import mascarar_email
 from app.models import Plantao, User
 from app.repositories.plantao_repository import FinanceiroRepository, LocalRepository, PlantaoRepository
 from app.schemas.plantao_schema import PlantaoCreate, PlantaoCreateWithUsuario, PlantaoUpdate
@@ -110,7 +111,7 @@ class PlantaoService:
         except Exception:
             db.rollback()
             raise
-        logger.info("Plantão criado para usuário %s no local %s", usuario.email, payload.local_id)
+        logger.info("Plantão criado para usuário %s no local %s", mascarar_email(usuario.email), payload.local_id)
         return plantao
 
     @staticmethod
@@ -363,7 +364,7 @@ class PlantaoService:
             db.rollback()
             raise
 
-        logger.info("Plantão %s atualizado por %s", plantao_id, usuario.email)
+        logger.info("Plantão %s atualizado por %s", plantao_id, mascarar_email(usuario.email))
         _meses_sync.add((plantao.local_id, plantao.data_inicio.month, plantao.data_inicio.year))
         for _p_novo in _novos_plantoes_criados:
             _meses_sync.add((_p_novo.local_id, _p_novo.data_inicio.month, _p_novo.data_inicio.year))
@@ -407,6 +408,6 @@ class PlantaoService:
 
         logger.info(
             "Plantão %s deletado por %s (aplicar_em=%s, total=%d)",
-            plantao_id, usuario.email, aplicar_em, len(plantoes_para_excluir),
+            plantao_id, mascarar_email(usuario.email), aplicar_em, len(plantoes_para_excluir),
         )
         return len(plantoes_para_excluir)

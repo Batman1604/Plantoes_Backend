@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from app.core.mascaras import mascarar_telefone
+from app.core.mascaras import mascarar_email, mascarar_telefone
 from app.core.rate_limiter import rate_limit, rate_limit_por_usuario
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -237,7 +237,9 @@ def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_
         enviado = SmsService.enviar_codigo_verificacao(payload.telefone, codigo)
     except Exception as exc:
         db.rollback()
-        logger.warning("Falha ao iniciar cadastro para %s: %s", payload.email, exc)
+        # AUD-033: o tipo, não a mensagem — a de um erro de banco traz os
+        # parâmetros do INSERT (e-mail, telefone, hash da senha).
+        logger.warning("Falha ao iniciar cadastro para %s: %s", mascarar_email(payload.email), type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Não foi possível enviar o código de verificação. Tente novamente.",
@@ -280,20 +282,21 @@ def confirmar_cadastro(
         user = UserRepository.create_a_partir_de_pendente(db, pendente)
     except Exception as exc:
         db.rollback()
-        logger.warning("Falha ao concluir cadastro de %s: %s", pendente.email, exc)
+        # AUD-033: o tipo, não a mensagem (ver iniciar_cadastro).
+        logger.warning("Falha ao concluir cadastro de %s: %s", mascarar_email(pendente.email), type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Não foi possível concluir o cadastro. Tente novamente.",
         ) from exc
 
     CadastroPendenteRepository.delete_by_email(db, pendente.email)
-    logger.info("Cadastro confirmado, usuário criado: %s", user.email)
+    logger.info("Cadastro confirmado, usuário criado: %s", mascarar_email(user.email))
 
     try:
         token_verificacao = create_purpose_token(user.email, "email_verification", expire_minutes=24 * 60)
         EmailService.enviar_verificacao(user.email, token_verificacao)
     except Exception:
-        logger.warning("Falha ao enviar email de verificação para %s", user.email)
+        logger.warning("Falha ao enviar email de verificação para %s", mascarar_email(user.email))
 
     access_token = create_access_token(user.id)
     return APIResponse(
@@ -357,7 +360,7 @@ def autenticar_usuario(payload: UserLogin, db: Session = Depends(get_db), _=Depe
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
 
     access_token = create_access_token(user.id)
-    logger.info("Login realizado: %s", user.email)
+    logger.info("Login realizado: %s", mascarar_email(user.email))
     return APIResponse(
         success=True,
         message="Login realizado com sucesso.",
@@ -405,7 +408,7 @@ def autenticar_google(payload: GoogleAuthRequest, db: Session = Depends(get_db),
             ),
         )
 
-    logger.info("%s via Google: %s", "Usuário criado" if criado else "Login", user.email)
+    logger.info("%s via Google: %s", "Usuário criado" if criado else "Login", mascarar_email(user.email))
     access_token = create_access_token(user.id)
     return APIResponse(
         success=True,
@@ -462,7 +465,7 @@ def autenticar_apple(payload: AppleAuthRequest, db: Session = Depends(get_db), _
             ),
         )
 
-    logger.info("%s via Apple: %s", "Usuário criado" if criado else "Login", user.email)
+    logger.info("%s via Apple: %s", "Usuário criado" if criado else "Login", mascarar_email(user.email))
     access_token = create_access_token(user.id)
     return APIResponse(
         success=True,
@@ -570,7 +573,7 @@ def reenviar_verificacao(current_user=Depends(get_current_user)):
         token = create_purpose_token(current_user.email, "email_verification", expire_minutes=24 * 60)
         EmailService.enviar_verificacao(current_user.email, token)
     except Exception:
-        logger.warning("Falha ao reenviar verificação para %s", current_user.email)
+        logger.warning("Falha ao reenviar verificação para %s", mascarar_email(current_user.email))
     return APIResponse(success=True, message="Email de verificação enviado.", data=None)
 
 
@@ -600,7 +603,7 @@ def verificar_telefone(
     VerificacaoTelefoneRepository.delete_by_user(db, current_user.id)
     db.commit()
 
-    logger.info("Telefone verificado para usuário %s", current_user.email)
+    logger.info("Telefone verificado para usuário %s", mascarar_email(current_user.email))
     return APIResponse(success=True, message="Telefone verificado com sucesso.", data=None)
 
 
@@ -631,7 +634,7 @@ def _disparar_codigo_reset_senha(db: Session, user: User) -> None:
         CodigoResetSenhaRepository.upsert(db, user.id, codigo, expira_em)
         EmailService.enviar_reset_senha(user.email, codigo)
     except Exception:
-        logger.warning("Falha ao enviar código de reset de senha para %s", user.email)
+        logger.warning("Falha ao enviar código de reset de senha para %s", mascarar_email(user.email))
 
 
 _EMAIL_NAO_CADASTRADO = "Não encontramos cadastro com este email. Verifique se digitou certo."
@@ -683,7 +686,7 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
     UserRepository.update_senha(db, user.id, payload.newPassword)
     CodigoResetSenhaRepository.delete_by_user(db, user.id)
-    logger.info("Senha redefinida via código para %s", user.email)
+    logger.info("Senha redefinida via código para %s", mascarar_email(user.email))
     return APIResponse(success=True, message="Senha redefinida com sucesso.", data=None)
 
 
@@ -701,7 +704,7 @@ def alterar_senha(
     if not verify_password(payload.senha_atual, current_user.senha_hash or ""):
         raise HTTPException(status_code=400, detail="Senha atual incorreta.")
     UserRepository.update_senha(db, current_user.id, payload.nova_senha)
-    logger.info("Senha alterada para %s", current_user.email)
+    logger.info("Senha alterada para %s", mascarar_email(current_user.email))
     return APIResponse(success=True, message="Senha alterada com sucesso.", data=None)
 
 
@@ -739,7 +742,7 @@ def deletar_conta(
             db.rollback()
 
     UserRepository.delete(db, current_user.id)
-    logger.info("Conta excluída: %s", current_user.email)
+    logger.info("Conta excluída: %s", mascarar_email(current_user.email))
     return APIResponse(success=True, message="Conta excluída com sucesso.", data=None)
 
 
@@ -945,7 +948,7 @@ def enviar_feedback(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Falha ao enviar feedback do usuário %s", current_user.email)
+        logger.exception("Falha ao enviar feedback do usuário %s", mascarar_email(current_user.email))
         raise HTTPException(status_code=500, detail="Não foi possível enviar o feedback no momento.") from exc
 
     return APIResponse(success=True, message="Feedback enviado com sucesso.", data=None)
@@ -985,7 +988,7 @@ def upgrade_usuario(
     db.commit()
     db.refresh(user)
 
-    logger.info("Plano atualizado para premium: %s (id=%s)", user.email, user.id)
+    logger.info("Plano atualizado para premium: %s (id=%s)", mascarar_email(user.email), user.id)
     return APIResponse(
         success=True,
         message="Usuário atualizado para premium" if atualizado else "Usuário já possui plano premium",
@@ -1220,7 +1223,7 @@ def atualizar_executado_plantao(
         "Status executado do plantão %s atualizado para %s por %s",
         plantao_id,
         payload.executado,
-        current_user.email,
+        mascarar_email(current_user.email),
     )
     return APIResponse(
         success=True,
@@ -1409,11 +1412,12 @@ def transferir_plantao(
         mensagem_retorno += " A notificação por mensagem não pôde ser enviada, mas a transferência foi registrada."
 
     logger.info(
-        "Plantão %s transferido por %s para %s (%s). Status: %s. SMS enviado: %s",
+        # AUD-033: o destinatário pode nem ter conta; nome dele não vai ao log
+        # e o telefone vai mascarado.
+        "Plantão %s transferido por %s para %s. Status: %s. SMS enviado: %s",
         plantao_id,
-        current_user.email,
-        payload.destinatario_nome,
-        payload.destinatario_telefone,
+        mascarar_email(current_user.email),
+        mascarar_telefone(payload.destinatario_telefone),
         status_inicial,
         sms_enviado,
     )
@@ -1517,7 +1521,7 @@ def aceitar_transferencia(
     logger.info(
         "Transferência %s aceita por %s. Novo plantão %s criado.",
         transferencia_id,
-        current_user.email,
+        mascarar_email(current_user.email),
         novo_plantao.id,
     )
 
@@ -1563,7 +1567,7 @@ def recusar_transferencia(
     logger.info(
         "Transferência %s recusada por %s. Plantão %s revertido.",
         transferencia_id,
-        current_user.email,
+        mascarar_email(current_user.email),
         transferencia.plantao_id,
     )
 
@@ -1640,7 +1644,7 @@ def criar_amizade(
         )
 
     amizade = AmizadeRepository.create(db, current_user.id, payload.destinatario_usuario_id)
-    logger.info("Solicitação de amizade criada: %s -> %s", current_user.email, destinatario.email)
+    logger.info("Solicitação de amizade criada: %s -> %s", mascarar_email(current_user.email), mascarar_email(destinatario.email))
     return APIResponse(
         success=True,
         message="Solicitação de amizade enviada.",
@@ -1722,7 +1726,7 @@ def aceitar_amizade(
     if aceita is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta solicitação de amizade já foi respondida.")
     amizade, _, _ = aceita
-    logger.info("Amizade %s aceita por %s", amizade_id, current_user.email)
+    logger.info("Amizade %s aceita por %s", amizade_id, mascarar_email(current_user.email))
     return APIResponse(success=True, message="Amizade aceita.", data=AmizadeResponse.model_validate(amizade))
 
 
@@ -1747,7 +1751,7 @@ def rejeitar_amizade(
 
     if not AmizadeRepository.rejeitar(db, amizade):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta solicitação de amizade já foi respondida.")
-    logger.info("Amizade %s rejeitada por %s", amizade_id, current_user.email)
+    logger.info("Amizade %s rejeitada por %s", amizade_id, mascarar_email(current_user.email))
     return APIResponse(success=True, message="Solicitação de amizade rejeitada.", data=None)
 
 
@@ -1775,11 +1779,11 @@ def remover_amizade(
                 detail="Apenas quem enviou a solicitação pode cancelá-la. Use /rejeitar para recusar.",
             )
         AmizadeRepository.cancelar_pendente(db, amizade)
-        logger.info("Solicitação de amizade %s cancelada por %s", amizade_id, current_user.email)
+        logger.info("Solicitação de amizade %s cancelada por %s", amizade_id, mascarar_email(current_user.email))
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     AmizadeRepository.deletar_aceita(db, amizade)
-    logger.info("Amizade %s removida por %s", amizade_id, current_user.email)
+    logger.info("Amizade %s removida por %s", amizade_id, mascarar_email(current_user.email))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1978,7 +1982,7 @@ def criar_solicitacao_troca(
         plantao_recebido_sobreaviso=recebido.sobreaviso if recebido else False,
     )
     logger.info(
-        "Solicitação de troca criada: %s -> %s (%s)", current_user.email, destinatario.email, payload.tipo
+        "Solicitação de troca criada: %s -> %s (%s)", mascarar_email(current_user.email), mascarar_email(destinatario.email), payload.tipo
     )
     return APIResponse(
         success=True,
@@ -2243,7 +2247,7 @@ def aceitar_solicitacao_troca(
         logger.exception("Falha transacional ao aceitar solicitação de troca")
         raise HTTPException(status_code=500, detail="Não foi possível concluir a troca; nenhuma alteração foi salva.") from exc
 
-    logger.info("Solicitação de troca %s aceita por %s", solicitacao_id, current_user.email)
+    logger.info("Solicitação de troca %s aceita por %s", solicitacao_id, mascarar_email(current_user.email))
     return APIResponse(success=True, message="Troca concluída com sucesso.", data=None)
 
 
@@ -2268,7 +2272,7 @@ def rejeitar_solicitacao_troca(
 
     if SolicitacaoTrocaRepository.marcar_respondida(db, solicitacao, "rejeitada") is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta solicitação de troca já foi respondida.")
-    logger.info("Solicitação de troca %s rejeitada por %s", solicitacao_id, current_user.email)
+    logger.info("Solicitação de troca %s rejeitada por %s", solicitacao_id, mascarar_email(current_user.email))
     return APIResponse(success=True, message="Solicitação de troca rejeitada.", data=None)
 
 
@@ -2303,5 +2307,5 @@ def cancelar_solicitacao_troca(
         )
 
     SolicitacaoTrocaRepository.cancelar_pendente(db, solicitacao)
-    logger.info("Solicitação de troca %s cancelada por %s", solicitacao_id, current_user.email)
+    logger.info("Solicitação de troca %s cancelada por %s", solicitacao_id, mascarar_email(current_user.email))
     return Response(status_code=status.HTTP_204_NO_CONTENT)

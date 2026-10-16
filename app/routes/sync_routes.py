@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.mascaras import mascarar_email
 from app.core.rate_limiter import rate_limit, rate_limit_por_usuario
 from app.routes.plantao_routes import get_current_user
 from app.schemas.plantao_schema import APIResponse, SyncPullResponse, SyncPushRequest, SyncPushResponse
@@ -44,7 +45,7 @@ def push(
     logger.info(
         "Sync push de %s: %s locais / %s plantões / %s trocas / %s bonificações criados, "
         "%s/%s/-/%s atualizados, %s/%s/%s/%s excluídos, %s conflitos, %s erros",
-        current_user.email,
+        mascarar_email(current_user.email),
         len(resultado.locais_criados), len(resultado.plantoes_criados),
         len(resultado.trocas_criadas), len(resultado.bonificacoes_criadas),
         len(resultado.locais_atualizados), len(resultado.plantoes_atualizados), len(resultado.bonificacoes_atualizadas),

@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime
 
 from sqlalchemy.orm import Session
 
+from app.core.mascaras import mascarar_email
 from app.models import Local, Plantao, User
 from app.repositories.plantao_repository import LocalRepository, PlantaoRepository
 from app.schemas.plantao_schema import LocalCreate, LocalCreateWithUsuario, LocalUpdate
@@ -60,7 +61,8 @@ class LocalService:
         dados = payload.model_dump()
         dados["usuario_id"] = usuario.id
         local = LocalRepository.create(db, LocalCreateWithUsuario.model_validate(dados))
-        logger.info("Local criado para usuário %s: %s", usuario.email, local.nome_local)
+        # AUD-033: id do local, não o nome (dado do usuário, não do log).
+        logger.info("Local %s criado para usuário %s", local.id, mascarar_email(usuario.email))
         return local
 
     @staticmethod
@@ -106,7 +108,7 @@ class LocalService:
             db.rollback()
             raise
 
-        logger.info("Local %s atualizado por %s", local_id, usuario.email)
+        logger.info("Local %s atualizado por %s", local_id, mascarar_email(usuario.email))
         return local
 
     @staticmethod
@@ -159,4 +161,4 @@ class LocalService:
     def deletar(db: Session, usuario: User, local_id: int) -> None:
         if not LocalRepository.delete_by_user(db, local_id, usuario.id):
             raise NaoEncontrado("Local não encontrado")
-        logger.info("Local %s deletado por %s", local_id, usuario.email)
+        logger.info("Local %s deletado por %s", local_id, mascarar_email(usuario.email))

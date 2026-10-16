@@ -217,7 +217,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         if "ctx" in err:
             sanitized["ctx"] = {k: str(v) for k, v in err["ctx"].items()}
         errors.append(sanitized)
-    logger.warning("Validação falhou: %s", errors)
+    # AUD-033: o log leva onde e por que falhou, nunca o valor enviado — o
+    # "input" de um login inválido é a senha digitada.
+    logger.warning(
+        "Validação falhou: %s",
+        [{k: v for k, v in erro.items() if k != "input"} for erro in errors],
+    )
     return JSONResponse(
         status_code=422,
         content={"success": False, "message": "Dados de entrada inválidos.", "data": errors},

@@ -3,6 +3,7 @@ import smtplib
 from email.message import EmailMessage
 
 from app.core.config import settings
+from app.core.mascaras import mascarar_email
 from app.models import User
 
 
@@ -45,4 +46,4 @@ class FeedbackService:
             smtp.login(settings.smtp_username, settings.smtp_password)
             smtp.send_message(msg)
 
-        logger.info("Feedback enviado por %s para %s", usuario.email, settings.feedback_email_to)
+        logger.info("Feedback enviado por %s para %s", mascarar_email(usuario.email), settings.feedback_email_to)

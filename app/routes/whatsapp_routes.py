@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.mascaras import mascarar_telefone
+from app.core.mascaras import mascarar_email, mascarar_telefone
 from app.core.database import get_db
 from app.repositories.plantao_repository import UserRepository
 from app.repositories.whatsapp_repository import WhatsappRepository
@@ -188,7 +188,7 @@ async def receber_mensagem(request: Request, db: Session = Depends(get_db)):
         try:
             EmailService.enviar_codigo_whatsapp(usuario.email, codigo)
         except Exception:
-            logger.exception("Falha ao enviar e-mail de código para %s", usuario.email)
+            logger.exception("Falha ao enviar e-mail de código para %s", mascarar_email(usuario.email))
 
         _responder(telefone, MSG_CODIGO_ENVIADO)
         return {"status": "ok"}
