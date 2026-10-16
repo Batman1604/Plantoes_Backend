@@ -9,7 +9,9 @@ psycopg[binary]==3.2.5
 pydantic==2.10.6
 pydantic-settings==2.7.1
 email-validator==2.2.0
-python-jose[cryptography]==3.5.0
+# PyJWT no lugar de python-jose: o jose puxava a ecdsa, com CVE sem correção.
+# [crypto] traz a cryptography, necessária para o RS256 do Google/Apple.
+PyJWT[crypto]==2.15.1
 httpx==0.28.1
 anthropic==0.40.0
 # Base de fusos horários. O zoneinfo da stdlib depende do tzdata do SISTEMA, que

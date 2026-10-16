@@ -1,7 +1,8 @@
 import time
 
 import httpx
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWK, PyJWTError
 
 from app.core.config import settings
 
@@ -45,15 +46,26 @@ def parse_bool_claim(value) -> bool:
     return str(value).strip().lower() == "true"
 
 
+def _chave_do_token(token: str, jwks: dict):
+    """A chave pública do JWKS cujo `kid` é o do cabeçalho do token. O python-jose
+    fazia essa escolha sozinho ao receber o JWKS inteiro; no PyJWT ela é
+    explícita. Sem `kid` correspondente, o token é recusado."""
+    kid = jwt.get_unverified_header(token).get("kid")
+    for jwk in jwks.get("keys", []):
+        if kid is not None and jwk.get("kid") == kid:
+            return PyJWK(jwk, algorithm="RS256").key
+    raise PyJWTError("Nenhuma chave do provedor corresponde ao kid do token.")
+
+
 def _decode_and_verify(token: str, jwks_url: str, valid_issuers: tuple[str, ...], allowed_audiences: list[str]) -> dict:
     """Valida assinatura (RS256, via JWKS do provedor) e expiração de um ID Token, depois
-    confere manualmente issuer e audience — mais explícito e portável entre versões do
-    python-jose do que depender das opções embutidas de audience/issuer da biblioteca
+    confere manualmente issuer e audience — mais explícito e portável entre versões da
+    biblioteca JWT do que depender das opções embutidas de audience/issuer
     (que só aceitam um único valor esperado de cada, e o Google usa dois issuers válidos)."""
     try:
-        jwks = _get_jwks(jwks_url)
-        payload = jwt.decode(token, jwks, algorithms=["RS256"], options={"verify_aud": False})
-    except (JWTError, httpx.HTTPError, ValueError) as exc:
+        chave = _chave_do_token(token, _get_jwks(jwks_url))
+        payload = jwt.decode(token, chave, algorithms=["RS256"], options={"verify_aud": False})
+    except (PyJWTError, httpx.HTTPError, ValueError) as exc:
         raise OAuthTokenError("Token inválido ou expirado.") from exc
 
     if payload.get("iss") not in valid_issuers:

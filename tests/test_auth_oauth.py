@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import unittest
@@ -9,8 +10,8 @@ os.environ["APPLE_CLIENT_ID"] = "test-apple-client"
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
-from jose import jwt
-from jose.backends.cryptography_backend import CryptographyRSAKey
+import jwt
+from jwt.algorithms import RSAAlgorithm
 
 import app.services.oauth_service as oauth_service
 from app.main import app
@@ -22,7 +23,7 @@ _PRIVATE_PEM = _PRIVATE_KEY.private_bytes(
     format=serialization.PrivateFormat.PKCS8,
     encryption_algorithm=serialization.NoEncryption(),
 ).decode()
-_JWK = CryptographyRSAKey(_PRIVATE_KEY.public_key(), algorithm="RS256").to_dict()
+_JWK = json.loads(RSAAlgorithm.to_jwk(_PRIVATE_KEY.public_key()))
 _JWK["kid"] = "test-kid"
 _FAKE_JWKS = {"keys": [_JWK]}
 

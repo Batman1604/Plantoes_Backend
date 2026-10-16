@@ -4,7 +4,11 @@ import secrets
 from uuid import uuid4
 from datetime import UTC, datetime, timedelta
 
-from jose import jwt, JWTError
+# PyJWT no lugar do python-jose: o jose puxava a `ecdsa`, com CVE sem
+# correção (timing attack). Os tokens HS256 já emitidos continuam válidos —
+# mesmo formato, mesma chave, mesmo algoritmo.
+import jwt
+from jwt import PyJWTError
 
 from app.core.config import settings
 
@@ -67,7 +71,7 @@ def decode_purpose_token(token: str, purpose: str) -> str | None:
             return None
         email = payload.get("sub")
         return str(email) if email else None
-    except (JWTError, ValueError):
+    except (PyJWTError, ValueError):
         return None
 
 
@@ -121,5 +125,5 @@ def decode_access_token(token: str) -> dict[str, str | int | datetime] | None:
             "iat": float(emitido_em) if emitido_em is not None else None,
             "auth_time": float(autenticado_em) if autenticado_em is not None else None,
         }
-    except (JWTError, ValueError, TypeError):
+    except (PyJWTError, ValueError, TypeError):
         return None
