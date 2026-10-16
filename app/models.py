@@ -9,6 +9,8 @@ from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, Foreign
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from sqlalchemy import event
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import FunctionElement
 
 from app.core.database import Base
 
@@ -371,6 +373,53 @@ class Amizade(Base):
 
     solicitante: Mapped[User] = relationship(foreign_keys=[solicitante_usuario_id])
     destinatario: Mapped[User] = relationship(foreign_keys=[destinatario_usuario_id])
+
+
+class _MenorDoPar(FunctionElement):
+    """LEAST(a, b) no Postgres; no SQLite (testes), o min(a, b) escalar, que
+    faz o mesmo e é a forma que ele aceita num índice."""
+    type = Integer()
+    name = "menor_do_par"
+    inherit_cache = True
+
+
+class _MaiorDoPar(FunctionElement):
+    """GREATEST(a, b) no Postgres; max(a, b) escalar no SQLite."""
+    type = Integer()
+    name = "maior_do_par"
+    inherit_cache = True
+
+
+@compiles(_MenorDoPar)
+def _menor_do_par(element, compiler, **kw):
+    return f"LEAST({compiler.process(element.clauses, **kw)})"
+
+
+@compiles(_MenorDoPar, "sqlite")
+def _menor_do_par_sqlite(element, compiler, **kw):
+    return f"min({compiler.process(element.clauses, **kw)})"
+
+
+@compiles(_MaiorDoPar)
+def _maior_do_par(element, compiler, **kw):
+    return f"GREATEST({compiler.process(element.clauses, **kw)})"
+
+
+@compiles(_MaiorDoPar, "sqlite")
+def _maior_do_par_sqlite(element, compiler, **kw):
+    return f"max({compiler.process(element.clauses, **kw)})"
+
+
+# Um par de usuários tem no máximo UMA linha de amizade, em qualquer direção.
+# A checagem de get_relacao_existente na rota não basta: A->B e B->A ao mesmo
+# tempo passavam as duas pela checagem e gravavam duas linhas (A-08,
+# pendência). Índice único sobre o par NÃO ordenado (migração 4e1b7c9a2d36).
+Index(
+    "uq_amizades_par",
+    _MenorDoPar(Amizade.solicitante_usuario_id, Amizade.destinatario_usuario_id),
+    _MaiorDoPar(Amizade.solicitante_usuario_id, Amizade.destinatario_usuario_id),
+    unique=True,
+)
 
 
 class AmigoConfiguracao(Base):

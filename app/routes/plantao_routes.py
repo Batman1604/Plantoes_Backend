@@ -1674,13 +1674,17 @@ def criar_amizade(
         raise HTTPException(status_code=404, detail="Usuário não encontrado.")
 
     existente = AmizadeRepository.get_relacao_existente(db, current_user.id, payload.destinatario_usuario_id)
-    if existente is not None:
+    amizade = None
+    if existente is None:
+        amizade = AmizadeRepository.create(db, current_user.id, payload.destinatario_usuario_id)
+    if amizade is None:
+        # Também quando o par foi gravado entre a checagem e o INSERT (pedido
+        # simultâneo na direção oposta): o índice único recusa, é conflito.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Já existe uma solicitação pendente ou amizade com este usuário.",
         )
 
-    amizade = AmizadeRepository.create(db, current_user.id, payload.destinatario_usuario_id)
     logger.info("Solicitação de amizade criada: %s -> %s", mascarar_email(current_user.email), mascarar_email(destinatario.email))
     return APIResponse(
         success=True,

@@ -1060,14 +1060,20 @@ class AmizadeRepository:
         )
 
     @staticmethod
-    def create(db: Session, solicitante_usuario_id: int, destinatario_usuario_id: int) -> Amizade:
+    def create(db: Session, solicitante_usuario_id: int, destinatario_usuario_id: int) -> Amizade | None:
+        """None se o par já tem uma linha (índice uq_amizades_par): A->B e
+        B->A ao mesmo tempo passavam pela checagem da rota e gravavam duas."""
         amizade = Amizade(
             solicitante_usuario_id=solicitante_usuario_id,
             destinatario_usuario_id=destinatario_usuario_id,
             status="pendente",
         )
         db.add(amizade)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return None
         db.refresh(amizade)
         return amizade
 
