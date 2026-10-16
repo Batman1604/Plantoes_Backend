@@ -2,8 +2,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Generic, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
-from pydantic.generics import GenericModel
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 DataT = TypeVar("DataT")
@@ -20,20 +19,20 @@ def validar_formato_data(value: date | datetime | str | None):
     return value
 
 
-class APIResponse(GenericModel, Generic[DataT]):
+class APIResponse(BaseModel, Generic[DataT]):
     success: bool
     message: str
     data: DataT | None = None
 
 
 class UserBase(BaseModel):
-    nome: str = Field(min_length=2, max_length=120, example="João Silva")
-    email: EmailStr = Field(example="joao@example.com")
+    nome: str = Field(min_length=2, max_length=120, examples=["João Silva"])
+    email: EmailStr = Field(examples=["joao@example.com"])
 
 
 class UserLogin(BaseModel):
-    email: EmailStr = Field(example="joao@example.com")
-    senha: str = Field(min_length=8, max_length=128, example="SenhaForte123")
+    email: EmailStr = Field(examples=["joao@example.com"])
+    senha: str = Field(min_length=8, max_length=128, examples=["SenhaForte123"])
 
 
 class UserResponse(UserBase):
@@ -48,8 +47,7 @@ class UserResponse(UserBase):
     profissao: Optional[str] = None
     theme_mode: Literal["light", "dark"] = "light"
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PerfilUpdate(BaseModel):
@@ -92,32 +90,32 @@ class VerificarTelefoneRequest(BaseModel):
 
 
 class IniciarCadastroRequest(UserBase):
-    telefone: str = Field(max_length=30, example="11999999999")
-    senha: str = Field(min_length=8, max_length=128, example="SenhaForte123")
+    telefone: str = Field(max_length=30, examples=["11999999999"])
+    senha: str = Field(min_length=8, max_length=128, examples=["SenhaForte123"])
 
 
 class ConfirmarCadastroRequest(BaseModel):
-    email: EmailStr = Field(example="joao@example.com")
+    email: EmailStr = Field(examples=["joao@example.com"])
     codigo: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido via WhatsApp.")
 
 
 class ReenviarCadastroRequest(BaseModel):
-    email: EmailStr = Field(example="joao@example.com")
+    email: EmailStr = Field(examples=["joao@example.com"])
 
 
 class SenhaResetRequest(BaseModel):
-    email: EmailStr = Field(example="joao@example.com")
+    email: EmailStr = Field(examples=["joao@example.com"])
 
 
 class VerificarCodigoSenhaRequest(BaseModel):
-    email: EmailStr = Field(example="joao@example.com")
+    email: EmailStr = Field(examples=["joao@example.com"])
     code: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido por email.")
 
 
 class ResetPasswordRequest(BaseModel):
-    email: EmailStr = Field(example="joao@example.com")
+    email: EmailStr = Field(examples=["joao@example.com"])
     code: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido por email.")
-    newPassword: str = Field(min_length=8, max_length=128, example="NovaSenhaForte123")
+    newPassword: str = Field(min_length=8, max_length=128, examples=["NovaSenhaForte123"])
 
 
 class AlterarSenhaRequest(BaseModel):
@@ -133,7 +131,7 @@ class ExcluirContaRequest(BaseModel):
 
 
 class FeedbackCreate(BaseModel):
-    mensagem: str = Field(min_length=5, max_length=2000, example="Sugestão: adicionar filtro por local na tela de plantões.")
+    mensagem: str = Field(min_length=5, max_length=2000, examples=["Sugestão: adicionar filtro por local na tela de plantões."])
 
 
 class LocalBase(BaseModel):
@@ -142,7 +140,7 @@ class LocalBase(BaseModel):
     data_final: date
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
     util_corrido: bool = Field(default=True, description="True = dia útil, False = dia corrido")
-    cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
+    cor: Optional[str] = Field(default=None, max_length=20, examples=["#4CAF50"])
     endereco_local: Optional[str] = Field(default=None, max_length=255)
     uuid_cliente: Optional[str] = Field(
         default=None, max_length=36, description="Identificador gerado no dispositivo, usado para sincronização offline."
@@ -181,7 +179,7 @@ class LocalUpdate(BaseModel):
     data_final: date | None = None
     dia_pagamento: Optional[int] = Field(default=None, ge=1, le=31)
     util_corrido: Optional[bool] = Field(default=None, description="True = dia útil, False = dia corrido")
-    cor: Optional[str] = Field(default=None, max_length=20, example="#4CAF50")
+    cor: Optional[str] = Field(default=None, max_length=20, examples=["#4CAF50"])
     endereco_local: Optional[str] = Field(default=None, max_length=255)
 
     @field_validator("data_inicio", "data_final", mode="before")
@@ -199,8 +197,7 @@ class LocalResponse(LocalBase):
     usuario_id: int
     atualizado_em: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 _RECORRENCIA_MAP = {
@@ -287,23 +284,23 @@ class PlantaoBase(BaseModel):
     valor: Optional[Decimal] = Field(
         default=None,
         ge=0,
-        example="180.00",
+        examples=["180.00"],
         description="Valor do plantão em reais. Deixe em branco para definir depois.",
     )
     data_inicio: datetime = Field(
-        example="2026-04-10T08:00:00",
+        examples=["2026-04-10T08:00:00"],
         description="Data e hora de início do plantão."
     )
     data_fim: datetime = Field(
-        example="2026-04-10T16:00:00",
+        examples=["2026-04-10T16:00:00"],
         description="Data e hora de fim do plantão."
     )
     recorrencia: Literal["Semanal", "Quinzenal", "Unico"] | None = Field(
         default=None,
-        example="Semanal",
+        examples=["Semanal"],
         description="Recorrência opcional do plantão. Aceita português ou inglês (weekly, biweekly, single)."
     )
-    sobreaviso: bool = Field(default=False, example=False, description="Indica se o plantão é de sobreaviso.")
+    sobreaviso: bool = Field(default=False, examples=[False], description="Indica se o plantão é de sobreaviso.")
     descricao: Optional[str] = Field(default=None, max_length=2000, description="Descrição ou anotações livres sobre o plantão.")
     uuid_cliente: Optional[str] = Field(
         default=None, max_length=36, description="Identificador gerado no dispositivo, usado para sincronização offline."
@@ -341,14 +338,14 @@ class PlantaoBase(BaseModel):
 
 
 class PlantaoCreate(PlantaoBase):
-    local_id: int = Field(example=1, description="ID do local ao qual o plantão pertence.")
+    local_id: int = Field(examples=[1], description="ID do local ao qual o plantão pertence.")
     pagamento_plantao: Optional[date] = Field(default=None, description="Data de pagamento manual. Se não informada, calculada automaticamente pelo local.")
-    notificacao_ativa: bool = Field(default=True, example=True)
+    notificacao_ativa: bool = Field(default=True, examples=[True])
     notificacao_antecedencia_minutos: int = Field(
         default=60,
         ge=0,
         le=2880,
-        example=60,
+        examples=[60],
         description="Minutos antes do início para enviar a notificação."
     )
 
@@ -462,8 +459,7 @@ class PlantaoResponse(BaseModel):
     serie_id: Optional[str] = None  # K8 (AUD-053)
     atualizado_em: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -645,16 +641,14 @@ class SolicitacaoTrocaResponse(BaseModel):
     criado_em: datetime
     respondido_em: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PessoaTrocaResumo(BaseModel):
     id: int
     nome: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PlantaoTrocaResumo(BaseModel):
@@ -680,11 +674,11 @@ class SolicitacaoTrocaListItem(BaseModel):
 
 
 class TransferenciaCreate(BaseModel):
-    destinatario_nome: str = Field(min_length=2, max_length=120, example="Maria Santos")
+    destinatario_nome: str = Field(min_length=2, max_length=120, examples=["Maria Santos"])
     destinatario_telefone: str = Field(
         min_length=8,
         max_length=30,
-        example="+5511999999999",
+        examples=["+5511999999999"],
         description="Telefone do destinatário com DDI e DDD. Ex: +5511999999999",
     )
     canal: Literal["sms", "whatsapp"] = Field(default="whatsapp", description="Canal de envio da notificação.")
@@ -706,8 +700,7 @@ class TransferenciaResponse(BaseModel):
     sms_enviado: bool
     criado_em: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FinanceiroCreate(BaseModel):
@@ -728,8 +721,7 @@ class FinanceiroRecordResponse(BaseModel):
     data: date
     em_atraso: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BonificacaoCreate(BaseModel):
@@ -756,8 +748,7 @@ class BonificacaoResponse(BaseModel):
     uuid_cliente: Optional[str] = None
     atualizado_em: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TrocaCreate(BaseModel):
@@ -802,15 +793,14 @@ class TrocaResponse(BaseModel):
     contraparte_usuario_id: Optional[int] = None
     contraparte_usuario_id_receber: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PlantaoExecutadoUpdate(BaseModel):
     executado: bool = Field(
         ...,
         description="Indica se o plantão foi executado.",
-        example=True,
+        examples=[True],
     )
 
 
@@ -850,8 +840,7 @@ class UsuarioResumo(BaseModel):
     email: Optional[EmailStr] = None
     avatar: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AmizadeCreate(BaseModel):
@@ -866,8 +855,7 @@ class AmizadeResponse(BaseModel):
     criado_em: datetime
     atualizado_em: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AmizadeAmigoResumo(UsuarioResumo):
@@ -911,7 +899,7 @@ class AmigoConfiguracaoUpdate(BaseModel):
     modo_visibilidade: Optional[Literal["tudo", "personalizado"]] = None
     mostrar_valores: Optional[bool] = None
     locais_permitidos_ids: Optional[list[int]] = None
-    cor: Optional[str] = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$", example="#0D9488")
+    cor: Optional[str] = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$", examples=["#0D9488"])
 
 
 class AmigoConfiguracaoResponse(BaseModel):

@@ -13,4 +13,5 @@ anthropic==0.40.0
 # imagens Linux slim não trazem — sem este pacote, ZoneInfo("America/Sao_Paulo")
 # levanta ZoneInfoNotFoundError em produção enquanto funciona na máquina do
 # desenvolvedor (ver FUSO_DO_PLANTAO em app/services/notificacao_service.py).
-tzdata
+# Versão fixada (AUD-087): sem pin, cada build pegava uma base diferente.
+tzdata==2025.3
