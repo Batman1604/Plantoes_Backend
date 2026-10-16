@@ -57,6 +57,7 @@ from app.services.local_service import LocalService
 from app.services.plantao_service import PlantaoService
 from app.services.serializacao import (
     _plantoes_com_troca,
+    _alvos_com_valor_oculto,
     _plantao_recebido_troca_resumo,
     _plantao_troca_resumo,
     _serializar_amigo_configuracao,
@@ -699,6 +700,7 @@ class SyncService:
                 criado_em=amizade.criado_em,
             ))
 
+        ocultos = _alvos_com_valor_oculto(db, current_user.id, solicitacoes_alteradas)
         itens_solicitacao = [
             SolicitacaoTrocaListItem(
                 id=s.id,
@@ -708,7 +710,7 @@ class SyncService:
                 remetente=PessoaTrocaResumo(id=s.remetente.id, nome=s.remetente.nome),
                 destinatario=PessoaTrocaResumo(id=s.destinatario.id, nome=s.destinatario.nome),
                 plantao_transferido=_plantao_troca_resumo(s.plantao_transferido) if s.plantao_transferido else None,
-                plantao_recebido=_plantao_recebido_troca_resumo(s),
+                plantao_recebido=_plantao_recebido_troca_resumo(s, ocultar_valor=s.id in ocultos),
                 criado_em=s.criado_em,
             )
             for s in solicitacoes_alteradas

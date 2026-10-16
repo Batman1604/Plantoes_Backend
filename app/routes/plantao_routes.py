@@ -10,10 +10,10 @@ from app.core.rate_limiter import rate_limit, rate_limit_por_usuario
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
-from app.models import Plantao, SolicitacaoTroca, Troca, User
+from app.models import AmigoConfiguracao, Plantao, SolicitacaoTroca, Troca, User
 from app.core.security import (
     IDADE_MAXIMA_DA_SESSAO,
     create_access_token,
@@ -109,6 +109,7 @@ from app.services.plantao_service import PlantaoService
 # A-13 (4/4): a serialização morava aqui até o SyncService precisar dela; agora
 # rota e sync importam do mesmo módulo de serviço.
 from app.services.serializacao import (
+    _alvos_com_valor_oculto,
     _plantao_com_troca,
     _plantao_recebido_troca_resumo,
     _plantao_troca_resumo,
@@ -904,7 +905,7 @@ def listar_trocas(
         local = LocalRepository.get_by_id(db, local_id)
         if local is None or local.usuario_id != current_user.id:
             raise HTTPException(status_code=404, detail="Local não encontrado.")
-        trocas = TrocaRepository.list_by_local(db, local_id)
+        trocas = TrocaRepository.list_by_local(db, local_id, current_user.id)
         return APIResponse(success=True, message="Trocas listadas com sucesso.", data=[TrocaResponse.model_validate(t) for t in trocas])
 
     raise HTTPException(status_code=400, detail="Informe usuario_id ou local_id como parâmetro.")
@@ -1891,8 +1892,12 @@ def listar_plantoes_de_amigos(
             plantao_data = PlantaoResponse.model_validate(plantao)
             if not visibilidade.mostrar_valores:
                 plantao_data.valor = Decimal("0")
+                # AUD-062: a data de pagamento e a descrição da bonificação
+                # ("plantão extra R$ 500") revelavam o que o valor zerado escondia.
+                plantao_data.pagamento_plantao = None
                 for bonificacao in plantao_data.bonificacoes:
                     bonificacao.valor = Decimal("0")
+                    bonificacao.descricao = None
 
             local = locais_do_amigo.get(plantao.local_id)
             itens.append(
@@ -1914,6 +1919,30 @@ def listar_plantoes_de_amigos(
 
 
 
+
+
+def _plantao_visivel_para_amigo(db: Session, plantao: Plantao, observador_id: int) -> bool:
+    """AUD-029: o plantão aparece na agenda que o dono mostra a `observador_id`?
+
+    A mesma regra de /amigos/plantoes: precisa haver a configuração do dono
+    para o observador; no modo "personalizado", o local do plantão tem de
+    estar entre os permitidos; no modo "tudo", tem de ser um local do próprio
+    dono (plantão sem local ou com local de terceiro não aparece na agenda).
+    """
+    config = db.scalar(
+        select(AmigoConfiguracao)
+        .options(selectinload(AmigoConfiguracao.locais_permitidos))
+        .where(
+            AmigoConfiguracao.usuario_id == plantao.usuario_id,
+            AmigoConfiguracao.amigo_usuario_id == observador_id,
+        )
+    )
+    if config is None or plantao.local_id is None:
+        return False
+    if config.modo_visibilidade == "personalizado":
+        return plantao.local_id in {item.local_id for item in config.locais_permitidos}
+    local = LocalRepository.get_by_id(db, plantao.local_id)
+    return local is not None and local.usuario_id == plantao.usuario_id
 
 
 @router.post(
@@ -1960,7 +1989,15 @@ def criar_solicitacao_troca(
 
     if payload.plantao_alvo_id is not None:
         plantao_alvo = db.scalar(select(Plantao).where(Plantao.id == payload.plantao_alvo_id))
-        if plantao_alvo is None or plantao_alvo.usuario_id != payload.destinatario_usuario_id:
+        if (
+            plantao_alvo is None
+            or plantao_alvo.usuario_id != payload.destinatario_usuario_id
+            # AUD-029: só um plantão que o destinatário MOSTRA para quem pede
+            # (mesma regra de /amigos/plantoes). Antes, qualquer id de plantão
+            # do amigo servia, e o resumo da solicitação devolvia local e
+            # valor que ele tinha escondido. Mesma resposta de "não existe".
+            or not _plantao_visivel_para_amigo(db, plantao_alvo, current_user.id)
+        ):
             raise HTTPException(status_code=404, detail="Plantão alvo não encontrado ou não pertence ao destinatário.")
         if plantao_alvo.transferido:
             raise HTTPException(status_code=400, detail="Este plantão já foi transferido e não pode ser negociado novamente.")
@@ -2002,6 +2039,7 @@ def listar_solicitacoes_troca(
     current_user=Depends(get_current_user),
 ):
     solicitacoes = SolicitacaoTrocaRepository.list_by_usuario(db, current_user.id)
+    ocultos = _alvos_com_valor_oculto(db, current_user.id, solicitacoes)
     itens = [
         SolicitacaoTrocaListItem(
             id=s.id,
@@ -2011,7 +2049,7 @@ def listar_solicitacoes_troca(
             remetente=PessoaTrocaResumo(id=s.remetente.id, nome=s.remetente.nome),
             destinatario=PessoaTrocaResumo(id=s.destinatario.id, nome=s.destinatario.nome),
             plantao_transferido=_plantao_troca_resumo(s.plantao_transferido) if s.plantao_transferido else None,
-            plantao_recebido=_plantao_recebido_troca_resumo(s),
+            plantao_recebido=_plantao_recebido_troca_resumo(s, ocultar_valor=s.id in ocultos),
             criado_em=s.criado_em,
         )
         for s in solicitacoes

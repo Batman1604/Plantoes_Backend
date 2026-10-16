@@ -954,8 +954,14 @@ class TrocaRepository:
         return troca
 
     @staticmethod
-    def list_by_local(db: Session, local_id: int) -> list[Troca]:
-        return list(db.scalars(select(Troca).where(Troca.local_id == local_id)).all())
+    def list_by_local(db: Session, local_id: int, usuario_id: int) -> list[Troca]:
+        """Trocas DO USUÁRIO naquele local (AUD-030). Sem o filtro de dono, a
+        troca que um colega registrou com um plantão recebido deste local (o
+        clone aponta para o local de quem cedeu) aparecia aqui, com nome e
+        telefone de um terceiro que nunca teve contato com este usuário."""
+        return list(db.scalars(
+            select(Troca).where(Troca.local_id == local_id, Troca.usuario_id == usuario_id)
+        ).all())
 
     @staticmethod
     def list_by_usuario(db: Session, usuario_id: int, desde: datetime | None = None) -> list[Troca]:

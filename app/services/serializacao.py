@@ -9,7 +9,9 @@ a rota e o sync montam o MESMO contrato a partir do mesmo código.
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Plantao, SolicitacaoTroca, Troca
+from decimal import Decimal
+
+from app.models import AmigoConfiguracao, Plantao, SolicitacaoTroca, Troca
 from app.schemas.plantao_schema import AmigoConfiguracaoResponse, PlantaoResponse, PlantaoTrocaResumo
 
 
@@ -128,9 +130,36 @@ def _plantao_troca_resumo(plantao: Plantao) -> PlantaoTrocaResumo:
     )
 
 
-def _plantao_recebido_troca_resumo(solicitacao: SolicitacaoTroca) -> PlantaoTrocaResumo | None:
+def _alvos_com_valor_oculto(db: Session, visualizador_id: int, solicitacoes) -> set[int]:
+    """AUD-029/AUD-062: ids das solicitações cujo plantão ALVO (do destinatário)
+    chega a quem pediu sem o valor, porque o destinatário escondeu os valores
+    dele para essa pessoa (mostrar_valores=false). Só o alvo: o plantão que o
+    remetente oferece ele mesmo escolheu mostrar.
+    """
+    candidatas = [
+        s for s in solicitacoes
+        if s.remetente_usuario_id == visualizador_id and s.plantao_alvo_id is not None
+    ]
+    if not candidatas:
+        return set()
+    donos_que_ocultam = set(db.scalars(
+        select(AmigoConfiguracao.usuario_id).where(
+            AmigoConfiguracao.amigo_usuario_id == visualizador_id,
+            AmigoConfiguracao.usuario_id.in_({s.destinatario_usuario_id for s in candidatas}),
+            AmigoConfiguracao.mostrar_valores.is_(False),
+        )
+    ))
+    return {s.id for s in candidatas if s.destinatario_usuario_id in donos_que_ocultam}
+
+
+def _plantao_recebido_troca_resumo(solicitacao: SolicitacaoTroca, ocultar_valor: bool = False) -> PlantaoTrocaResumo | None:
     if solicitacao.plantao_alvo_id is not None:
-        return _plantao_troca_resumo(solicitacao.plantao_alvo) if solicitacao.plantao_alvo else None
+        if solicitacao.plantao_alvo is None:
+            return None
+        resumo = _plantao_troca_resumo(solicitacao.plantao_alvo)
+        if ocultar_valor:
+            resumo.valor = Decimal("0")
+        return resumo
 
     if solicitacao.plantao_recebido_local_id is None:
         return None
