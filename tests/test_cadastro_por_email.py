@@ -122,7 +122,9 @@ class TestCadastroPorEmail(unittest.TestCase):
         self.supabase.corpo_erro = {"msg": "For security purposes, you can only request this after 37 seconds."}
         resposta = self._cadastrar("limite@example.com", "11977770003")
         self.assertEqual(resposta.status_code, 429, resposta.text)
-        self.assertIn("Aguarde 37 segundos", resposta.json()["message"])
+        # O app tira os segundos do texto da mensagem.
+        self.assertEqual(resposta.json()["message"], "Aguarde 37 segundos para pedir outro código.")
+        self.assertEqual(resposta.headers.get("retry-after"), "37")
 
         reenvio = self.client.post("/api/auth/reenviar-cadastro", json={"email": "limite@example.com"})
         self.assertEqual(reenvio.status_code, 429, reenvio.text)

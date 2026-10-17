@@ -1,4 +1,5 @@
 import hmac
+import secrets
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
@@ -697,9 +698,10 @@ MAX_TENTATIVAS_CODIGO = 5
 CODIGO_NO_SUPABASE = ""
 
 # Redefinição de senha pelo Supabase: o código dele só passa UMA vez, mas o app
-# confere em /auth/verificar-codigo-senha e manda o mesmo código de novo em
-# /auth/reset-password. Conferido lá, o código vira aqui o token de reset de
-# uso único (apagado pelo reset), com este prazo para digitar a nova senha.
+# confere em /auth/verificar-codigo-senha e depois chama /auth/reset-password.
+# Conferido lá, o código é trocado aqui por um token de reset de uso único
+# (novo, sorteado; apagado pelo reset), devolvido ao app em `data.token`, com
+# este prazo para digitar a nova senha.
 VALIDADE_TOKEN_RESET = timedelta(minutes=10)
 
 
@@ -801,15 +803,18 @@ class CodigoResetSenhaRepository:
 
         Código ainda não conferido no Supabase (coluna vazia) é conferido lá
         com `verificar_no_supabase` (None = Supabase não configurado: não
-        confere). Aceito, ele passa a ser o token de reset de uso único
-        (VALIDADE_TOKEN_RESET): as próximas conferências são locais, com o
-        mesmo contador de tentativas."""
+        confere). Aceito, a linha passa a guardar um token de reset de uso
+        único, sorteado aqui (VALIDADE_TOKEN_RESET), e o código do e-mail não
+        vale mais: as próximas conferências são locais, contra o token, com o
+        mesmo contador de tentativas. O token sai em `registro.codigo`."""
         registro = db.scalar(select(CodigoResetSenha).where(CodigoResetSenha.usuario_id == usuario_id))
         if verificar_no_supabase is None or registro is None or registro.codigo != CODIGO_NO_SUPABASE:
             return _conferir_codigo(db, registro, codigo)
         if _conferir_codigo_externo(db, registro, lambda: verificar_no_supabase(registro.usuario.email, codigo)) is None:
             return None
-        registro.codigo = codigo
+        # 6 dígitos porque `code` de /auth/reset-password tem 6 caracteres; com
+        # 5 tentativas e 10 min, vale o mesmo que o código original.
+        registro.codigo = f"{secrets.randbelow(1_000_000):06d}"
         registro.expira_em = datetime.now(UTC) + VALIDADE_TOKEN_RESET
         db.commit()
         db.refresh(registro)

@@ -214,6 +214,9 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     return JSONResponse(
         status_code=exc.status_code,
         content={"success": False, "message": str(exc.detail), "data": None},
+        # Ex.: Retry-After do 429 do código por e-mail; antes os headers da
+        # HTTPException eram descartados aqui.
+        headers=getattr(exc, "headers", None),
     )
 
 

@@ -82,6 +82,7 @@ from app.schemas.plantao_schema import (
     SolicitacaoTrocaCreate,
     SolicitacaoTrocaListItem,
     SolicitacaoTrocaResponse,
+    TokenResetData,
     PessoaTrocaResumo,
     TransferenciaAceitar,
     TransferenciaCreate,
@@ -200,19 +201,22 @@ _FALHA_NO_ENVIO = "Não foi possível enviar o código de verificação. Tente n
 VALIDADE_CODIGO_POR_EMAIL = timedelta(minutes=10)
 _FALHA_NO_ENVIO_POR_EMAIL = "Não foi possível enviar o código para o seu e-mail. Tente novamente em instantes."
 _FALHA_NA_VERIFICACAO = "Não foi possível conferir o código agora. Tente novamente em instantes."
+_LIMITE_NA_VERIFICACAO = "Aguarde {segundos} segundos e tente de novo."
 
 
 @contextmanager
-def _erros_do_supabase(falha: str):
-    """Limite do Supabase vira 429 ("aguarde N segundos"); qualquer outra falha
-    dele vira 502 com `falha`. O EmailOtpService já registrou o motivo no log."""
+def _erros_do_supabase(falha: str, limite: str = "Aguarde {segundos} segundos para pedir outro código."):
+    """Limite do Supabase vira 429 com os segundos NO TEXTO (o app os lê da
+    mensagem) e no Retry-After; qualquer outra falha dele vira 502 com
+    `falha`. O EmailOtpService já registrou o motivo no log."""
     try:
         yield
     except LimiteDeEnvio as exc:
         if exc.segundos:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Aguarde {exc.segundos} segundos e tente de novo.",
+                detail=limite.format(segundos=exc.segundos),
+                headers={"Retry-After": str(exc.segundos)},
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -330,7 +334,7 @@ def confirmar_cadastro(
 ):
     # Contador de tentativas (padrão do AUD-032): depois de 5 erros, nem o
     # código certo vale; o limite por IP sozinho deixava adivinhar os 6 dígitos.
-    with _erros_do_supabase(_FALHA_NA_VERIFICACAO):
+    with _erros_do_supabase(_FALHA_NA_VERIFICACAO, _LIMITE_NA_VERIFICACAO):
         pendente = CadastroPendenteRepository.conferir(
             db, payload.email, payload.codigo, _verificador_do_supabase()
         )
@@ -739,10 +743,10 @@ _EMAIL_NAO_CADASTRADO = "Não encontramos cadastro com este email. Verifique se 
 
 def _conferir_codigo_reset(db: Session, user: User, codigo: str):
     """Código de redefinição: no Supabase se foi ele quem enviou, senão local.
-    No Supabase, o código conferido vira o token de reset de uso único — por
-    isso reset-password aceita o mesmo código que verificar-codigo-senha já
-    aceitou (ver CodigoResetSenhaRepository.conferir)."""
-    with _erros_do_supabase(_FALHA_NA_VERIFICACAO):
+    No Supabase, o código conferido é trocado por um token de reset de uso
+    único, que verificar-codigo-senha devolve em `data.token` e o app manda
+    no `code` de reset-password (ver CodigoResetSenhaRepository.conferir)."""
+    with _erros_do_supabase(_FALHA_NA_VERIFICACAO, _LIMITE_NA_VERIFICACAO):
         return CodigoResetSenhaRepository.conferir(db, user.id, codigo, _verificador_do_supabase())
 
 
@@ -778,17 +782,25 @@ def forgot_password(payload: SenhaResetRequest, db: Session = Depends(get_db), _
 
 @router.post(
     "/auth/verificar-codigo-senha",
-    response_model=APIResponse[None],
+    response_model=APIResponse[TokenResetData],
     summary="Verificar código de redefinição de senha",
-    description="Confirma se o código de 6 dígitos enviado por email é válido, sem consumi-lo ainda.",
+    description=(
+        "Confirma se o código de 6 dígitos enviado por email é válido. Com o Supabase configurado, "
+        "devolve em data.token o token de uso único a mandar no `code` de /auth/reset-password; "
+        "sem ele, data é nulo e o próprio código continua valendo."
+    ),
 )
 def verificar_codigo_senha(
     payload: VerificarCodigoSenhaRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 120))
 ):
     user = UserRepository.get_by_email(db, payload.email)
-    if not user or _conferir_codigo_reset(db, user, payload.code) is None:
+    registro = _conferir_codigo_reset(db, user, payload.code) if user else None
+    if registro is None:
         raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
-    return APIResponse(success=True, message="Código válido.", data=None)
+    # Fase Supabase: o código do e-mail já foi gasto lá; o que vale agora é o
+    # token. (Um código antigo conferido localmente devolve ele mesmo.)
+    data = TokenResetData(token=registro.codigo) if EmailOtpService.configurado() else None
+    return APIResponse(success=True, message="Código válido.", data=data)
 
 
 @router.post(

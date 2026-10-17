@@ -121,6 +121,13 @@ class VerificarCodigoSenhaRequest(BaseModel):
     code: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido por email.")
 
 
+class TokenResetData(BaseModel):
+    """Fase Supabase: token de uso único que substitui o código já gasto no
+    Supabase; vai no `code` de /auth/reset-password."""
+
+    token: str
+
+
 class ResetPasswordRequest(BaseModel):
     email: EmailStr = Field(examples=["joao@example.com"])
     code: str = Field(min_length=6, max_length=6, description="Código de 6 dígitos recebido por email.")

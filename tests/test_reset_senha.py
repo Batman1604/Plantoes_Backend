@@ -38,6 +38,8 @@ class TestResetSenha(unittest.TestCase):
 
         certo = self.client.post("/api/auth/verificar-codigo-senha", json={"email": email, "code": "111222"})
         self.assertEqual(certo.status_code, 200, certo.text)
+        # Sem Supabase não há token: o app manda o próprio código no reset.
+        self.assertIsNone(certo.json()["data"])
 
         # Verificar o código não deve consumi-lo.
         certo_de_novo = self.client.post("/api/auth/verificar-codigo-senha", json={"email": email, "code": "111222"})

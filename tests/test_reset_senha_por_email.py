@@ -1,9 +1,10 @@
 """Redefinição de senha com o código do Supabase Auth (fase Supabase + Render).
 
 O código do Supabase só passa UMA vez, mas o app confere em
-/auth/verificar-codigo-senha e manda o mesmo código de novo em
-/auth/reset-password. Conferido lá, ele vira aqui o token de reset de uso
-único. O Supabase nunca é chamado: `httpx.post` é substituído."""
+/auth/verificar-codigo-senha e depois chama /auth/reset-password. Conferido
+lá, ele é trocado aqui por um token de reset de uso único, devolvido em
+`data.token` e mandado no `code` do reset. O Supabase nunca é chamado:
+`httpx.post` é substituído."""
 
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -54,7 +55,7 @@ class TestResetSenhaPorEmail(unittest.TestCase):
     def _verificacoes(self):
         return self.supabase.caminhos().count("verify")
 
-    def test_fluxo_do_app_verificar_e_depois_redefinir_com_o_mesmo_codigo(self):
+    def test_fluxo_do_app_verificar_e_redefinir_com_o_token(self):
         email = "reset-supabase@example.com"
         self._usuario(email)
         resposta = self._esqueci(email)
@@ -63,20 +64,24 @@ class TestResetSenhaPorEmail(unittest.TestCase):
         self.smtp.assert_not_called()
 
         self.assertEqual(self._verificar(email, "000000").status_code, 400)
-        self.assertEqual(self._verificar(email, CERTO).status_code, 200)
+        with patch("app.repositories.plantao_repository.secrets.randbelow", return_value=987654):
+            certo = self._verificar(email, CERTO)
+        self.assertEqual(certo.status_code, 200, certo.text)
+        token = certo.json()["data"]["token"]
+        self.assertEqual(token, "987654")
         self.assertEqual(self._verificacoes(), 2)
 
-        # O Supabase não aceitaria o mesmo código de novo: daqui em diante é o
-        # token de uso único guardado aqui, sem nova consulta.
-        self.assertEqual(self._verificar(email, CERTO).status_code, 200)
-        reset = self._redefinir(email, CERTO)
+        # O código do e-mail foi gasto no Supabase: daqui em diante só o token
+        # vale, conferido aqui, sem nova consulta.
+        self.assertEqual(self._redefinir(email, CERTO).status_code, 400)
+        reset = self._redefinir(email, token)
         self.assertEqual(reset.status_code, 200, reset.text)
         self.assertEqual(self._verificacoes(), 2)
 
         self.assertEqual(self.client.post("/api/auth/login", json={"email": email, "senha": "SenhaNova456"}).status_code, 200)
         self.assertEqual(self.client.post("/api/auth/login", json={"email": email, "senha": "SenhaAntiga123"}).status_code, 401)
         # Uso único: consumido pelo reset.
-        self.assertEqual(self._redefinir(email, CERTO, "OutraSenha789").status_code, 400)
+        self.assertEqual(self._redefinir(email, token, "OutraSenha789").status_code, 400)
 
     def test_redefinir_direto_com_o_codigo_original(self):
         email = "reset-direto@example.com"
@@ -95,16 +100,16 @@ class TestResetSenhaPorEmail(unittest.TestCase):
             registro = db.query(CodigoResetSenha).filter_by(usuario_id=usuario_id).one()
             registro.expira_em = datetime.now(UTC) + timedelta(seconds=30)
             db.commit()
-        self.assertEqual(self._verificar(email, CERTO).status_code, 200)
+        token = self._verificar(email, CERTO).json()["data"]["token"]
         with SessionLocal() as db:
             registro = db.query(CodigoResetSenha).filter_by(usuario_id=usuario_id).one()
-            self.assertEqual(registro.codigo, CERTO)
+            self.assertEqual(registro.codigo, token)
             expira_em = registro.expira_em.replace(tzinfo=UTC)
             self.assertGreater(expira_em, datetime.now(UTC) + timedelta(minutes=9))
             self.assertLess(expira_em, datetime.now(UTC) + timedelta(minutes=11))
             registro.expira_em = datetime.now(UTC) - timedelta(seconds=1)
             db.commit()
-        self.assertEqual(self._redefinir(email, CERTO).status_code, 400)
+        self.assertEqual(self._redefinir(email, token).status_code, 400)
 
     def test_cinco_erros_matam_o_codigo_do_nosso_lado(self):
         email = "reset-tentativas@example.com"
@@ -127,7 +132,8 @@ class TestResetSenhaPorEmail(unittest.TestCase):
         self.supabase.corpo_erro = {"msg": "For security purposes, you can only request this after 45 seconds."}
         limite = self._esqueci(email)
         self.assertEqual(limite.status_code, 429, limite.text)
-        self.assertIn("Aguarde 45 segundos", limite.json()["message"])
+        self.assertEqual(limite.json()["message"], "Aguarde 45 segundos para pedir outro código.")
+        self.assertEqual(limite.headers.get("retry-after"), "45")
 
         self.supabase.status_envio = 200
         self.assertEqual(self._esqueci(email).status_code, 200)
