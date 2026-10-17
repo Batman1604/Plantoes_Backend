@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -36,6 +37,26 @@ class TestIpReal(unittest.TestCase):
         # O cliente forjou "6.6.6.6"; o proxy de borda acrescentou o IP real.
         r = _requisicao("10.0.0.1", "6.6.6.6, 198.51.100.7, 10.0.0.2")
         self.assertEqual(rate_limiter.ip_real(r), "198.51.100.7")
+
+    def test_asterisco_usa_o_ultimo_item_acrescentado_pelo_proxy(self):
+        """Render: o proxy não tem IP fixo. Com "*", o cliente que forja o
+        começo da lista não escapa do limite; sem o cabeçalho, vale a conexão."""
+        settings.trusted_proxy_ips = "*"
+        self.assertEqual(rate_limiter.ip_real(_requisicao("10.1.2.3", "6.6.6.6, 198.51.100.7")), "198.51.100.7")
+        self.assertEqual(rate_limiter.ip_real(_requisicao("10.9.9.9", "198.51.100.7")), "198.51.100.7")
+        self.assertEqual(rate_limiter.ip_real(_requisicao("203.0.113.9")), "203.0.113.9")
+
+    def test_asterisco_no_limitador_nao_se_contorna_forjando_o_cabecalho(self):
+        settings.trusted_proxy_ips = "*"
+        rate_limiter.reset()
+        self.addCleanup(rate_limiter.reset)
+        limite = rate_limiter.rate_limit(2, 60)
+        with patch.object(settings, "rate_limit_enabled", "1"):
+            limite(_requisicao("10.0.0.5", "1.1.1.1, 198.51.100.7"))
+            limite(_requisicao("10.0.0.6", "2.2.2.2, 198.51.100.7"))
+            with self.assertRaises(HTTPException) as ctx:
+                limite(_requisicao("10.0.0.7", "3.3.3.3, 198.51.100.7"))
+        self.assertEqual(ctx.exception.status_code, 429)
 
 
 class TestLimitePorUsuario(unittest.TestCase):

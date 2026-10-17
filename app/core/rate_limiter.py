@@ -65,11 +65,20 @@ def ip_real(request: Request) -> str | None:
     um proxy listado em TRUSTED_PROXY_IPS — de qualquer outro peer o cabeçalho
     é forjável e é ignorado. Percorre a lista da direita para a esquerda
     pulando os proxies confiáveis; o primeiro IP que não é proxy é o cliente.
+
+    TRUSTED_PROXY_IPS=* (Render, cujo proxy não tem IP fixo nem publicado):
+    toda conexão vem do proxy, que ACRESCENTA no fim do X-Forwarded-For o IP
+    de quem o chamou. Vale só esse último item; os anteriores vêm do cliente
+    e são forjáveis. Por isso não se usa request.client.host aqui: com
+    `--forwarded-allow-ips='*'` o uvicorn o troca pelo PRIMEIRO item da lista.
     """
     if request.client is None:
         return None
     peer = request.client.host
     confiaveis = _proxies_confiaveis()
+    if "*" in confiaveis:
+        ultimo = request.headers.get("x-forwarded-for", "").split(",")[-1].strip()
+        return ultimo or peer
     if peer not in confiaveis:
         return peer
     encaminhado = request.headers.get("x-forwarded-for", "")

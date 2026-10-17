@@ -1,0 +1,44 @@
+# Blueprint do Render: um serviço web Python com o backend.
+# Passo a passo no README, seção "Deploy no Render + Supabase".
+# Nenhum segredo aqui: DATABASE_URL, SUPABASE_URL e SUPABASE_ANON_KEY são
+# preenchidos no painel (sync: false) e o JWT_SECRET_KEY é gerado pelo Render.
+services:
+  - type: web
+    name: plantoes-backend
+    runtime: python
+    plan: free
+    # A mais próxima do Supabase (EUA). Não muda depois de criado; o README
+    # diz como conferir a região do projeto do Supabase.
+    region: virginia
+    buildCommand: pip install -r requirements.txt
+    # O plano gratuito não tem preDeployCommand: a migração roda no início do
+    # start. Se ela falhar, o serviço não sobe e o deploy anterior continua no ar.
+    # --proxy-headers: o Render termina o HTTPS num proxy na frente do app.
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+    # Responde 503 se o banco não responde ou o worker de notificações parou.
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Igual à do .venv de desenvolvimento.
+      - key: PYTHON_VERSION
+        value: 3.13.2
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      # Session pooler do Supabase, com postgresql+psycopg:// e ?sslmode=require.
+      - key: DATABASE_URL
+        sync: false
+      # https://<ref>.supabase.co
+      - key: SUPABASE_URL
+        sync: false
+      # Chave anon (pública). A service_role NÃO vai aqui.
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # O app é mobile e o CORS não o afeta, mas "*" é recusado em produção.
+      - key: ALLOWED_ORIGINS
+        value: https://plantoes-backend.onrender.com
+      # O proxy do Render não tem IP fixo: "*" = vale o último item do
+      # X-Forwarded-For (ver ip_real em app/core/rate_limiter.py).
+      - key: TRUSTED_PROXY_IPS
+        value: "*"
