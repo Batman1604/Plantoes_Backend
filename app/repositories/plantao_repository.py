@@ -1,4 +1,5 @@
 import hmac
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -55,13 +56,19 @@ class UserRepository:
     def create_a_partir_de_pendente(db: Session, pendente: CadastroPendente) -> User:
         """Cria a conta definitiva a partir de um cadastro pendente já confirmado.
         Reaproveita o senha_hash já calculado (evita re-hash de senha em texto
-        plano) e marca o telefone como verificado, já que o código foi confirmado."""
+        plano) e marca como verificado o canal por onde o código chegou: o
+        telefone (WhatsApp) ou, na fase Supabase, o e-mail. O telefone de um
+        cadastro por e-mail NÃO foi provado e fica não verificado (AUD-011/AUD-058:
+        senão quem digitasse o número de outro médico receberia as transferências
+        feitas para ele)."""
+        por_email = pendente.codigo == CODIGO_NO_SUPABASE
         user = User(
             nome=pendente.nome,
             email=pendente.email,
             telefone=pendente.telefone,
             senha_hash=pendente.senha_hash,
-            telefone_verificado=True,
+            telefone_verificado=not por_email,
+            email_verificado=por_email,
         )
         db.add(user)
         db.commit()
@@ -684,21 +691,47 @@ class TransferenciaRepository:
 # com várias rotas testando o mesmo código e vários IPs, as chances somavam.
 MAX_TENTATIVAS_CODIGO = 5
 
+# Fase Supabase: o código foi enviado pelo Supabase Auth e só ele o conhece.
+# A coluna `codigo` fica vazia, e é isso que manda conferir lá
+# (ver _conferir_codigo_externo); nenhum código digitado casa com ela.
+CODIGO_NO_SUPABASE = ""
+
+
+def _aceita_tentativa(registro) -> bool:
+    """Existe, ainda tem tentativas e não expirou."""
+    if registro is None or registro.tentativas >= MAX_TENTATIVAS_CODIGO:
+        return False
+    expira_em = registro.expira_em
+    if expira_em.tzinfo is None:
+        # SQLite (testes) não preserva o fuso ao ler a coluna de volta.
+        expira_em = expira_em.replace(tzinfo=UTC)
+    return expira_em > datetime.now(UTC)
+
 
 def _conferir_codigo(db: Session, registro, codigo: str):
     """Devolve o registro se o código confere, não expirou e ainda tem
     tentativas; senão None. Cada erro conta (e é gravado na hora): ao chegar
     a MAX_TENTATIVAS_CODIGO, nem o código certo vale mais — é preciso pedir
     outro."""
-    if registro is None or registro.tentativas >= MAX_TENTATIVAS_CODIGO:
+    if not _aceita_tentativa(registro):
         return None
-    expira_em = registro.expira_em
-    if expira_em.tzinfo is None:
-        # SQLite (testes) não preserva o fuso ao ler a coluna de volta.
-        expira_em = expira_em.replace(tzinfo=UTC)
-    if expira_em <= datetime.now(UTC):
+    # Coluna vazia (CODIGO_NO_SUPABASE) nunca confere aqui: compare_digest
+    # de "" com "" daria True.
+    if not registro.codigo or not hmac.compare_digest(registro.codigo, codigo):
+        registro.tentativas += 1
+        db.commit()
         return None
-    if not hmac.compare_digest(registro.codigo, codigo):
+    return registro
+
+
+def _conferir_codigo_externo(db: Session, registro, verificar: Callable[[], bool]):
+    """Mesmo contrato de _conferir_codigo, mas quem confere é o Supabase Auth.
+    O contador de tentativas e a expiração continuam deste lado: o Supabase
+    não limita os erros por código. Exceção de `verificar` (limite, Supabase
+    fora do ar) sobe sem contar tentativa — o código não foi recusado."""
+    if not _aceita_tentativa(registro):
+        return None
+    if not verificar():
         registro.tentativas += 1
         db.commit()
         return None
@@ -800,9 +833,19 @@ class CadastroPendenteRepository:
         return db.scalar(select(CadastroPendente).where(CadastroPendente.email == normalizar_email(email)))
 
     @staticmethod
-    def conferir(db: Session, email: str, codigo: str) -> CadastroPendente | None:
-        """Confere o código contando a tentativa (mesmo padrão do AUD-032)."""
-        return _conferir_codigo(db, CadastroPendenteRepository.get_by_email(db, email), codigo)
+    def conferir(
+        db: Session,
+        email: str,
+        codigo: str,
+        verificar_no_supabase: Callable[[str, str], bool] | None = None,
+    ) -> CadastroPendente | None:
+        """Confere o código contando a tentativa (mesmo padrão do AUD-032).
+        Código enviado pelo Supabase é conferido lá, com `verificar_no_supabase`
+        (None = Supabase não configurado: esse código não confere)."""
+        pendente = CadastroPendenteRepository.get_by_email(db, email)
+        if verificar_no_supabase is not None and pendente is not None and pendente.codigo == CODIGO_NO_SUPABASE:
+            return _conferir_codigo_externo(db, pendente, lambda: verificar_no_supabase(pendente.email, codigo))
+        return _conferir_codigo(db, pendente, codigo)
 
     @staticmethod
     def delete_by_email(db: Session, email: str) -> None:

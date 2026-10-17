@@ -26,6 +26,14 @@ class APIResponse(BaseModel, Generic[DataT]):
     data: DataT | None = None
 
 
+class EnvioDeCodigoResponse(APIResponse[None]):
+    """Resposta de /auth/cadastro e /auth/reenviar-cadastro. `canal` diz por
+    onde o código saiu, para o app dizer "enviado para o seu e-mail" (fase
+    Supabase) ou "para o seu WhatsApp". Campo novo: o app antigo o ignora."""
+
+    canal: Literal["email", "whatsapp"]
+
+
 class UserBase(BaseModel):
     nome: str = Field(min_length=2, max_length=120, examples=["João Silva"])
     email: EmailStr = Field(examples=["joao@example.com"])

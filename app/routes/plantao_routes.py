@@ -1,6 +1,7 @@
 import hmac
 import logging
 import secrets
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -25,6 +26,7 @@ from app.core.security import (
     verify_password,
 )
 from app.repositories.plantao_repository import (
+    CODIGO_NO_SUPABASE,
     AmigoConfiguracaoRepository,
     AmizadeRepository,
     CadastroPendenteRepository,
@@ -52,6 +54,7 @@ from app.schemas.plantao_schema import (
     AmizadeResponse,
     AppleAuthRequest,
     ConfirmarCadastroRequest,
+    EnvioDeCodigoResponse,
     FinanceiroCreate,
     FinanceiroEmAtrasoUpdate,
     FinanceiroRecordResponse,
@@ -95,6 +98,7 @@ from app.schemas.plantao_schema import (
     UserResponse,
     VerificarTelefoneRequest,
 )
+from app.services.email_otp_service import EmailOtpService, FalhaNoSupabase, LimiteDeEnvio
 from app.services.email_service import EmailService
 from app.services.feedback_service import FeedbackNaoConfigurado, FeedbackService
 from app.services.financeiro_service import FinanceiroService
@@ -187,6 +191,41 @@ def _sessao_invalidada(user: User, emitido_em: float | None) -> bool:
 
 _FALHA_NO_ENVIO = "Não foi possível enviar o código de verificação. Tente novamente."
 
+# Fase Supabase + Render: com SUPABASE_URL e SUPABASE_ANON_KEY, o código do
+# cadastro e o da redefinição de senha vão por e-mail pelo Supabase Auth
+# (EmailOtpService), que também os confere. Sem elas, vale o canal antigo.
+# Validade do nosso lado: e-mail demora mais que WhatsApp, e o Supabase aplica
+# a dele por cima (Email OTP Expiration, 1 h por padrão). As 5 tentativas
+# continuam contadas aqui.
+VALIDADE_CODIGO_POR_EMAIL = timedelta(minutes=10)
+_FALHA_NO_ENVIO_POR_EMAIL = "Não foi possível enviar o código para o seu e-mail. Tente novamente em instantes."
+_FALHA_NA_VERIFICACAO = "Não foi possível conferir o código agora. Tente novamente em instantes."
+
+
+@contextmanager
+def _erros_do_supabase(falha: str):
+    """Limite do Supabase vira 429 ("aguarde N segundos"); qualquer outra falha
+    dele vira 502 com `falha`. O EmailOtpService já registrou o motivo no log."""
+    try:
+        yield
+    except LimiteDeEnvio as exc:
+        if exc.segundos:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Aguarde {exc.segundos} segundos e tente de novo.",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Muitos pedidos de código. Aguarde alguns minutos e tente de novo.",
+        ) from exc
+    except FalhaNoSupabase as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=falha) from exc
+
+
+def _verificador_do_supabase():
+    """EmailOtpService.verificar para os repositórios, ou None sem Supabase."""
+    return EmailOtpService.verificar if EmailOtpService.configurado() else None
+
 
 def _disparar_verificacao_telefone(db: Session, usuario_id: int, telefone: str) -> bool:
     """Devolve se o código foi enviado (C-10). Antes o resultado do envio era
@@ -220,11 +259,11 @@ def _detalhe_conflito(conflitos: list[str]) -> str:
 
 @router.post(
     "/auth/cadastro",
-    response_model=APIResponse[None],
+    response_model=EnvioDeCodigoResponse,
     summary="Iniciar cadastro",
     description=(
         "Primeiro passo do cadastro: valida os dados, envia um código de verificação por "
-        "WhatsApp/SMS e NÃO cria a conta ainda. A conta só é criada em /auth/confirmar-cadastro, "
+        "e-mail (Supabase, quando configurado) ou WhatsApp/SMS e NÃO cria a conta ainda. A conta só é criada em /auth/confirmar-cadastro, "
         "depois que o código é confirmado no app."
     ),
 )
@@ -233,8 +272,13 @@ def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_
     if conflitos:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_detalhe_conflito(conflitos))
 
-    codigo = f"{secrets.randbelow(1_000_000):06d}"
-    expira_em = datetime.now(UTC) + timedelta(minutes=1)
+    por_email = EmailOtpService.configurado()
+    if por_email:
+        codigo = CODIGO_NO_SUPABASE
+        expira_em = datetime.now(UTC) + VALIDADE_CODIGO_POR_EMAIL
+    else:
+        codigo = f"{secrets.randbelow(1_000_000):06d}"
+        expira_em = datetime.now(UTC) + timedelta(minutes=1)
     try:
         CadastroPendenteRepository.upsert(
             db,
@@ -245,7 +289,8 @@ def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_
             codigo=codigo,
             expira_em=expira_em,
         )
-        enviado = SmsService.enviar_codigo_verificacao(payload.telefone, codigo)
+        if not por_email:
+            enviado = SmsService.enviar_codigo_verificacao(payload.telefone, codigo)
     except Exception as exc:
         db.rollback()
         # AUD-033: o tipo, não a mensagem — a de um erro de banco traz os
@@ -256,6 +301,13 @@ def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_
             detail="Não foi possível enviar o código de verificação. Tente novamente.",
         ) from exc
 
+    if por_email:
+        # Fora do try acima: o 429 do Supabase não pode virar 502.
+        with _erros_do_supabase(_FALHA_NO_ENVIO_POR_EMAIL):
+            EmailOtpService.enviar(normalizar_email(payload.email))
+        logger.info("Cadastro iniciado, código enviado por e-mail para %s", mascarar_email(payload.email))
+        return EnvioDeCodigoResponse(success=True, message="Código enviado para o seu e-mail.", canal="email")
+
     if not enviado:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -263,7 +315,7 @@ def iniciar_cadastro(payload: IniciarCadastroRequest, db: Session = Depends(get_
         )
 
     logger.info("Cadastro iniciado, código de verificação enviado para %s", mascarar_telefone(payload.telefone))
-    return APIResponse(success=True, message="Código enviado para o seu WhatsApp.", data=None)
+    return EnvioDeCodigoResponse(success=True, message="Código enviado para o seu WhatsApp.", canal="whatsapp")
 
 
 @router.post(
@@ -278,7 +330,10 @@ def confirmar_cadastro(
 ):
     # Contador de tentativas (padrão do AUD-032): depois de 5 erros, nem o
     # código certo vale; o limite por IP sozinho deixava adivinhar os 6 dígitos.
-    pendente = CadastroPendenteRepository.conferir(db, payload.email, payload.codigo)
+    with _erros_do_supabase(_FALHA_NA_VERIFICACAO):
+        pendente = CadastroPendenteRepository.conferir(
+            db, payload.email, payload.codigo, _verificador_do_supabase()
+        )
     if pendente is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Código inválido ou expirado.")
 
@@ -301,11 +356,14 @@ def confirmar_cadastro(
     CadastroPendenteRepository.delete_by_email(db, pendente.email)
     logger.info("Cadastro confirmado, usuário criado: %s", mascarar_email(user.email))
 
-    try:
-        token_verificacao = create_purpose_token(user.email, "email_verification", expire_minutes=24 * 60)
-        EmailService.enviar_verificacao(user.email, token_verificacao)
-    except Exception:
-        logger.warning("Falha ao enviar email de verificação para %s", mascarar_email(user.email))
+    # Código que chegou por e-mail já provou o e-mail (email_verificado=True):
+    # não há o que verificar de novo.
+    if not user.email_verificado:
+        try:
+            token_verificacao = create_purpose_token(user.email, "email_verification", expire_minutes=24 * 60)
+            EmailService.enviar_verificacao(user.email, token_verificacao)
+        except Exception:
+            logger.warning("Falha ao enviar email de verificação para %s", mascarar_email(user.email))
 
     access_token = create_access_token(user.id)
     return APIResponse(
@@ -317,9 +375,12 @@ def confirmar_cadastro(
 
 @router.post(
     "/auth/reenviar-cadastro",
-    response_model=APIResponse[None],
+    response_model=EnvioDeCodigoResponse,
     summary="Reenviar código de cadastro",
-    description="Gera e envia um novo código de 6 dígitos via WhatsApp para um cadastro ainda não confirmado.",
+    description=(
+        "Envia um novo código de 6 dígitos (por e-mail com o Supabase configurado, senão via WhatsApp) "
+        "para um cadastro ainda não confirmado. Zera o contador de tentativas."
+    ),
 )
 def reenviar_cadastro(
     payload: ReenviarCadastroRequest, db: Session = Depends(get_db), _=Depends(rate_limit(3, 60))
@@ -327,6 +388,20 @@ def reenviar_cadastro(
     pendente = CadastroPendenteRepository.get_by_email(db, payload.email)
     if pendente is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cadastro não encontrado ou já confirmado.")
+
+    if EmailOtpService.configurado():
+        with _erros_do_supabase(_FALHA_NO_ENVIO_POR_EMAIL):
+            EmailOtpService.enviar(pendente.email)
+        CadastroPendenteRepository.upsert(
+            db,
+            nome=pendente.nome,
+            email=pendente.email,
+            telefone=pendente.telefone,
+            senha_hash=pendente.senha_hash,
+            codigo=CODIGO_NO_SUPABASE,
+            expira_em=datetime.now(UTC) + VALIDADE_CODIGO_POR_EMAIL,
+        )
+        return EnvioDeCodigoResponse(success=True, message="Código reenviado para o seu e-mail.", canal="email")
 
     codigo = f"{secrets.randbelow(1_000_000):06d}"
     expira_em = datetime.now(UTC) + timedelta(minutes=1)
@@ -353,7 +428,7 @@ def reenviar_cadastro(
         codigo=codigo,
         expira_em=expira_em,
     )
-    return APIResponse(success=True, message="Código reenviado para o seu WhatsApp.", data=None)
+    return EnvioDeCodigoResponse(success=True, message="Código reenviado para o seu WhatsApp.", canal="whatsapp")
 
 
 @router.post(
