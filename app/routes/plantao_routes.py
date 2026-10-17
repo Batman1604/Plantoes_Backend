@@ -737,6 +737,15 @@ def _disparar_codigo_reset_senha(db: Session, user: User) -> bool:
 _EMAIL_NAO_CADASTRADO = "Não encontramos cadastro com este email. Verifique se digitou certo."
 
 
+def _conferir_codigo_reset(db: Session, user: User, codigo: str):
+    """Código de redefinição: no Supabase se foi ele quem enviou, senão local.
+    No Supabase, o código conferido vira o token de reset de uso único — por
+    isso reset-password aceita o mesmo código que verificar-codigo-senha já
+    aceitou (ver CodigoResetSenhaRepository.conferir)."""
+    with _erros_do_supabase(_FALHA_NA_VERIFICACAO):
+        return CodigoResetSenhaRepository.conferir(db, user.id, codigo, _verificador_do_supabase())
+
+
 # AUD-032: as rotas duplicadas em português (/auth/esqueci-senha e
 # /auth/redefinir-senha) foram removidas. Cada rota que testava o mesmo código
 # tinha o próprio orçamento no limitador; o app usa forgot-password,
@@ -753,6 +762,14 @@ def forgot_password(payload: SenhaResetRequest, db: Session = Depends(get_db), _
     user = UserRepository.get_by_email(db, payload.email)
     if not user:
         raise HTTPException(status_code=404, detail=_EMAIL_NAO_CADASTRADO)
+    if EmailOtpService.configurado():
+        # Fase Supabase: o código sai pelo Supabase Auth e é conferido lá.
+        CodigoResetSenhaRepository.upsert(
+            db, user.id, CODIGO_NO_SUPABASE, datetime.now(UTC) + VALIDADE_CODIGO_POR_EMAIL
+        )
+        with _erros_do_supabase(_FALHA_NO_ENVIO_POR_EMAIL):
+            EmailOtpService.enviar(user.email)
+        return APIResponse(success=True, message="Código enviado para o seu email.", data=None)
     if not _disparar_codigo_reset_senha(db, user):
         # C-10: mesmo tratamento do cadastro.
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=_FALHA_NO_ENVIO)
@@ -769,7 +786,7 @@ def verificar_codigo_senha(
     payload: VerificarCodigoSenhaRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 120))
 ):
     user = UserRepository.get_by_email(db, payload.email)
-    if not user or CodigoResetSenhaRepository.conferir(db, user.id, payload.code) is None:
+    if not user or _conferir_codigo_reset(db, user, payload.code) is None:
         raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
     return APIResponse(success=True, message="Código válido.", data=None)
 
@@ -781,7 +798,7 @@ def verificar_codigo_senha(
 )
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db), _=Depends(rate_limit(5, 60))):
     user = UserRepository.get_by_email(db, payload.email)
-    if not user or CodigoResetSenhaRepository.conferir(db, user.id, payload.code) is None:
+    if not user or _conferir_codigo_reset(db, user, payload.code) is None:
         raise HTTPException(status_code=400, detail="Código inválido ou expirado.")
     UserRepository.update_senha(db, user.id, payload.newPassword)
     CodigoResetSenhaRepository.delete_by_user(db, user.id)

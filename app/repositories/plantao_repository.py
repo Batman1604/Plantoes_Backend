@@ -1,6 +1,6 @@
 import hmac
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -696,6 +696,12 @@ MAX_TENTATIVAS_CODIGO = 5
 # (ver _conferir_codigo_externo); nenhum código digitado casa com ela.
 CODIGO_NO_SUPABASE = ""
 
+# Redefinição de senha pelo Supabase: o código dele só passa UMA vez, mas o app
+# confere em /auth/verificar-codigo-senha e manda o mesmo código de novo em
+# /auth/reset-password. Conferido lá, o código vira aqui o token de reset de
+# uso único (apagado pelo reset), com este prazo para digitar a nova senha.
+VALIDADE_TOKEN_RESET = timedelta(minutes=10)
+
 
 def _aceita_tentativa(registro) -> bool:
     """Existe, ainda tem tentativas e não expirou."""
@@ -785,10 +791,29 @@ class CodigoResetSenhaRepository:
         return codigo_reset
 
     @staticmethod
-    def conferir(db: Session, usuario_id: int, codigo: str) -> CodigoResetSenha | None:
-        """Confere o código contando a tentativa (AUD-032)."""
+    def conferir(
+        db: Session,
+        usuario_id: int,
+        codigo: str,
+        verificar_no_supabase: Callable[[str, str], bool] | None = None,
+    ) -> CodigoResetSenha | None:
+        """Confere o código contando a tentativa (AUD-032).
+
+        Código ainda não conferido no Supabase (coluna vazia) é conferido lá
+        com `verificar_no_supabase` (None = Supabase não configurado: não
+        confere). Aceito, ele passa a ser o token de reset de uso único
+        (VALIDADE_TOKEN_RESET): as próximas conferências são locais, com o
+        mesmo contador de tentativas."""
         registro = db.scalar(select(CodigoResetSenha).where(CodigoResetSenha.usuario_id == usuario_id))
-        return _conferir_codigo(db, registro, codigo)
+        if verificar_no_supabase is None or registro is None or registro.codigo != CODIGO_NO_SUPABASE:
+            return _conferir_codigo(db, registro, codigo)
+        if _conferir_codigo_externo(db, registro, lambda: verificar_no_supabase(registro.usuario.email, codigo)) is None:
+            return None
+        registro.codigo = codigo
+        registro.expira_em = datetime.now(UTC) + VALIDADE_TOKEN_RESET
+        db.commit()
+        db.refresh(registro)
+        return registro
 
     @staticmethod
     def delete_by_user(db: Session, usuario_id: int) -> None:
