@@ -47,6 +47,11 @@ os.environ.setdefault("APPLE_CLIENT_ID", "test-apple-client")
 # quem a roda — nem um .env de produção, nem um segredo real.
 os.environ["ENVIRONMENT"] = "test"
 os.environ["JWT_SECRET_KEY"] = "segredo-da-suite-de-testes-nao-usar-fora-dela"
+# A suíte nunca chama o Supabase de verdade: vazias aqui, um .env ou ambiente
+# com o projeto real não desvia os testes para ele. Os testes do canal por
+# e-mail ligam as duas com patch e substituem o httpx.post.
+os.environ["SUPABASE_URL"] = ""
+os.environ["SUPABASE_ANON_KEY"] = ""
 
 # Um banco deixado para trás por uma execução anterior (ver item 2 do docstring)
 # contamina esta — começa sempre do zero.

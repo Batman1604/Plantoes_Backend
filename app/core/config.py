@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # do mesmo projeto Google, ou Service ID + Bundle ID da Apple).
     google_client_id: str = ""
     apple_client_id: str = ""
+    # Supabase Auth como carteiro do código por e-mail (cadastro e redefinição
+    # de senha; ver app/services/email_otp_service.py). Só a URL do projeto e a
+    # chave anon, que é pública por natureza; a service_role não é usada.
+    # Vazias = canal antigo (WhatsApp/SMTP; em dev, código no log).
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -77,6 +83,14 @@ class Settings(BaseSettings):
         if self.whatsapp_token and not self.whatsapp_verify_token:
             # AUD-089: o default público saiu; sem ele, o webhook em uso precisa de um.
             raise ValueError("WHATSAPP_VERIFY_TOKEN é obrigatório quando WHATSAPP_TOKEN está definido.")
+        return self
+
+    @model_validator(mode="after")
+    def _supabase_completo(self) -> "Settings":
+        """Só uma das duas variáveis deixaria o canal por e-mail desligado em
+        silêncio, e o cadastro cairia no WhatsApp (502 em produção)."""
+        if bool(self.supabase_url) != bool(self.supabase_anon_key):
+            raise ValueError("SUPABASE_URL e SUPABASE_ANON_KEY precisam ser definidas juntas.")
         return self
 
 
