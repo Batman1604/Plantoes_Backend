@@ -85,6 +85,40 @@ class Settings(BaseSettings):
             raise ValueError("WHATSAPP_VERIFY_TOKEN é obrigatório quando WHATSAPP_TOKEN está definido.")
         return self
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _database_url_legivel(cls, valor):
+        """Falha alto, sem imprimir o valor (tem senha), quando a URL do banco
+        está incompleta. No deploy do Render a variável chegou como
+        "postgresql+psycopg:/?sslmode=require" (sem host, usuário e senha) e o
+        erro do SQLAlchemy não dizia o que faltava."""
+        if not isinstance(valor, str):
+            return valor
+        valor = valor.strip()
+        if valor.startswith("sqlite"):
+            return valor
+        from sqlalchemy.engine import make_url
+        from sqlalchemy.exc import ArgumentError
+
+        try:
+            url = make_url(valor)
+        except ArgumentError:
+            raise ValueError(
+                "DATABASE_URL não é uma URL válida (provavelmente incompleta: faltam host, "
+                "usuário e senha?). Formato: "
+                "postgresql+psycopg://USUARIO:SENHA@HOST:5432/BANCO?sslmode=require"
+            ) from None
+        faltam = [
+            nome for nome, ok in (("host", url.host), ("usuário", url.username), ("senha", url.password)) if not ok
+        ]
+        if faltam:
+            raise ValueError(
+                f"DATABASE_URL está incompleta: falta {', '.join(faltam)}. Copie a string inteira do "
+                "Session pooler do Supabase (Connect), troque [YOUR-PASSWORD] pela senha e use "
+                "postgresql+psycopg:// no começo."
+            )
+        return valor
+
     @field_validator("supabase_url", "supabase_anon_key", mode="before")
     @classmethod
     def _sem_espacos(cls, valor):
