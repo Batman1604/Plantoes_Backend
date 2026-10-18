@@ -125,9 +125,9 @@ não a coloque no Render.
 
 1. **Região do projeto:** Project Settings → General. Ela também aparece no
    host do pooler (`aws-<N>-us-east-1...` = Virgínia; `us-west-1`/`us-west-2`
-   = Oregon). O `render.yaml` usa `region: virginia`. Se o projeto estiver no
-   oeste, troque para `oregon` **antes** de criar o Blueprint: a região do
-   serviço não muda depois.
+   = Oregon). O `render.yaml` usa `region: oregon`, porque o projeto atual é
+   us-west-2. Se o projeto estiver no leste (`us-east-1`), troque para
+   `virginia` **antes** de criar o Blueprint: a região do serviço não muda depois.
 2. **`DATABASE_URL`:** botão **Connect** → **Session pooler** (porta 5432,
    funciona em IPv4). Não use a conexão direta (`db.<ref>.supabase.co`, só
    IPv6) nem o Transaction pooler (6543, recusa os prepared statements do

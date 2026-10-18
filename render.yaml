@@ -7,9 +7,9 @@ services:
     name: plantoes-backend
     runtime: python
     plan: free
-    # A mais próxima do Supabase (EUA). Não muda depois de criado; o README
-    # diz como conferir a região do projeto do Supabase.
-    region: virginia
+    # Mesma região do projeto do Supabase (us-west-2 = Oregon). Não muda
+    # depois de criado; o README diz como conferir.
+    region: oregon
     buildCommand: pip install -r requirements.txt
     # O plano gratuito não tem preDeployCommand: a migração roda no início do
     # start. Se ela falhar, o serviço não sobe e o deploy anterior continua no ar.
