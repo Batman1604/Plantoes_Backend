@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import ValidationError, model_validator
+from pydantic import ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -85,12 +85,28 @@ class Settings(BaseSettings):
             raise ValueError("WHATSAPP_VERIFY_TOKEN é obrigatório quando WHATSAPP_TOKEN está definido.")
         return self
 
+    @field_validator("supabase_url", "supabase_anon_key", mode="before")
+    @classmethod
+    def _sem_espacos(cls, valor):
+        # Colar no painel do Render costuma trazer espaço ou quebra de linha
+        # junto; sem isto, "  " contava como definida e a chave ia inválida.
+        return valor.strip() if isinstance(valor, str) else valor
+
     @model_validator(mode="after")
     def _supabase_completo(self) -> "Settings":
         """Só uma das duas variáveis deixaria o canal por e-mail desligado em
-        silêncio, e o cadastro cairia no WhatsApp (502 em produção)."""
+        silêncio, e o cadastro cairia no WhatsApp (502 em produção). A mensagem
+        diz qual falta: no deploy, "precisam ser definidas juntas" não bastava
+        para achar o erro."""
         if bool(self.supabase_url) != bool(self.supabase_anon_key):
-            raise ValueError("SUPABASE_URL e SUPABASE_ANON_KEY precisam ser definidas juntas.")
+            falta = "SUPABASE_ANON_KEY" if self.supabase_url else "SUPABASE_URL"
+            definida = "SUPABASE_URL" if self.supabase_url else "SUPABASE_ANON_KEY"
+            raise ValueError(
+                f"{falta} está vazia, mas {definida} está definida. Defina as duas "
+                "(URL do projeto e chave anon do Supabase) ou nenhuma."
+            )
+        if self.supabase_url and not self.supabase_url.startswith("https://"):
+            raise ValueError("SUPABASE_URL precisa começar com https:// (ex.: https://<ref>.supabase.co).")
         return self
 
 
