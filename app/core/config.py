@@ -127,6 +127,22 @@ class Settings(BaseSettings):
         return valor.strip() if isinstance(valor, str) else valor
 
     @model_validator(mode="after")
+    def _banco_local_so_fora_de_producao(self) -> "Settings":
+        """Em produção o banco nunca está na própria máquina. No Render, uma
+        DATABASE_URL com localhost só aparecia como "Connection refused" em
+        127.0.0.1, depois do build, sem dizer que a variável é a culpada."""
+        if self.environment == "production" and not self.database_url.startswith("sqlite"):
+            from sqlalchemy.engine import make_url
+
+            host = make_url(self.database_url).host
+            if host in ("localhost", "127.0.0.1", "::1"):
+                raise ValueError(
+                    f"DATABASE_URL aponta para {host}, que em produção é a própria máquina do servidor. "
+                    "Use o host do Session pooler do Supabase (aws-0-...pooler.supabase.com)."
+                )
+        return self
+
+    @model_validator(mode="after")
     def _supabase_completo(self) -> "Settings":
         """Só uma das duas variáveis deixaria o canal por e-mail desligado em
         silêncio, e o cadastro cairia no WhatsApp (502 em produção). A mensagem

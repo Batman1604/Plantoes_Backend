@@ -43,3 +43,18 @@ def test_url_completa_e_aceita_e_limpa_espacos():
 
 def test_sqlite_dos_testes_continua_valido():
     assert _settings("sqlite:///x.db").database_url == "sqlite:///x.db"
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1"])
+def test_producao_recusa_banco_na_propria_maquina(host):
+    with pytest.raises(ValidationError, match="própria máquina do servidor"):
+        Settings(
+            _env_file=None, environment="production", jwt_secret_key="x" * 40,
+            allowed_origins="https://x.onrender.com",
+            database_url=f"postgresql+psycopg://postgres:senha@{host}:5432/plantoes",
+        )
+
+
+def test_desenvolvimento_continua_aceitando_localhost():
+    s = _settings("postgresql+psycopg://postgres:senha@localhost:5432/plantoes")
+    assert s.database_url.endswith("@localhost:5432/plantoes")
